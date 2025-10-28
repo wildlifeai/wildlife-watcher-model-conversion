@@ -1,0 +1,230 @@
+# Copyright (c) 2024
+# SPDX-License-Identifier: GPL-3.0-or-later
+
+import streamlit as st
+import os
+import re
+import zipfile
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
+
+# --- Helper Functions from your Notebook ---
+
+def parse_model_zip_name(zip_path: str):
+    """Parse '<modelname>-custom-<version>.zip' -> (modelname, version)"""
+    name = os.path.basename(zip_path)
+    if not name.endswith('.zip'):
+        raise ValueError('Zip file must end with .zip')
+    base = name[:-4]
+    if '-custom-' not in base:
+        raise ValueError("Filename must contain '-custom-' (e.g. mymodel-custom-v10.zip)")
+    modelname, version = base.split('-custom-', 1)
+    if not modelname or not version:
+        raise ValueError('Invalid filename segments before/after -custom-')
+    return modelname, version
+
+def safe_move(src: Path, dst: Path):
+    """Safely move a file, creating parent dirs and overwriting old file."""
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    if dst.exists():
+        dst.unlink()
+    shutil.move(str(src), str(dst))
+
+def find_vela_output(work_dir: Path, original_tflite_name: str) -> Path:
+    """Find the output file from Vela.
+    Vela can be inconsistent. It might be 'trained_vela.tflite', 
+    'MOD00001.tfl', or overwrite the original.
+    """
+    stem = original_tflite_name.stem
+    
+    # Common vela output names
+    possible_names = [
+        work_dir / f"{stem}_vela.tflite",
+        work_dir / "MOD00001.tfl", # As seen in your notebook log
+        work_dir / "output.tflite"
+    ]
+    
+    for path in possible_names:
+        if path.exists():
+            return path
+            
+    # Check if it overwrote the original (less common, but possible)
+    original_path = work_dir / original_tflite_name
+    if original_path.exists():
+        # This is tricky; we assume if no other file exists, it's this one.
+        # A more robust check might be needed if vela behavior is unknown.
+        st.warning(f"Could not find a distinct Vela output file. Assuming {original_tflite_name} was overwritten.")
+        return original_path
+
+    raise FileNotFoundError(f"Could not find Vela output file in {work_dir}. Looked for {possible_names}.")
+
+
+# --- Main Conversion Logic ---
+
+def run_conversion(uploaded_file):
+    """
+    Takes an uploaded file object, runs the full conversion pipeline,
+    and returns the path to the final Manifest.zip.
+    """
+    # Create a temporary directory to work in
+    with tempfile.TemporaryDirectory() as temp_dir:
+        base_path = Path(temp_dir)
+        
+        # 1. Save uploaded file
+        uploaded_zip_path = base_path / uploaded_file.name
+        with open(uploaded_zip_path, 'wb') as f:
+            f.write(uploaded_file.getbuffer())
+
+        # 2. Unzip and validate
+        st.write(f"Processing {uploaded_file.name}...")
+        model_name, model_version = parse_model_zip_name(str(uploaded_zip_path))
+        container_name = f"{model_name}-custom-{model_version}"
+        work_dir = base_path / 'work' / container_name
+        work_dir.mkdir(parents=True, exist_ok=True)
+
+        with zipfile.ZipFile(uploaded_zip_path, 'r') as z:
+            z.extractall(work_dir)
+
+        tflite_path = work_dir / 'trained.tflite'
+        vars_h_path = work_dir / 'model-parameters' / 'model_variables.h'
+
+        if not tflite_path.exists():
+            raise FileNotFoundError(f"trained.tflite not found at {tflite_path}")
+        if not vars_h_path.exists():
+            raise FileNotFoundError(f"model_variables.h not found at {vars_h_path}")
+        
+        st.write("File unzipped. Found trained.tflite and model_variables.h.")
+
+        # 3. Run Vela conversion
+        st.write("Running Vela conversion...")
+        
+        # Note: Vela config is hardcoded as in your notebook
+        cmd = [
+            'vela',
+            '--accelerator-config', 'ethos-u55-64',
+            '--memory-mode', 'Shared_Sram',
+            '--output-dir', str(work_dir),
+            str(tflite_path),
+        ]
+
+        try:
+            res = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=120)
+            st.code(res.stdout)
+            if res.stderr:
+                st.warning(f"Vela stderr:\n{res.stderr}")
+        except subprocess.CalledProcessError as e:
+            st.error(f"Vela conversion FAILED. Return code: {e.returncode}")
+            st.error(f"Stdout:\n{e.stdout}")
+            st.error(f"Stderr:\n{e.stderr}")
+            return None
+        except FileNotFoundError:
+            st.error("Vela command not found. This app is likely not deployed correctly.")
+            return None
+            
+        st.write("Vela conversion successful.")
+
+        # Find the output file and rename it
+        vela_original_output = find_vela_output(work_dir, tflite_path.name)
+        vela_final_path = work_dir / f"{container_name}_vela.tflite"
+        safe_move(vela_original_output, vela_final_path)
+        st.write(f"Vela model saved as: {vela_final_path.name}")
+
+
+        # 4. Extract labels
+        with open(vars_h_path, 'r') as f:
+            content = f.read()
+
+        match = re.search(r'const char\*\s*ei_classifier_inferencing_categories.*?=\s*\{(.*?)\};', content, re.DOTALL)
+        if match:
+            labels = re.findall(r'\"([^\"]+)\"', match.group(1))
+        else:
+            labels = []
+
+        if not labels:
+            raise RuntimeError('No labels found in model_variables.h.')
+
+        labels_txt_path = work_dir / 'labels.txt'
+        with open(labels_txt_path, 'w') as f:
+            f.write('\n'.join(labels))
+        
+        st.write(f"Labels extracted: {labels}")
+
+        # 5. Package Manifest
+        manifest_dir = work_dir / 'Manifest'
+        manifest_dir.mkdir(parents=True, exist_ok=True)
+
+        shutil.copy2(vela_final_path, manifest_dir / vela_final_path.name)
+        shutil.copy2(labels_txt_path, manifest_dir / 'labels.txt')
+
+        # Zip Manifest
+        manifest_zip_base = str(work_dir / 'Manifest')
+        shutil.make_archive(manifest_zip_base, 'zip', root_dir=work_dir, base_dir='Manifest')
+        
+        final_zip_path = Path(f"{manifest_zip_base}.zip")
+        if not final_zip_path.exists():
+            raise FileNotFoundError(f"Failed to create Manifest.zip at {final_zip_path}")
+
+        st.success("Manifest.zip created successfully!")
+        return final_zip_path
+
+# --- Streamlit UI ---
+
+st.set_page_config(layout="centered")
+st.title("Edge Impulse Model Converter (Vela)")
+st.markdown("""
+Upload your Edge Impulse model zip file (e.g., `model-custom-v1.zip`).
+This tool will:
+1.  Unzip the file.
+2.  Run the `vela` command (`ethos-u55-64`).
+3.  Extract labels from `model_variables.h`.
+4.  Package the converted `.tflite` and `labels.txt` into `Manifest.zip`.
+""")
+
+with st.expander("License Information"):
+    st.markdown("""
+    This tool is provided under the GPL-3.0 license. The source code and license can be found on GitHub.
+    """)
+
+uploaded_file = st.file_uploader(
+    "Choose your <modelname>-custom-<version>.zip",
+    type="zip",
+    accept_multiple_files=False
+)
+
+if uploaded_file is not None:
+    if st.button(f"Convert {uploaded_file.name}"):
+        
+        final_zip_path = None
+        zip_bytes = None
+        try:
+            with st.spinner("Running conversion pipeline... This may take a minute."):
+                final_zip_path = run_conversion(uploaded_file)
+        
+                if final_zip_path and final_zip_path.exists():
+                    # Read file to memory for download button
+                    with open(final_zip_path, 'rb') as f:
+                        zip_bytes = f.read()
+                    # The 'with tempfile.TemporaryDirectory()' block will handle cleanup
+
+        except Exception as e:
+            st.error(f"An error occurred: {e}")
+            # Clean up temp file if it exists
+            if final_zip_path and os.path.exists(final_zip_path):
+                os.unlink(final_zip_path)
+
+        if final_zip_path and os.path.exists(final_zip_path):
+            # Read file to memory for download button
+            with open(final_zip_path, 'rb') as f:
+                zip_bytes = f.read()
+            
+        if zip_bytes:
+            st.download_button(
+                label="Download Manifest.zip",
+                data=zip_bytes,
+                file_name="Manifest.zip",
+                mime="application/zip"
+            )
+            # Clean up the temp file after reading
+            os.unlink(final_zip_path)
