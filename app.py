@@ -172,6 +172,11 @@ def run_conversion(uploaded_file):
 # --- Streamlit UI ---
 
 st.set_page_config(layout="centered")
+
+st.image(
+    "http://wildlife.ai/wp-content/uploads/2025/10/wildlife_ai_logo_dark_lightbackg_1772x591.png",
+    use_column_width=True,
+)
 st.title("Edge Impulse Model Converter (Vela)")
 st.markdown("""
 Upload your Edge Impulse model zip file (e.g., `model-custom-v1.zip`).
