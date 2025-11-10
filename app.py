@@ -37,7 +37,9 @@ def find_vela_output(work_dir: Path, original_tflite_name: str) -> Path:
     Vela can be inconsistent. It might be 'trained_vela.tflite', 
     'MOD00001.tfl', or overwrite the original.
     """
-    stem = original_tflite_name.stem
+    # Convert string filename to Path to access .stem
+    tflite_path_obj = Path(original_tflite_name)
+    stem = tflite_path_obj.stem
     
     # Common vela output names
     possible_names = [
@@ -133,7 +135,7 @@ def run_conversion(uploaded_file):
 
 
         # 4. Extract labels
-        with open(vars_h_path, 'r') as f:
+        with open(vars_h_path, 'r', encoding='utf-8', errors='replace') as f:
             content = f.read()
 
         match = re.search(r'const char\*\s*ei_classifier_inferencing_categories.*?=\s*\{(.*?)\};', content, re.DOTALL)
@@ -175,7 +177,7 @@ st.set_page_config(layout="centered")
 
 st.image(
     "http://wildlife.ai/wp-content/uploads/2025/10/wildlife_ai_logo_dark_lightbackg_1772x591.png",
-    use_column_width=True,
+    use_container_width=True,
 )
 st.title("Edge Impulse Model Converter (Vela)")
 st.markdown("""
