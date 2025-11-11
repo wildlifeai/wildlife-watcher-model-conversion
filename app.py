@@ -68,7 +68,9 @@ def find_vela_output(work_dir: Path, original_tflite_name: str) -> Path:
 def run_conversion(uploaded_file):
     """
     Takes an uploaded file object, runs the full conversion pipeline,
-    and returns the path to the final Manifest.zip.
+    and returns the bytes of the final Manifest.zip (or None on failure).
+    Returning bytes avoids TemporaryDirectory cleanup race conditions
+    when Streamlit re-runs the script.
     """
     # Create a temporary directory to work in
     with tempfile.TemporaryDirectory() as temp_dir:
@@ -160,16 +162,28 @@ def run_conversion(uploaded_file):
         shutil.copy2(vela_final_path, manifest_dir / vela_final_path.name)
         shutil.copy2(labels_txt_path, manifest_dir / 'labels.txt')
 
-        # Zip Manifest
-        manifest_zip_base = str(work_dir / 'Manifest')
-        shutil.make_archive(manifest_zip_base, 'zip', root_dir=work_dir, base_dir='Manifest')
-        
-        final_zip_path = Path(f"{manifest_zip_base}.zip")
+        # Zip Manifest using STORE (no compression)
+        manifest_dir_path = work_dir / 'Manifest'
+        manifest_zip_path = work_dir / 'Manifest.zip'
+        # Create a store-compressed zip so files are stored without deflate
+        with zipfile.ZipFile(manifest_zip_path, mode='w', compression=zipfile.ZIP_STORED) as zf:
+            for root, _, files in os.walk(manifest_dir_path):
+                for fname in files:
+                    full_path = Path(root) / fname
+                    # write with arcname relative to Manifest directory
+                    arcname = full_path.relative_to(work_dir)
+                    zf.write(full_path, arcname)
+
+        final_zip_path = manifest_zip_path
         if not final_zip_path.exists():
             raise FileNotFoundError(f"Failed to create Manifest.zip at {final_zip_path}")
 
+        # Read bytes while tempdir is still valid and return them to caller
+        with open(final_zip_path, 'rb') as f:
+            manifest_bytes = f.read()
+
         st.success("Manifest.zip created successfully!")
-        return final_zip_path
+        return manifest_bytes
 
 # --- Streamlit UI ---
 
@@ -203,35 +217,25 @@ uploaded_file = st.file_uploader(
 if uploaded_file is not None:
     if st.button(f"Convert {uploaded_file.name}"):
         
-        final_zip_path = None
         zip_bytes = None
         try:
             with st.spinner("Running conversion pipeline... This may take a minute."):
-                final_zip_path = run_conversion(uploaded_file)
-        
-                if final_zip_path and final_zip_path.exists():
-                    # Read file to memory for download button
-                    with open(final_zip_path, 'rb') as f:
-                        zip_bytes = f.read()
-                    # The 'with tempfile.TemporaryDirectory()' block will handle cleanup
+                # run_conversion now returns bytes
+                zip_bytes = run_conversion(uploaded_file)
+                # store in session state so subsequent reruns keep the bytes
+                if zip_bytes:
+                    st.session_state['manifest_bytes'] = zip_bytes
 
         except Exception as e:
             st.error(f"An error occurred: {e}")
-            # Clean up temp file if it exists
-            if final_zip_path and os.path.exists(final_zip_path):
-                os.unlink(final_zip_path)
 
-        if final_zip_path and os.path.exists(final_zip_path):
-            # Read file to memory for download button
-            with open(final_zip_path, 'rb') as f:
-                zip_bytes = f.read()
-            
-        if zip_bytes:
+        # Use session_state stored bytes for the download button
+        if 'manifest_bytes' in st.session_state and st.session_state['manifest_bytes']:
             st.download_button(
                 label="Download Manifest.zip",
-                data=zip_bytes,
+                data=st.session_state['manifest_bytes'],
                 file_name="Manifest.zip",
                 mime="application/zip"
             )
-            # Clean up the temp file after reading
-            os.unlink(final_zip_path)
+            # Optionally clear the bytes after download to free memory
+            # del st.session_state['manifest_bytes']
