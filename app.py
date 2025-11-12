@@ -131,7 +131,22 @@ def run_conversion(uploaded_file):
 
         # Find the output file and rename it
         vela_original_output = find_vela_output(work_dir, tflite_path.name)
-        vela_final_path = work_dir / f"{container_name}_vela.tflite"
+
+        # Create an 8.3-style filename: MOD + zero-padded number to make 8 chars, extension .tfl
+        def _next_mod_filename(dir_path: Path) -> Path:
+            # allow up to 5 digits (MOD + 5 digits = 8 chars)
+            for n in range(1, 100000):
+                s = str(n)
+                if len(s) > 5:
+                    break
+                name = f"MOD" + ("0" * (5 - len(s))) + s + ".tfl"
+                candidate = dir_path / name
+                if not candidate.exists():
+                    return candidate
+            # fallback
+            return dir_path / f"{container_name}_vela.tflite"
+
+        vela_final_path = _next_mod_filename(work_dir)
         safe_move(vela_original_output, vela_final_path)
         st.write(f"Vela model saved as: {vela_final_path.name}")
 
