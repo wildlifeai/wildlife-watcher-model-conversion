@@ -485,7 +485,8 @@ graph LR
 | Route | Component | Auth | Description |
 |-------|-----------|------|-------------|
 | `/` | `HomePage` | No | Landing page with drag-and-drop image analysis |
-| `/login` | `LoginPage` | No | Supabase Auth UI (GitHub + Google OAuth) |
+| `/login` | `LoginPage` | No | Supabase Auth UI (GitHub + Google OAuth) + Forgot Password |
+| `/reset-password` | `ResetPasswordPage` | No | Password reset landing page (from email link) |
 | `/my-data` | `MyDataPage` | Yes | Browse projects, deployments with sorting, search, CSV export |
 | `/manifest` | `ManifestPage` | Yes | Configure and generate firmware MANIFEST.zip |
 | `/upload-model` | `UploadModelPage` | Yes | Upload Edge Impulse ZIPs for Vela conversion |

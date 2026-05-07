@@ -1,0 +1,19 @@
+{
+  "applinks": {
+    "apps": [],
+    "details": [
+      {
+        "appID": "7399889N9Z.com.wildlife.wildlifewatcher",
+        "paths": [
+          "/reset-password",
+          "/reset-password/*"
+        ]
+      }
+    ]
+  },
+  "webcredentials": {
+    "apps": [
+      "7399889N9Z.com.wildlife.wildlifewatcher"
+    ]
+  }
+}
