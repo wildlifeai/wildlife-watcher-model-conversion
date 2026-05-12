@@ -8,6 +8,8 @@ Reusable by both the API handler and the async ARQ worker.
 The MANIFEST.zip is what gets deployed to the camera SD card. Structure:
     MANIFEST/
     ├── CONFIG.TXT          # Camera configuration
+    ├── README.TXT          # SD card setup instructions
+    ├── config_file.md      # Operational parameters documentation
     ├── {fw_id}V{ver}.TFL   # AI model binary (8.3 format)
     ├── {fw_id}V{ver}.TXT   # Model labels (8.3 format)
     └── output.img          # Himax coprocessor firmware
@@ -40,6 +42,8 @@ OUTPUT_IMG_PATH = "we2_image_gen_local_dpd/output_case1_sec_wlcsp/output.img"
 
 _GITHUB_MANIFEST_FILES = {
     "CONFIG.TXT": f"{MANIFEST_BASE}/CONFIG.TXT",
+    "README.TXT": f"{MANIFEST_BASE}/README.TXT",
+    "config_file.md": f"{MANIFEST_BASE}/config_file.md",
 }
 
 logger = structlog.get_logger()
