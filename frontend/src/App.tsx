@@ -92,17 +92,7 @@ function Layout({ children }: { children: React.ReactNode }) {
         opacity: 0.9,
       }}>
         <div className="container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
-          <div>
-            <p style={{ margin: '0 0 1rem 0', fontWeight: 600 }}>Get the Mobile App</p>
-            <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center' }}>
-              <a href="https://apps.apple.com/app/id6480342929" target="_blank" rel="noreferrer">
-                <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" alt="Download on the App Store" style={{ height: '40px' }} />
-              </a>
-              <a href="https://play.google.com/store/apps/details?id=com.wildlife.wildlifewatcher&pcampaignid=web_share" target="_blank" rel="noreferrer">
-                <img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" alt="Get it on Google Play" style={{ height: '40px' }} />
-              </a>
-            </div>
-          </div>
+
           <div style={{ opacity: 0.7, fontSize: '0.875rem' }}>
             &copy; {new Date().getFullYear()} Wildlife.ai
           </div>
