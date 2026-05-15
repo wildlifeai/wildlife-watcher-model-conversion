@@ -10,6 +10,8 @@ import { ManifestPage } from './pages/ManifestPage'
 import { UploadModelPage } from './pages/UploadModelPage'
 import { AnalyseImagesPage } from './pages/AnalyseImagesPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage'
+import { SupportPage } from './pages/SupportPage'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from './lib/apiClient'
 import './styles/index.css'
@@ -95,6 +97,10 @@ function Layout({ children }: { children: React.ReactNode }) {
 
           <div style={{ opacity: 0.7, fontSize: '0.875rem' }}>
             &copy; {new Date().getFullYear()} Wildlife.ai
+            {' | '}
+            <Link to="/privacy" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacy Policy</Link>
+            {' | '}
+            <Link to="/support" style={{ color: 'inherit', textDecoration: 'underline' }}>Support</Link>
           </div>
         </div>
       </footer>
@@ -111,6 +117,8 @@ export default function App() {
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
             <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/privacy" element={<PrivacyPolicyPage />} />
+            <Route path="/support" element={<SupportPage />} />
             <Route path="/my-data" element={<RequireAuth><MyDataPage /></RequireAuth>} />
             <Route path="/analyse-images" element={<RequireAuth><AnalyseImagesPage /></RequireAuth>} />
             <Route path="/manifest" element={<RequireAuth><ManifestPage /></RequireAuth>} />

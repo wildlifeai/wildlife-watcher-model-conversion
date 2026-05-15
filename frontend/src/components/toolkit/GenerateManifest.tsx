@@ -15,7 +15,7 @@ export function GenerateManifest() {
   const [githubBranch, setGithubBranch] = useState<string>('main')
 
   // Fetch GitHub branches
-  const { data: branches } = useQuery({
+  const { data: branches, isLoading: isLoadingBranches } = useQuery({
     queryKey: ['manifestBranches'],
     queryFn: async () => {
       const res = await apiClient.get('/api/manifest/branches')
@@ -133,15 +133,19 @@ export function GenerateManifest() {
                 {/* Branch selector */}
                 <div>
                   <label style={labelStyle}>Software Version</label>
-                  <select
-                    value={githubBranch}
-                    onChange={(e) => setGithubBranch(e.target.value)}
-                    style={selectStyle}
-                  >
-                    {(branches || ['main']).map((b: string) => (
-                      <option key={b} value={b}>{b}</option>
-                    ))}
-                  </select>
+                  {isLoadingBranches ? (
+                    <div style={{ padding: '0.5rem', opacity: 0.6 }}>Loading options from GitHub...</div>
+                  ) : (
+                    <select
+                      value={githubBranch}
+                      onChange={(e) => setGithubBranch(e.target.value)}
+                      style={selectStyle}
+                    >
+                      {(branches || ['main']).map((b: string) => (
+                        <option key={b} value={b}>{b}</option>
+                      ))}
+                    </select>
+                  )}
                   <p style={{ fontSize: '0.75rem', opacity: 0.6, marginTop: '0.25rem' }}>
                     Select the system version for your camera hardware.
                   </p>
