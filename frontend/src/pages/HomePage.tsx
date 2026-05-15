@@ -2,6 +2,9 @@ import { Link } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { QRCodeSVG } from 'qrcode.react'
 
+const APP_STORE_URL = 'https://apps.apple.com/app/id6480342929'
+const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.wildlife.wildlifewatcher&pcampaignid=web_share'
+
 export function HomePage() {
   const { user, loading } = useAuth()
 
@@ -40,22 +43,22 @@ export function HomePage() {
         <div style={{ display: 'flex', justifyContent: 'center', gap: '4rem', flexWrap: 'wrap' }}>
           <div style={{ textAlign: 'center' }}>
             <div style={{ marginBottom: '1rem' }}>
-              <a href="https://apps.apple.com/app/id6480342929" target="_blank" rel="noreferrer">
+              <a href={APP_STORE_URL} target="_blank" rel="noreferrer">
                 <img src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg" alt="Download on the App Store" style={{ height: '40px' }} />
               </a>
             </div>
             <div style={{ padding: '1rem', backgroundColor: 'white', borderRadius: '12px', display: 'inline-block', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-              <QRCodeSVG value="https://apps.apple.com/app/id6480342929" size={150} />
+              <QRCodeSVG value={APP_STORE_URL} size={150} />
             </div>
           </div>
           <div style={{ textAlign: 'center' }}>
             <div style={{ marginBottom: '1rem' }}>
-              <a href="https://play.google.com/store/apps/details?id=com.wildlife.wildlifewatcher&pcampaignid=web_share" target="_blank" rel="noreferrer">
+              <a href={PLAY_STORE_URL} target="_blank" rel="noreferrer">
                 <img src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg" alt="Get it on Google Play" style={{ height: '40px' }} />
               </a>
             </div>
             <div style={{ padding: '1rem', backgroundColor: 'white', borderRadius: '12px', display: 'inline-block', boxShadow: '0 4px 12px rgba(0,0,0,0.1)' }}>
-              <QRCodeSVG value="https://play.google.com/store/apps/details?id=com.wildlife.wildlifewatcher&pcampaignid=web_share" size={150} />
+              <QRCodeSVG value={PLAY_STORE_URL} size={150} />
             </div>
           </div>
         </div>

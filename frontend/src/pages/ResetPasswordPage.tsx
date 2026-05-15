@@ -30,13 +30,15 @@ export function ResetPasswordPage() {
       }
     })
 
-    // Timeout — if no recovery event after 5 seconds, show an error
+    // Timeout — if no recovery event after 10 seconds, show an error
     const timeout = setTimeout(() => {
       setStatus((prev) => {
-        if (prev === 'waiting') return 'error'
+        if (prev === 'waiting') {
+          setErrorMessage('This password reset link appears to be invalid or expired. Please request a new password reset.')
+          return 'error'
+        }
         return prev
       })
-      setErrorMessage('This password reset link appears to be invalid or expired. Please request a new password reset.')
     }, 10000)
 
     return () => {
