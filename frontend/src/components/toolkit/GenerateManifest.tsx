@@ -14,13 +14,15 @@ export function GenerateManifest() {
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
   const [githubBranch, setGithubBranch] = useState<string>('main')
 
-  // Fetch GitHub branches
+  // Fetch GitHub branches — staleTime matches the 1-hour server-side cache TTL
   const { data: branches, isLoading: isLoadingBranches } = useQuery({
     queryKey: ['manifestBranches'],
     queryFn: async () => {
       const res = await apiClient.get('/api/manifest/branches')
       return (res as any).data || ['main']
     },
+    staleTime: 60 * 60 * 1000,   // 1 hour
+    gcTime: 2 * 60 * 60 * 1000,  // keep in memory for 2 hours
   })
 
   // Fetch accessible projects

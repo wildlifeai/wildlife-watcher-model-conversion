@@ -30,6 +30,7 @@ import structlog
 
 from app.registries.camera_configs import CAMERA_CONFIGS
 from app.registries.model_registry import MODEL_REGISTRY, get_model_config
+from app.services.cache import cached
 from app.services.http_client import DownloadError, download_url_content
 from app.services.storage import download_from_storage
 from app.services.supabase_client import create_service_client
@@ -391,8 +392,8 @@ async def _resolve_project_model(client, project_id: str) -> dict:
     }
 
 
-async def fetch_github_branches() -> list[str]:
-    """Fetch branch names from the Grove Vision AI repo (public API)."""
+async def _fetch_github_branches_raw() -> list[str]:
+    """Inner fetch — hits the GitHub API directly. Call fetch_github_branches() instead."""
     url = f"https://api.github.com/repos/{GROVE_VISION_REPO}/branches"
     try:
         content = await download_url_content(url)
@@ -401,6 +402,19 @@ async def fetch_github_branches() -> list[str]:
     except Exception as exc:
         logger.warning("github_branches_failed", error=str(exc))
         return DEFAULT_FIRMWARE_BRANCHES
+
+
+async def fetch_github_branches() -> list[str]:
+    """Return firmware branch names, cached for 1 hour to avoid GitHub rate limits.
+
+    The branch list changes at most a few times per month, so a 1-hour TTL is safe.
+    All users share the same cache entry — no per-user data is involved.
+    """
+    return await cached(
+        key="github:firmware_branches",
+        ttl=3600,
+        fetch_fn=_fetch_github_branches_raw,
+    )
 
 
 # ── Main entry point ─────────────────────────────────────────────────
