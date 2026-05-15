@@ -12,6 +12,7 @@ import { AnalyseImagesPage } from './pages/AnalyseImagesPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage'
 import { SupportPage } from './pages/SupportPage'
+import { ResourcesPage } from './pages/ResourcesPage'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from './lib/apiClient'
 import './styles/index.css'
@@ -57,6 +58,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             Wildlife Watcher Web
           </Link>
           <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <Link to="/resources" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Resources</Link>
             {user && (
               <>
                 <Link to="/my-data" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>My Data</Link>
@@ -98,6 +100,8 @@ function Layout({ children }: { children: React.ReactNode }) {
           <div style={{ opacity: 0.7, fontSize: '0.875rem' }}>
             &copy; {new Date().getFullYear()} Wildlife.ai
             {' | '}
+            <Link to="/resources" style={{ color: 'inherit', textDecoration: 'underline' }}>Resources</Link>
+            {' | '}
             <Link to="/privacy" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' | '}
             <Link to="/support" style={{ color: 'inherit', textDecoration: 'underline' }}>Support</Link>
@@ -119,6 +123,7 @@ export default function App() {
             <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/privacy" element={<PrivacyPolicyPage />} />
             <Route path="/support" element={<SupportPage />} />
+            <Route path="/resources" element={<ResourcesPage />} />
             <Route path="/my-data" element={<RequireAuth><MyDataPage /></RequireAuth>} />
             <Route path="/analyse-images" element={<RequireAuth><AnalyseImagesPage /></RequireAuth>} />
             <Route path="/manifest" element={<RequireAuth><ManifestPage /></RequireAuth>} />
