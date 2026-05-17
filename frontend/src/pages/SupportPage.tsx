@@ -9,8 +9,8 @@ export function SupportPage() {
 
       <h2 style={{ marginTop: '2rem', marginBottom: '1rem' }}>Frequently Asked Questions</h2>
       
-      <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>How do I deploy a camera?</h3>
-      <p>Using the Wildlife Watcher mobile app, navigate to the "Deployments" tab and tap the blue "+" button to start the Deployment Wizard. Follow the on-screen instructions to select your camera, configure its view, and finalize the deployment.</p>
+      <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>How do I start a monitoring session?</h3>
+      <p>Using the Wildlife Watcher mobile app, navigate to your Project and tap the blue "+" button to start monitoring. Follow the on-screen instructions to connect to your camera, configure its view, and finalize the setup.</p>
 
       <h3 style={{ marginTop: '1.5rem', marginBottom: '0.5rem' }}>How do I update the AI model on my camera?</h3>
       <p>You can prepare an SD card with the latest software and AI model via the "Prepare SD Card" option on this website. Simply download the package, extract it to the root of your SD card, and insert it into your camera before turning it on.</p>

@@ -4,7 +4,7 @@ const sections = [
   { id: 'whats-in-box',   label: "📦 What's in the Box",   emoji: '📦' },
   { id: 'camera-setup',   label: '📷 Camera Setup',         emoji: '📷' },
   { id: 'mobile-app',     label: '📱 Mobile App',           emoji: '📱' },
-  { id: 'deployment',     label: '🚀 Starting a Deployment',emoji: '🚀' },
+  { id: 'deployment',     label: '🚀 Start Monitoring',     emoji: '🚀' },
   { id: 'ai-models',      label: '🤖 AI Models',            emoji: '🤖' },
   { id: 'image-analysis', label: '🔬 Image Analysis',       emoji: '🔬' },
   { id: 'maintenance',    label: '🔧 Maintenance',           emoji: '🔧' },
@@ -163,7 +163,7 @@ export function ResourcesPage() {
             <H3>4. Additional external camera (optional)</H3>
             <Ul items={[
               'Plug the additional camera into the USB port on the Wildlife Watcher.',
-              'Specify which camera to use when starting a deployment in the app.',
+              'Specify which camera to use when you start monitoring in the app.',
               'Verify the connection using the Camera Testing section in the app.',
             ]} />
           </Section>
@@ -190,11 +190,11 @@ export function ResourcesPage() {
             <H3>Connecting to a camera</H3>
             <Step n={1}>Power on your Wildlife Watcher camera.</Step>
             <Step n={2}>Enable Bluetooth on your phone.</Step>
-            <Step n={3}>In the app, go to the <strong>Devices</strong> section.</Step>
-            <Step n={4}>Your camera should appear in the list — tap it to pair.</Step>
+            <Step n={3}>In the app, navigate to your Project and tap the blue <strong>+</strong> button.</Step>
+            <Step n={4}>Your camera should appear in the nearby devices list — tap it to connect.</Step>
             <Step n={5}>Once connected, you can check battery level, SD card space, and install firmware updates.</Step>
 
-            <H3>Before your first deployment</H3>
+            <H3>Before starting monitoring</H3>
             <Ul items={[
               'Check the battery level — replace or recharge if low.',
               'Check SD card available space — format if needed.',
@@ -204,20 +204,20 @@ export function ResourcesPage() {
             <Note>💡 Always test the camera before heading into the field to avoid wasted trips.</Note>
           </Section>
 
-          <Section id="deployment" title="🚀 Starting a Deployment">
+          <Section id="deployment" title="🚀 Start Monitoring">
             <p style={{ lineHeight: 1.7, marginBottom: '1rem' }}>
-              A deployment is a monitored camera session linked to a specific project and location.
-              All images captured during a deployment are stored and can be reviewed in the app.
+              Monitoring is a camera recording session linked to a specific project and location.
+              All images captured during the session are stored locally and can be reviewed in the app.
             </p>
 
-            <H3>Starting a deployment</H3>
+            <H3>Start Monitoring</H3>
             <Step n={1}>Mount and power on the camera in the field.</Step>
-            <Step n={2}>Open the app and connect to the camera via Bluetooth.</Step>
-            <Step n={3}>Tap <strong>Start Deployment</strong>.</Step>
+            <Step n={2}>Open the app, go to your project and tap the <strong>+</strong> button to connect to the camera via Bluetooth.</Step>
+            <Step n={3}>Tap <strong>Start Monitoring</strong>.</Step>
             <Step n={4}>Fill in the required details:
               <ul style={{ marginTop: '0.5rem', paddingLeft: '1.25rem', lineHeight: 1.7 }}>
                 <li>Project name</li>
-                <li>Deployment name / label</li>
+                <li>Session name / label</li>
                 <li>Location — use your current GPS position or enter latitude/longitude manually</li>
                 <li>Capture mode — motion detection or time-lapse</li>
                 <li>Image quality setting</li>
@@ -227,9 +227,9 @@ export function ResourcesPage() {
             <Step n={6}>Optionally take a photo of the camera location for reference.</Step>
             <Step n={7}>Confirm — the camera will begin monitoring automatically.</Step>
 
-            <H3>Ending a deployment</H3>
+            <H3>Stop Monitoring</H3>
             <Step n={1}>Open the app and connect to the camera.</Step>
-            <Step n={2}>Go to the active deployment and tap <strong>End Deployment</strong>.</Step>
+            <Step n={2}>Go to the active monitoring session and tap <strong>Stop Monitoring</strong>.</Step>
             <Step n={3}>Confirm the termination — data is preserved on the SD card.</Step>
 
             <H3>Motion detection & AI recognition</H3>
@@ -260,7 +260,7 @@ export function ResourcesPage() {
             <Step n={1}>Go to <strong>Upload Model</strong> in the web toolkit (requires Organisation Manager role).</Step>
             <Step n={2}>Select your model source: Custom Upload, Pre-trained, or SenseCap Zoo.</Step>
             <Step n={3}>Submit — the model is processed and associated with your organisation.</Step>
-            <Step n={4}>In the mobile app, go to <strong>Devices</strong> and select your camera.</Step>
+            <Step n={4}>In the mobile app, connect to your camera via your Project.</Step>
             <Step n={5}>If a model is already loaded, remove it first.</Step>
             <Step n={6}>Select the new model from your files and upload it.</Step>
             <Step n={7}>Verify that the correct model name appears on the device screen.</Step>
@@ -338,7 +338,7 @@ export function ResourcesPage() {
               'Clean the lens and sensor area regularly with a soft, dry cloth.',
               'Keep firmware updated via the app for security and performance improvements.',
               'Check battery connections and solar panel cables periodically.',
-              'Format the SD card after each deployment to free up space.',
+              'Format the SD card after each session to free up space.',
               'Inspect mounting straps and clasps for wear after extended outdoor use.',
             ]} />
 
@@ -351,7 +351,7 @@ export function ResourcesPage() {
                 },
                 {
                   issue: 'App not connecting via Bluetooth',
-                  fix: 'Restart both the camera and your mobile device. Ensure Bluetooth is enabled. Move closer to the camera and retry pairing from the Devices screen.',
+                  fix: 'Restart both the camera and your mobile device. Ensure Bluetooth is enabled. Move closer to the camera and retry pairing.',
                 },
                 {
                   issue: 'Blurred or dark images',
@@ -363,7 +363,7 @@ export function ResourcesPage() {
                 },
                 {
                   issue: 'AI model not detecting species',
-                  fix: 'Verify the correct model is loaded in the Devices section of the app. Ensure the camera has a clear, unobstructed view. Check that the firmware is up to date.',
+                  fix: 'Verify the correct model is loaded via the app. Ensure the camera has a clear, unobstructed view. Check that the firmware is up to date.',
                 },
               ].map(({ issue, fix }) => (
                 <div key={issue} style={{ padding: '1rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
