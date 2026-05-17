@@ -74,35 +74,32 @@ def download_as_zip() -> bytes:
     return buf.read()
 
 
-def resolve_user(svc, email: str) -> tuple[str, str]:
-    """Return (user_id, org_id) for the given email."""
-    # Look up user by email in auth.users via service role
-    resp = svc.auth.admin.list_users()
-    user = next((u for u in resp if u.email == email), None)
-    if not user:
-        print(f"✗  User '{email}' not found. Check the email and try again.")
-        sys.exit(1)
-
-    # Get their org via user_roles (remember: scope_id, not organisation_id)
-    roles = svc.table("user_roles") \
-        .select("scope_id") \
-        .eq("user_id", user.id) \
-        .eq("scope_type", "organisation") \
-        .limit(1) \
+def resolve_user(svc, user_id: str) -> tuple[str, str]:
+    """Return (user_id, org_id) — looks up org from user_roles."""
+    roles = (
+        svc.table("user_roles")
+        .select("scope_id")
+        .eq("user_id", user_id)
+        .eq("scope_type", "organisation")
+        .limit(1)
         .execute()
-
+    )
     if not roles.data:
-        print(f"✗  User '{email}' has no organisation. Assign them to one first.")
+        print(f"X  User '{user_id}' has no organisation role. Check user_roles table.")
         sys.exit(1)
-
-    return user.id, roles.data[0]["scope_id"]
+    return user_id, roles.data[0]["scope_id"]
 
 
 def main():
     parser = argparse.ArgumentParser(description="Seed CamtrapDP MICA example into Wildlife Watcher")
     parser.add_argument("--supabase-url", default=os.getenv("SUPABASE_URL", "http://localhost:54321"))
     parser.add_argument("--service-role-key", default=os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""))
-    parser.add_argument("--user-email", required=True, help="Email of user who will own the imported project")
+    parser.add_argument(
+        "--user-id",
+        default="a0000000-0000-0000-0000-000000000012",
+        help="UUID of the user who will own the imported project "
+             "(default: apps@wildlife.ai in dev seed)",
+    )
     parser.add_argument("--local-zip", help="Path to a local CamtrapDP ZIP (skip download)")
     args = parser.parse_args()
 
@@ -116,9 +113,9 @@ def main():
     print(f"🔌 Connected to {args.supabase_url}")
 
     # ── Resolve user + org ─────────────────────────────────────────────
-    user_id, org_id = resolve_user(svc, args.user_email)
-    print(f"👤 User  : {args.user_email} ({user_id})")
-    print(f"🏢 Org   : {org_id}")
+    user_id, org_id = resolve_user(svc, args.user_id)
+    print(f"User  : {args.user_id}")
+    print(f"Org   : {org_id}")
 
     # ── Get ZIP bytes ──────────────────────────────────────────────────
     if args.local_zip:

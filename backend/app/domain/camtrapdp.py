@@ -135,6 +135,37 @@ def _int(val: Optional[str]) -> Optional[int]:
         return None
 
 
+# CamtrapDP v1.0 vocab → WW check-constraint vocab mapping
+_BAIT_USE_MAP = {
+    "none": "none", "scent": "scent", "food": "food",
+    "visual": "visual", "acoustic": "acoustic", "other": "other",
+    # CamtrapDP uses boolean-style values
+    "false": "none", "true": "other",
+}
+
+_FEATURE_TYPE_MAP = {
+    "roadTrail": "roadTrail", "waterSource": "waterSource",
+    "burrow": "burrow", "nestSite": "nestSite", "other": "other",
+    # CamtrapDP additional values → best-fit WW mapping
+    "trailGame": "roadTrail", "trailHiking": "roadTrail",
+    "road": "roadTrail", "culvert": "other", "bridge": "other",
+}
+
+
+def _map_bait_use(val: Optional[str]) -> Optional[str]:
+    s = _str(val)
+    if s is None:
+        return None
+    return _BAIT_USE_MAP.get(s, "other")
+
+
+def _map_feature_type(val: Optional[str]) -> Optional[str]:
+    s = _str(val)
+    if s is None:
+        return None
+    return _FEATURE_TYPE_MAP.get(s, "other")
+
+
 def import_package(
     pkg: CamtrapPackage,
     user_id: str,
@@ -170,6 +201,7 @@ def import_package(
         "name": project_title,
         "description": project_description,
         "organisation_id": org_id,
+        "modified_by": user_id,
     }).execute()
 
     # Add the importing user as a project admin
@@ -177,7 +209,8 @@ def import_package(
         "user_id": user_id,
         "scope_type": "project",
         "scope_id": project_id,
-        "role": "admin",
+        "role": "project_admin",
+        "modified_by": user_id,
     }).execute()
 
     logger.info("camtrapdp_import_project_created", project_id=project_id, title=project_title)
@@ -199,6 +232,10 @@ def import_package(
                 "id": device_uuid,
                 "name": device_name,
                 "organisation_id": org_id,
+                "modified_by": user_id,
+                # bluetooth_id is NOT NULL in WW schema; generate a stable
+                # placeholder so imported cameras don't conflict with real devices.
+                "bluetooth_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{device_name}")),
             }).execute()
             device_map[camera_id] = device_uuid
         except Exception as e:
@@ -228,10 +265,13 @@ def import_package(
             # Create on-the-fly if missing
             device_uuid = str(uuid.uuid4())
             try:
+                fallback_name = f"[imported] {camera_id or 'unknown'}"[:100]
                 svc.table("devices").insert({
                     "id": device_uuid,
-                    "name": f"[imported] {camera_id or 'unknown'}"[:100],
+                    "name": fallback_name,
                     "organisation_id": org_id,
+                    "modified_by": user_id,
+                    "bluetooth_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{fallback_name}")),
                 }).execute()
                 device_map[camera_id] = device_uuid
             except Exception as e:
@@ -245,6 +285,7 @@ def import_package(
             "id": ww_id,
             "project_id": project_id,
             "device_id": device_uuid,
+            "setup_by": user_id,
             "name": _str(dep.get("locationName")) or cdp_id,
             "location_name": _str(dep.get("locationName")) or cdp_id,
             "deployment_start": dep_start,
@@ -255,9 +296,9 @@ def import_package(
             "camera_height": _float(dep.get("cameraHeight")),
             "camera_tilt": _float(dep.get("cameraTilt")),
             "camera_model": _str(dep.get("cameraModel")),
-            "bait_use": _str(dep.get("baitUse")),
-            "feature_type": _str(dep.get("featureType")),
-            "habitat": _str(dep.get("habitatType")),
+            "bait_use": _map_bait_use(dep.get("baitUse")),
+            "feature_type": _map_feature_type(dep.get("featureType")),
+            "habitat": _str(dep.get("habitat")) or _str(dep.get("habitatType")),
             "detection_distance": _float(dep.get("detectionDistance")),
             "start_deployment_comments": _str(dep.get("deploymentComments")),
         }
@@ -268,7 +309,12 @@ def import_package(
             svc.table("deployments").insert(row).execute()
             deps_inserted += 1
         except Exception as e:
-            warnings.append(f"Failed to insert deployment '{cdp_id}': {e}")
+            # Fail-fast on first deployment error so misconfiguration is caught immediately
+            raise RuntimeError(
+                f"Failed to insert deployment '{cdp_id}': {e}\n"
+                "Hint: check that the deployments table exists in your target project "
+                "and all required columns are present."
+            ) from e
 
     logger.info("camtrapdp_import_deployments", inserted=deps_inserted)
 
@@ -347,7 +393,7 @@ def import_package(
             "id": str(uuid.uuid4()),
             "deployment_id": ww_dep_id,
             "media_id": ww_media_id,
-            "event_id": _str(o.get("eventID")),
+            "event_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, o.get("eventID", ""))) if _str(o.get("eventID")) else None,
             "observation_level": _str(o.get("observationLevel")),
             "observation_type": obs_type,
             "scientific_name": _str(o.get("scientificName")),
@@ -360,7 +406,7 @@ def import_package(
             "classified_by": _str(o.get("classifiedBy")),
             "classification_probability": _float(o.get("classificationProbability")),
             "gbif_taxon_key": _int(o.get("taxonID")),
-            "comments": _str(o.get("observationComments")),
+            "observation_comments": _str(o.get("observationComments")),
         }
         row = {k: v for k, v in row.items() if v is not None}
 
