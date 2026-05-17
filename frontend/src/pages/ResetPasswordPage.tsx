@@ -30,14 +30,16 @@ export function ResetPasswordPage() {
       }
     })
 
-    // Timeout — if no recovery event after 5 seconds, show an error
+    // Timeout — if no recovery event after 10 seconds, show an error
     const timeout = setTimeout(() => {
       setStatus((prev) => {
-        if (prev === 'waiting') return 'error'
+        if (prev === 'waiting') {
+          setErrorMessage('This password reset link appears to be invalid or expired. Please request a new password reset.')
+          return 'error'
+        }
         return prev
       })
-      setErrorMessage('This password reset link appears to be invalid or expired. Please request a new password reset.')
-    }, 5000)
+    }, 10000)
 
     return () => {
       subscription.unsubscribe()
@@ -69,7 +71,8 @@ export function ResetPasswordPage() {
       setStatus('success')
       // Sign out so user can log in fresh with new password
       await supabase.auth.signOut()
-    } catch {
+    } catch (err) {
+      console.error('Unexpected error during password update:', err)
       setErrorMessage('An unexpected error occurred. Please try again.')
     } finally {
       setLoading(false)
@@ -153,20 +156,7 @@ export function ResetPasswordPage() {
                   minLength={6}
                   autoFocus
                   autoComplete="new-password"
-                  style={{
-                    width: '100%',
-                    padding: '0.625rem 0.75rem',
-                    borderRadius: 'var(--radius)',
-                    border: '1px solid var(--border)',
-                    fontSize: '0.9375rem',
-                    backgroundColor: 'var(--bg-color)',
-                    color: 'var(--text-color)',
-                    outline: 'none',
-                    transition: 'border-color 0.2s',
-                    boxSizing: 'border-box'
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = 'var(--primary)'}
-                  onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
+                  className="reset-input"
                 />
               </div>
 
@@ -187,20 +177,7 @@ export function ResetPasswordPage() {
                   required
                   minLength={6}
                   autoComplete="new-password"
-                  style={{
-                    width: '100%',
-                    padding: '0.625rem 0.75rem',
-                    borderRadius: 'var(--radius)',
-                    border: '1px solid var(--border)',
-                    fontSize: '0.9375rem',
-                    backgroundColor: 'var(--bg-color)',
-                    color: 'var(--text-color)',
-                    outline: 'none',
-                    transition: 'border-color 0.2s',
-                    boxSizing: 'border-box'
-                  }}
-                  onFocus={(e) => e.target.style.borderColor = 'var(--primary)'}
-                  onBlur={(e) => e.target.style.borderColor = 'var(--border)'}
+                  className="reset-input"
                 />
               </div>
 
@@ -279,6 +256,21 @@ export function ResetPasswordPage() {
       <style>{`
         @keyframes spin {
           to { transform: rotate(360deg); }
+        }
+        .reset-input {
+          width: 100%;
+          padding: 0.625rem 0.75rem;
+          border-radius: var(--radius);
+          border: 1px solid var(--border);
+          font-size: 0.9375rem;
+          background-color: var(--bg-color);
+          color: var(--text-color);
+          outline: none;
+          transition: border-color 0.2s;
+          box-sizing: border-box;
+        }
+        .reset-input:focus {
+          border-color: var(--primary);
         }
       `}</style>
     </div>

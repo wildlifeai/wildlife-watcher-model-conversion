@@ -28,12 +28,16 @@ export function UploadModel() {
   const [description, setDescription] = useState('')
 
   // Fetch organisations where the user is a manager
+  // staleTime matches the 5-minute server-side role cache TTL — eliminates
+  // the full-page "Checking permissions…" spinner on return visits.
   const { data: managedOrgs, isLoading: isLoadingOrgs } = useQuery({
     queryKey: ['managedOrgs'],
     queryFn: async () => {
       const res = await apiClient.get('/api/models/managed-orgs')
       return (res.data || []) as { id: string; name: string }[]
     },
+    staleTime: 5 * 60 * 1000,   // 5 minutes
+    gcTime: 10 * 60 * 1000,     // keep in memory for 10 minutes
   })
 
   // Auto-select first org when loaded
