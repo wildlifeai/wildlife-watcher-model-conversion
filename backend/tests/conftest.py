@@ -72,4 +72,3 @@ def _clear_memory_cache():
     _memory_cache.clear()
     yield
     _memory_cache.clear()
-
