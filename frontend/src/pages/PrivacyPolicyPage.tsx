@@ -123,6 +123,7 @@ export function PrivacyPolicyPage() {
             <li><strong>Google Maps</strong> – mapping and location services</li>
             <li><strong>Expo</strong> – mobile app build and update distribution</li>
             <li><strong>GitHub</strong> – pre-trained AI model hosting and source code</li>
+            <li><strong>Cloudflare</strong> – website hosting, CDN, and anonymous web analytics</li>
           </ul>
           These providers are contractually obligated to protect your data.
         </li>
