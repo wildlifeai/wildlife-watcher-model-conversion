@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
   PieChart, Pie, Cell, Legend,
@@ -39,6 +40,44 @@ const CHART_COLOURS = [
 ]
 
 export function ObservationReports({ observations, deployments, loading }: ObservationReportsProps) {
+  // ── Memoised data processing (only recompute when props change) ─────────
+  const { speciesCounts, speciesData } = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const o of observations) {
+      const name = o.scientific_name?.trim() || '(unidentified)'
+      counts[name] = (counts[name] ?? 0) + 1
+    }
+    const data = Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([name, count]) => ({ name, count }))
+    return { speciesCounts: counts, speciesData: data }
+  }, [observations])
+
+  const typeData = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const o of observations) {
+      const t = o.observation_type ?? 'unknown'
+      counts[t] = (counts[t] ?? 0) + 1
+    }
+    return Object.entries(counts).map(([name, value]) => ({ name, value }))
+  }, [observations])
+
+  const depData = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const o of observations) {
+      counts[o.deployment_id] = (counts[o.deployment_id] ?? 0) + 1
+    }
+    const depMap = Object.fromEntries(deployments.map(d => [d.id, d]))
+    return Object.entries(counts)
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 15)
+      .map(([id, count]) => ({
+        name: depMap[id]?.location_name ?? id.slice(0, 8),
+        count,
+      }))
+  }, [observations, deployments])
+
   if (loading) {
     return (
       <div style={{ padding: '3rem', textAlign: 'center', opacity: 0.5, fontSize: '0.875rem' }}>
@@ -62,39 +101,6 @@ export function ObservationReports({ observations, deployments, loading }: Obser
       </div>
     )
   }
-
-  // ── Species breakdown (top 15) ─────────────────────────────────────────────
-  const speciesCounts: Record<string, number> = {}
-  for (const o of observations) {
-    const name = o.scientific_name?.trim() || '(unidentified)'
-    speciesCounts[name] = (speciesCounts[name] ?? 0) + 1
-  }
-  const speciesData = Object.entries(speciesCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 15)
-    .map(([name, count]) => ({ name, count }))
-
-  // ── Observation type distribution ──────────────────────────────────────────
-  const typeCounts: Record<string, number> = {}
-  for (const o of observations) {
-    const t = o.observation_type ?? 'unknown'
-    typeCounts[t] = (typeCounts[t] ?? 0) + 1
-  }
-  const typeData = Object.entries(typeCounts).map(([name, value]) => ({ name, value }))
-
-  // ── Activity per deployment (sorted by count) ──────────────────────────────
-  const depCounts: Record<string, number> = {}
-  for (const o of observations) {
-    depCounts[o.deployment_id] = (depCounts[o.deployment_id] ?? 0) + 1
-  }
-  const depMap = Object.fromEntries(deployments.map(d => [d.id, d]))
-  const depData = Object.entries(depCounts)
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 15)
-    .map(([id, count]) => ({
-      name: depMap[id]?.location_name ?? id.slice(0, 8),
-      count,
-    }))
 
   const panelStyle: React.CSSProperties = {
     backgroundColor: 'var(--surface)',

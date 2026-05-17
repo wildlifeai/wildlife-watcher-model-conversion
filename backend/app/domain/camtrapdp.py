@@ -95,15 +95,9 @@ def validate_package(pkg: CamtrapPackage) -> list[str]:
             warnings.append(f"deployments.csv is missing columns: {', '.join(missing)}")
 
     # Check GPS coverage
-    no_gps = sum(
-        1 for d in pkg.deployments
-        if not d.get("latitude") or not d.get("longitude")
-    )
+    no_gps = sum(1 for d in pkg.deployments if not d.get("latitude") or not d.get("longitude"))
     if no_gps:
-        warnings.append(
-            f"{no_gps} of {len(pkg.deployments)} deployment(s) have no GPS coordinates "
-            "and will not appear on the map."
-        )
+        warnings.append(f"{no_gps} of {len(pkg.deployments)} deployment(s) have no GPS coordinates and will not appear on the map.")
 
     return warnings
 
@@ -137,18 +131,29 @@ def _int(val: Optional[str]) -> Optional[int]:
 
 # CamtrapDP v1.0 vocab → WW check-constraint vocab mapping
 _BAIT_USE_MAP = {
-    "none": "none", "scent": "scent", "food": "food",
-    "visual": "visual", "acoustic": "acoustic", "other": "other",
+    "none": "none",
+    "scent": "scent",
+    "food": "food",
+    "visual": "visual",
+    "acoustic": "acoustic",
+    "other": "other",
     # CamtrapDP uses boolean-style values
-    "false": "none", "true": "other",
+    "false": "none",
+    "true": "other",
 }
 
 _FEATURE_TYPE_MAP = {
-    "roadTrail": "roadTrail", "waterSource": "waterSource",
-    "burrow": "burrow", "nestSite": "nestSite", "other": "other",
+    "roadTrail": "roadTrail",
+    "waterSource": "waterSource",
+    "burrow": "burrow",
+    "nestSite": "nestSite",
+    "other": "other",
     # CamtrapDP additional values → best-fit WW mapping
-    "trailGame": "roadTrail", "trailHiking": "roadTrail",
-    "road": "roadTrail", "culvert": "other", "bridge": "other",
+    "trailGame": "roadTrail",
+    "trailHiking": "roadTrail",
+    "road": "roadTrail",
+    "culvert": "other",
+    "bridge": "other",
 }
 
 
@@ -187,40 +192,36 @@ def import_package(
     warnings: list[str] = list(pkg.warnings)
     meta = pkg.metadata
 
-    project_title = (
-        meta.get("title")
-        or meta.get("name")
-        or "Imported CamtrapDP Dataset"
-    )
+    project_title = meta.get("title") or meta.get("name") or "Imported CamtrapDP Dataset"
     project_description = meta.get("description") or ""
 
     # ── 1. Create project ──────────────────────────────────────────────
     project_id = str(uuid.uuid4())
-    svc.table("projects").insert({
-        "id": project_id,
-        "name": project_title,
-        "description": project_description,
-        "organisation_id": org_id,
-        "modified_by": user_id,
-    }).execute()
+    svc.table("projects").insert(
+        {
+            "id": project_id,
+            "name": project_title,
+            "description": project_description,
+            "organisation_id": org_id,
+            "modified_by": user_id,
+        }
+    ).execute()
 
     # Add the importing user as a project admin
-    svc.table("user_roles").insert({
-        "user_id": user_id,
-        "scope_type": "project",
-        "scope_id": project_id,
-        "role": "project_admin",
-        "modified_by": user_id,
-    }).execute()
+    svc.table("user_roles").insert(
+        {
+            "user_id": user_id,
+            "scope_type": "project",
+            "scope_id": project_id,
+            "role": "project_admin",
+            "modified_by": user_id,
+        }
+    ).execute()
 
     logger.info("camtrapdp_import_project_created", project_id=project_id, title=project_title)
 
     # ── 2. Create placeholder devices per unique cameraID ──────────────
-    camera_ids = {
-        d.get("cameraID", "").strip()
-        for d in pkg.deployments
-        if d.get("cameraID", "").strip()
-    }
+    camera_ids = {d.get("cameraID", "").strip() for d in pkg.deployments if d.get("cameraID", "").strip()}
 
     device_map: dict[str, str] = {}  # cameraID → ww device UUID
 
@@ -228,15 +229,17 @@ def import_package(
         device_uuid = str(uuid.uuid4())
         device_name = f"[imported] {camera_id}"[:100]  # truncate if needed
         try:
-            svc.table("devices").insert({
-                "id": device_uuid,
-                "name": device_name,
-                "organisation_id": org_id,
-                "modified_by": user_id,
-                # bluetooth_id is NOT NULL in WW schema; generate a stable
-                # placeholder so imported cameras don't conflict with real devices.
-                "bluetooth_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{device_name}")),
-            }).execute()
+            svc.table("devices").insert(
+                {
+                    "id": device_uuid,
+                    "name": device_name,
+                    "organisation_id": org_id,
+                    "modified_by": user_id,
+                    # bluetooth_id is NOT NULL in WW schema; generate a stable
+                    # placeholder so imported cameras don't conflict with real devices.
+                    "bluetooth_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{device_name}")),
+                }
+            ).execute()
             device_map[camera_id] = device_uuid
         except Exception as e:
             warnings.append(f"Could not create placeholder device for camera '{camera_id}': {e}")
@@ -266,13 +269,15 @@ def import_package(
             device_uuid = str(uuid.uuid4())
             try:
                 fallback_name = f"[imported] {camera_id or 'unknown'}"[:100]
-                svc.table("devices").insert({
-                    "id": device_uuid,
-                    "name": fallback_name,
-                    "organisation_id": org_id,
-                    "modified_by": user_id,
-                    "bluetooth_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{fallback_name}")),
-                }).execute()
+                svc.table("devices").insert(
+                    {
+                        "id": device_uuid,
+                        "name": fallback_name,
+                        "organisation_id": org_id,
+                        "modified_by": user_id,
+                        "bluetooth_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{fallback_name}")),
+                    }
+                ).execute()
                 device_map[camera_id] = device_uuid
             except Exception as e:
                 warnings.append(f"Could not create device for deployment '{cdp_id}': {e}")
@@ -318,9 +323,11 @@ def import_package(
 
     logger.info("camtrapdp_import_deployments", inserted=deps_inserted)
 
-    # ── 4. Insert media ────────────────────────────────────────────────
+    # ── 4. Insert media (bulk, chunked) ──────────────────────────────────
     media_id_map: dict[str, str] = {}  # camtrapDP mediaID → ww UUID
     media_inserted = 0
+    media_batch: list[dict] = []
+    BULK_CHUNK = 100  # PostgREST bulk insert chunk size
 
     for m in pkg.media:
         cdp_dep_id = m.get("deploymentID", "").strip()
@@ -348,17 +355,29 @@ def import_package(
             "media_comments": _str(m.get("mediaComments")),
         }
         row = {k: v for k, v in row.items() if v is not None}
+        media_batch.append(row)
 
+        if len(media_batch) >= BULK_CHUNK:
+            try:
+                svc.table("media").insert(media_batch).execute()
+                media_inserted += len(media_batch)
+            except Exception as e:
+                warnings.append(f"Failed to insert media batch: {e}")
+            media_batch = []
+
+    # Flush remaining media
+    if media_batch:
         try:
-            svc.table("media").insert(row).execute()
-            media_inserted += 1
+            svc.table("media").insert(media_batch).execute()
+            media_inserted += len(media_batch)
         except Exception as e:
-            warnings.append(f"Failed to insert media '{cdp_media_id}': {e}")
+            warnings.append(f"Failed to insert media batch: {e}")
 
     logger.info("camtrapdp_import_media", inserted=media_inserted)
 
-    # ── 5. Insert observations ─────────────────────────────────────────
+    # ── 5. Insert observations (bulk, chunked) ─────────────────────────
     obs_inserted = 0
+    obs_batch: list[dict] = []
 
     for o in pkg.observations:
         cdp_dep_id = o.get("deploymentID", "").strip()
@@ -409,12 +428,23 @@ def import_package(
             "observation_comments": _str(o.get("observationComments")),
         }
         row = {k: v for k, v in row.items() if v is not None}
+        obs_batch.append(row)
 
+        if len(obs_batch) >= BULK_CHUNK:
+            try:
+                svc.table("observations").insert(obs_batch).execute()
+                obs_inserted += len(obs_batch)
+            except Exception as e:
+                warnings.append(f"Failed to insert observation batch: {e}")
+            obs_batch = []
+
+    # Flush remaining observations
+    if obs_batch:
         try:
-            svc.table("observations").insert(row).execute()
-            obs_inserted += 1
+            svc.table("observations").insert(obs_batch).execute()
+            obs_inserted += len(obs_batch)
         except Exception as e:
-            warnings.append(f"Failed to insert observation: {e}")
+            warnings.append(f"Failed to insert observation batch: {e}")
 
     logger.info(
         "camtrapdp_import_complete",

@@ -43,6 +43,11 @@ async def import_camtrapdp(
     if not file.filename or not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only .zip files are accepted.")
 
+    if file.size and file.size > MAX_UPLOAD_BYTES:
+        raise HTTPException(
+            status_code=413,
+            detail=f"File exceeds the {MAX_UPLOAD_BYTES // 1_048_576} MB limit.",
+        )
     zip_bytes = await file.read()
     if len(zip_bytes) > MAX_UPLOAD_BYTES:
         raise HTTPException(
@@ -53,12 +58,7 @@ async def import_camtrapdp(
     # ── Resolve user's primary organisation ───────────────────────────
     # Remember: user_roles uses scope_id (not organisation_id) + scope_type
     org_response = await asyncio.to_thread(
-        lambda: svc.table("user_roles")
-        .select("scope_id, role")
-        .eq("user_id", user.id)
-        .eq("scope_type", "organisation")
-        .limit(1)
-        .execute()
+        lambda: svc.table("user_roles").select("scope_id, role").eq("user_id", user.id).eq("scope_type", "organisation").limit(1).execute()
     )
 
     if not org_response.data:
@@ -90,9 +90,7 @@ async def import_camtrapdp(
 
     # ── Run import (blocking I/O — run in thread) ──────────────────────
     try:
-        result: CamtrapImportResult = await asyncio.to_thread(
-            domain.import_package, pkg, user.id, org_id, svc
-        )
+        result: CamtrapImportResult = await asyncio.to_thread(domain.import_package, pkg, user.id, org_id, svc)
     except Exception as exc:
         logger.error("camtrapdp_import_failed", error=str(exc))
         raise HTTPException(

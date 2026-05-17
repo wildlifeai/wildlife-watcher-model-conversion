@@ -1,6 +1,7 @@
 """
 Pydantic schemas for CamtrapDP import/export operations.
 """
+
 from pydantic import BaseModel
 
 
