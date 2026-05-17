@@ -57,3 +57,19 @@ def mock_user():
     user.id = "test-user-id-000"
     user.email = "test@wildlife.ai"
     return user
+
+
+@pytest.fixture(autouse=True)
+def _clear_memory_cache():
+    """Clear the in-memory TTL cache between tests.
+
+    Without this, cached manager_roles from one test class leak into the
+    next (e.g. an empty list from a non-manager test poisons subsequent
+    tests that expect a manager role).
+    """
+    from app.services.cache import _memory_cache
+
+    _memory_cache.clear()
+    yield
+    _memory_cache.clear()
+
