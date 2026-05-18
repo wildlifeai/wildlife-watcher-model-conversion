@@ -2,10 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Media serving endpoints — proxy images from private storage.
 
-GET /api/media/{media_id}/image → streams the image bytes
+GET /api/media/{media_id}/image?size=thumb → low-res thumbnail (grid)
+GET /api/media/{media_id}/image?size=full  → full resolution (detail panel)
 """
 
-from fastapi import APIRouter, Depends, HTTPException
+from typing import Literal
+
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import Response
 
 from app.dependencies import get_current_user
@@ -18,18 +21,17 @@ router = APIRouter(prefix="/api/media", tags=["media"])
 @router.get("/{media_id}/image")
 async def get_media_image(
     media_id: str,
+    size: Literal["thumb", "full"] = Query("thumb", description="Image size: thumb (grid) or full (detail)"),
     user=Depends(get_current_user),
 ):
     """Serve a media image by resolving its file_path through the provider registry.
 
+    - ``size=thumb``: fast low-res preview for the thumbnail grid
+    - ``size=full``: high-res download for the detail panel (on-demand)
+
     Uses the authenticated user's Supabase client so RLS enforces
     project membership — users can only view media they have access to.
-
-    Returns:
-        200 with image bytes if resolvable
-        404 if media not found or file_path not resolvable
     """
-    # Use anon client with user context — RLS enforces access
     client = supabase_client.create_anon_client()
 
     result = client.table("media").select("file_path").eq("id", media_id).maybe_single().execute()
@@ -39,7 +41,7 @@ async def get_media_image(
 
     file_path = result.data.get("file_path", "")
 
-    resolved = await resolve_media(file_path)
+    resolved = await resolve_media(file_path, size=size)
     if not resolved:
         raise HTTPException(
             status_code=404,
@@ -55,8 +57,10 @@ async def get_media_image(
         )
 
     image_bytes, content_type = resolved
+    # Thumbnails cache longer (10min), full-res shorter (5min) since they're on-demand
+    cache_ttl = 600 if size == "thumb" else 300
     return Response(
         content=image_bytes,
         media_type=content_type,
-        headers={"Cache-Control": "public, max-age=3600"},
+        headers={"Cache-Control": f"private, max-age={cache_ttl}"},
     )

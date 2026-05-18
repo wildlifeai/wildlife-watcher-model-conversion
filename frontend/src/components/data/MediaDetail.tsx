@@ -27,11 +27,11 @@ const LIFE_STAGES = ['adult', 'subadult', 'juvenile', 'hatchling', 'unknown']
 const SEX_OPTIONS = ['male', 'female', 'unknown']
 const OBS_TYPES = ['animal', 'human', 'vehicle', 'blank', 'unknown']
 
-function resolveImageUrl(filePath: string, mediaId: string): string | null {
+function resolveImageUrl(filePath: string, mediaId: string, size: 'thumb' | 'full' = 'full'): string | null {
   if (!filePath) return null
   if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath
   const apiBase = import.meta.env.VITE_API_BASE_URL || ''
-  return `${apiBase}/api/media/${mediaId}/image`
+  return `${apiBase}/api/media/${mediaId}/image?size=${size}`
 }
 
 export function MediaDetail({ media, onClose, onUpdated }: Props) {

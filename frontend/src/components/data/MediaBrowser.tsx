@@ -59,19 +59,13 @@ interface Props {
  * - Private storage (gdrive://, relative paths, etc.) → proxy through backend
  * - Empty/missing → null (placeholder shown)
  */
-function resolveImageUrl(filePath: string, mediaId: string): string | null {
+function resolveImageUrl(filePath: string, mediaId: string, size: 'thumb' | 'full' = 'thumb'): string | null {
   if (!filePath) return null
   // Public URLs can be used directly in <img src>
   if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath
   // Everything else goes through the backend proxy (gdrive://, s3://, relative paths, etc.)
   const apiBase = import.meta.env.VITE_API_BASE_URL || ''
-  return `${apiBase}/api/media/${mediaId}/image`
-}
-
-/** Check if a file_path is a local/private path that needs the proxy */
-function isProxiedPath(filePath: string): boolean {
-  if (!filePath) return true
-  return !filePath.startsWith('http://') && !filePath.startsWith('https://')
+  return `${apiBase}/api/media/${mediaId}/image?size=${size}`
 }
 
 // ── Component ────────────────────────────────────────────────────────────────

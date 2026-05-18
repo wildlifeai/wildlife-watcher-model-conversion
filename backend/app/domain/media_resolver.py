@@ -17,22 +17,25 @@ To add a new provider, implement an async function matching the
 ``Resolver`` signature and register it in the ``RESOLVERS`` dict.
 """
 
-from typing import Callable, Coroutine, Optional, Tuple
+from typing import Callable, Coroutine, Literal, Optional, Tuple
 
 import httpx
 import structlog
 
 logger = structlog.get_logger()
 
+# Type alias for image size: thumbnail (grid) or full (detail panel)
+ImageSize = Literal["thumb", "full"]
+
 # Type alias for a resolver function
-# Takes the path (without prefix) and returns (bytes, content_type) or None
-Resolver = Callable[[str], Coroutine[None, None, Optional[Tuple[bytes, str]]]]
+# Takes the path (without prefix) and size, returns (bytes, content_type) or None
+Resolver = Callable[[str, ImageSize], Coroutine[None, None, Optional[Tuple[bytes, str]]]]
 
 
 # ── Provider implementations ────────────────────────────────────────
 
 
-async def _resolve_public_url(url: str) -> Optional[Tuple[bytes, str]]:
+async def _resolve_public_url(url: str, size: ImageSize) -> Optional[Tuple[bytes, str]]:
     """Fetch an image from a public HTTP(S) URL."""
     try:
         async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
@@ -47,15 +50,39 @@ async def _resolve_public_url(url: str) -> Optional[Tuple[bytes, str]]:
         return None
 
 
-async def _resolve_gdrive(file_id: str) -> Optional[Tuple[bytes, str]]:
-    """Fetch an image from Google Drive using the service account."""
+async def _resolve_gdrive(file_id: str, size: ImageSize) -> Optional[Tuple[bytes, str]]:
+    """Fetch an image from Google Drive using the service account.
+
+    - thumb: uses Drive API thumbnailLink (fast, ~200px)
+    - full: downloads the complete file via get_media (high-res)
+    """
     try:
         from app.services.google_drive import GoogleDriveService
 
         svc = GoogleDriveService()
-        # Use the Drive API to download file content
         import asyncio
 
+        if size == "thumb":
+            # Use Drive's built-in thumbnail (much faster than full download)
+            def _get_thumbnail():
+                meta = svc._service.files().get(
+                    fileId=file_id,
+                    fields="thumbnailLink",
+                    supportsAllDrives=True,
+                ).execute()
+                return meta.get("thumbnailLink")
+
+            thumb_url = await asyncio.to_thread(_get_thumbnail)
+            if thumb_url:
+                # Drive thumbnail URLs are temporary but fast
+                async with httpx.AsyncClient(timeout=10.0, follow_redirects=True) as client:
+                    resp = await client.get(thumb_url)
+                    if resp.status_code == 200:
+                        return resp.content, resp.headers.get("content-type", "image/jpeg")
+
+            # Fall through to full download if thumbnail unavailable
+
+        # Full resolution download
         def _download():
             request = svc._service.files().get_media(fileId=file_id)
             import io
@@ -76,24 +103,20 @@ async def _resolve_gdrive(file_id: str) -> Optional[Tuple[bytes, str]]:
         return None
 
 
-async def _resolve_supabase(path: str) -> Optional[Tuple[bytes, str]]:
+async def _resolve_supabase(path: str, size: ImageSize) -> Optional[Tuple[bytes, str]]:
     """Placeholder for Supabase Storage resolution."""
-    # Future: download from Supabase Storage bucket
     logger.info("media_resolve_supabase_not_implemented", path=path)
     return None
 
 
-async def _resolve_s3(path: str) -> Optional[Tuple[bytes, str]]:
+async def _resolve_s3(path: str, size: ImageSize) -> Optional[Tuple[bytes, str]]:
     """Placeholder for AWS S3 resolution."""
-    # Future: download from S3 using boto3
     logger.info("media_resolve_s3_not_implemented", path=path)
     return None
 
 
 # ── Resolver registry ───────────────────────────────────────────────
 
-# Maps prefix → (strip_prefix, resolver_fn)
-# If strip_prefix is True, the prefix is removed before passing to the resolver
 RESOLVERS: dict[str, tuple[bool, Resolver]] = {
     "https://": (False, _resolve_public_url),
     "http://": (False, _resolve_public_url),
@@ -103,11 +126,12 @@ RESOLVERS: dict[str, tuple[bool, Resolver]] = {
 }
 
 
-async def resolve_media(file_path: str) -> Optional[Tuple[bytes, str]]:
+async def resolve_media(
+    file_path: str, size: ImageSize = "full"
+) -> Optional[Tuple[bytes, str]]:
     """Resolve a file_path to (bytes, content_type) using the appropriate provider.
 
-    Returns None if the path cannot be resolved (e.g. local relative path
-    with no matching provider).
+    Returns None if the path cannot be resolved.
     """
     if not file_path:
         return None
@@ -115,7 +139,7 @@ async def resolve_media(file_path: str) -> Optional[Tuple[bytes, str]]:
     for prefix, (strip, resolver) in RESOLVERS.items():
         if file_path.startswith(prefix):
             key = file_path[len(prefix):] if strip else file_path
-            return await resolver(key)
+            return await resolver(key, size)
 
     # No matching prefix — unresolvable local path
     logger.debug("media_resolve_no_provider", file_path=file_path)
