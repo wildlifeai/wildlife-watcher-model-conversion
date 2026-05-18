@@ -1,11 +1,21 @@
 import { useState, useRef, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import { apiClient } from '../../lib/apiClient'
 import { supabase } from '../../config/supabase'
 import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { PipelineStatusBox, type PipelineState, type LogEntry } from './PipelineStatusBox'
-import { INaturalistPanel } from './INaturalistPanel'
-import { ImageClustering } from './ImageClustering'
+// Temporarily commented out — re-enable when these features are restored
+// import { INaturalistPanel } from './INaturalistPanel'
+// import { ImageClustering } from './ImageClustering'
+
+interface CamtrapImportResult {
+  project_id: string
+  deployments_imported: number
+  media_imported: number
+  observations_imported: number
+  warnings: string[]
+}
 
 interface Deployment {
   id: string
@@ -61,10 +71,21 @@ export function AnalyseImages() {
   
   const [deployments, setDeployments] = useState<Deployment[]>([])
   const folderInputRef = useRef<HTMLInputElement>(null)
+  // const zipInputRef = useRef<HTMLInputElement>(null) // Temporarily disabled — ZIP picker commented out
   const lastSeenSeqRef = useRef<Record<string, number>>({})
 
   // Drive upload options
   const [uploadToDrive, setUploadToDrive] = useState(false)
+
+  // CamtrapDP import state
+  const [zipFile, setZipFile] = useState<File | null>(null)
+  const [camtrapImporting, setCamtrapImporting] = useState(false)
+  const [camtrapResult, setCamtrapResult] = useState<CamtrapImportResult | null>(null)
+  const [camtrapError, setCamtrapError] = useState<string | null>(null)
+
+  // Which upload mode is active
+  type UploadMode = 'idle' | 'images' | 'camtrapdp'
+  const uploadMode: UploadMode = zipFile ? 'camtrapdp' : files.length > 0 ? 'images' : 'idle'
 
   // Fetch all deployments from Supabase on mount for coordinate mapping
   useEffect(() => {
@@ -346,13 +367,62 @@ export function AnalyseImages() {
   })
 
   const processFiles = (incoming: File[]) => {
+    // Check for ZIP files first — route to CamtrapDP
+    const zips = incoming.filter(f => f.name.toLowerCase().endsWith('.zip'))
     const imageFiles = incoming.filter((f) =>
       f.type.startsWith('image/') || f.name.toLowerCase().endsWith('.jpg') || f.name.toLowerCase().endsWith('.jpeg')
     )
+
+    // Only route to CamtrapDP if there are ZIPs and no images
+    // (a folder with both images and a backup .zip should use the image path)
+    if (zips.length > 0 && imageFiles.length === 0) {
+      setZipFile(zips[0])
+      setFiles([])
+      setFilePaths([])
+      setResults([])
+      setCamtrapResult(null)
+      setCamtrapError(null)
+      setPipelineState({ totalFiles: 0, uploadedFiles: 0, jobs: [], logs: [], lastUpdateTs: Date.now() })
+      return
+    }
+
+    // Otherwise handle as image files
     const paths = imageFiles.map((f) => (f as any).entryPath || f.webkitRelativePath || f.name)
     setFiles(imageFiles)
     setFilePaths(paths)
     setResults([])
+    setZipFile(null)
+    setCamtrapResult(null)
+    setCamtrapError(null)
+    setPipelineState({ totalFiles: 0, uploadedFiles: 0, jobs: [], logs: [], lastUpdateTs: Date.now() })
+    lastSeenSeqRef.current = {}
+  }
+
+  const handleCamtrapImport = async () => {
+    if (!zipFile) return
+    setCamtrapImporting(true)
+    setCamtrapError(null)
+    setCamtrapResult(null)
+    try {
+      const form = new FormData()
+      form.append('file', zipFile)
+      const res = await apiClient.upload('/api/camtrapdp/import', form) as { data: CamtrapImportResult }
+      setCamtrapResult(res.data)
+    } catch (err: unknown) {
+      const msg = (err as any)?.response?.data?.detail || (err as any)?.response?.data?.error?.message || (err instanceof Error ? err.message : String(err))
+      setCamtrapError(msg)
+    } finally {
+      setCamtrapImporting(false)
+    }
+  }
+
+  const clearAll = () => {
+    setFiles([])
+    setFilePaths([])
+    setResults([])
+    setZipFile(null)
+    setCamtrapResult(null)
+    setCamtrapError(null)
     setPipelineState({ totalFiles: 0, uploadedFiles: 0, jobs: [], logs: [], lastUpdateTs: Date.now() })
     lastSeenSeqRef.current = {}
   }
@@ -377,14 +447,14 @@ export function AnalyseImages() {
 
   return (
     <div>
-      {/* iNaturalist connection panel (auto-hides when disabled) */}
-      <INaturalistPanel />
+      {/* iNaturalist connection panel — temporarily hidden for cleaner UX */}
+      {/* <INaturalistPanel /> */}
 
-      <h3 style={{ marginBottom: '0.5rem' }}>Analyse Camera Trap Images</h3>
+      <h3 style={{ marginBottom: '0.5rem' }}>Upload Data</h3>
       <p style={{ opacity: 0.7, marginBottom: '1.5rem' }}>
-        Upload JPEG images or drag-and-drop an entire SD card folder from your
-        Wildlife Watcher device. Deployment IDs are automatically extracted from
-        the folder structure (<code>MEDIA/&lt;id&gt;/IMAGES.NNN/</code>).
+        Upload a <strong>CamtrapDP package</strong> (.zip) to import labelled data from any camera trap tool,
+        or drag-and-drop a <strong>media folder</strong> from your Wildlife Watcher SD card.
+        The system auto-detects the format and routes to the correct pipeline.
       </p>
 
       <div
@@ -407,10 +477,10 @@ export function AnalyseImages() {
             {isDragging ? '📥' : '📂'}
           </div>
           <p style={{ fontWeight: 500, marginBottom: '0.25rem' }}>
-            {isDragging ? 'Drop to analyse' : 'Click to select folder or drag-and-drop here'}
+            {isDragging ? 'Drop to upload' : 'Click to select folder or drag-and-drop here'}
           </p>
           <p style={{ fontSize: '0.75rem', opacity: 0.6 }}>
-            Supports SD card directory structure (MEDIA/...)
+            Supports Wildlife Watcher SD card folders (MEDIA/...) and CamtrapDP ZIP packages
           </p>
         </div>
         <input
@@ -423,7 +493,137 @@ export function AnalyseImages() {
         />
       </div>
 
-      {/* Selected files summary */}
+      {/* ZIP file picker — temporarily hidden; users can drag-drop ZIP onto the main zone */}
+      {/*
+      <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
+        <button
+          onClick={() => zipInputRef.current?.click()}
+          style={{
+            padding: '0.375rem 1rem',
+            fontSize: '0.8125rem',
+            border: '1px solid var(--border)',
+            borderRadius: 'var(--radius)',
+            backgroundColor: 'transparent',
+            color: 'var(--text-color)',
+            cursor: 'pointer',
+            opacity: 0.7,
+          }}
+        >
+          📦 Or select a CamtrapDP .zip file
+        </button>
+        <input
+          ref={zipInputRef}
+          type="file"
+          accept=".zip"
+          style={{ display: 'none' }}
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) processFiles([f]) }}
+        />
+      </div>
+      */}
+
+      {/* ── CamtrapDP ZIP panel ────────────────────────────────────── */}
+      {uploadMode === 'camtrapdp' && zipFile && (
+        <div style={{
+          marginTop: '1rem',
+          padding: '1.25rem',
+          border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)',
+          backgroundColor: 'var(--surface)',
+        }}>
+          <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.75rem' }}>
+            <div>
+              <div style={{ fontWeight: 600, fontSize: '0.9375rem' }}>📦 CamtrapDP Package Detected</div>
+              <div style={{ fontSize: '0.8125rem', opacity: 0.7, marginTop: '0.25rem' }}>
+                {zipFile.name} — {(zipFile.size / 1024).toFixed(1)} KB
+              </div>
+            </div>
+            <button
+              onClick={clearAll}
+              style={{
+                padding: '0.25rem 0.5rem',
+                fontSize: '0.75rem',
+                border: '1px solid var(--border)',
+                borderRadius: 'var(--radius)',
+                backgroundColor: 'transparent',
+                color: 'var(--text-color)',
+                cursor: 'pointer',
+              }}
+            >
+              ✕ Clear
+            </button>
+          </div>
+
+          <p style={{ fontSize: '0.8125rem', opacity: 0.7, marginBottom: '0.75rem' }}>
+            This will create a new project and import all deployments, media records, and observations
+            from the CamtrapDP package. You can explore the imported data in <strong>My Data</strong> afterwards.
+          </p>
+
+          {!camtrapResult && (
+            <button
+              className="btn"
+              onClick={handleCamtrapImport}
+              disabled={camtrapImporting}
+              style={{ padding: '0.5rem 1.25rem' }}
+            >
+              {camtrapImporting ? '⏳ Importing…' : '⬆ Import CamtrapDP Package'}
+            </button>
+          )}
+
+          {camtrapError && (
+            <div style={{
+              marginTop: '0.75rem',
+              padding: '0.75rem',
+              borderRadius: 'var(--radius)',
+              backgroundColor: 'rgba(244,67,54,0.08)',
+              color: 'var(--error, #f44336)',
+              fontSize: '0.8125rem',
+            }}>
+              ⚠ {camtrapError}
+            </div>
+          )}
+
+          {camtrapResult && (
+            <div style={{
+              marginTop: '0.75rem',
+              padding: '1rem',
+              borderRadius: 'var(--radius)',
+              backgroundColor: 'rgba(76,175,80,0.08)',
+              border: '1px solid rgba(76,175,80,0.3)',
+              fontSize: '0.8125rem',
+            }}>
+              <div style={{ fontWeight: 600, marginBottom: '0.5rem', color: 'var(--primary)' }}>
+                ✓ Import successful
+              </div>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.5rem', marginBottom: '0.75rem' }}>
+                {[
+                  ['Deployments', camtrapResult.deployments_imported],
+                  ['Media records', camtrapResult.media_imported],
+                  ['Observations', camtrapResult.observations_imported],
+                ].map(([label, count]) => (
+                  <div key={label as string} style={{ textAlign: 'center', padding: '0.375rem', backgroundColor: 'var(--bg-color, #fff)', borderRadius: 'var(--radius)' }}>
+                    <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{count}</div>
+                    <div style={{ opacity: 0.6, fontSize: '0.75rem' }}>{label}</div>
+                  </div>
+                ))}
+              </div>
+              {camtrapResult.warnings.length > 0 && (
+                <div style={{ opacity: 0.7, marginBottom: '0.5rem' }}>
+                  <strong>Warnings:</strong>
+                  <ul style={{ margin: '0.25rem 0 0 1rem', padding: 0 }}>
+                    {camtrapResult.warnings.slice(0, 10).map((w, i) => <li key={i}>{w}</li>)}
+                    {camtrapResult.warnings.length > 10 && <li>…and {camtrapResult.warnings.length - 10} more</li>}
+                  </ul>
+                </div>
+              )}
+              <Link to="/my-data" style={{ color: 'var(--primary)', fontWeight: 500, fontSize: '0.875rem', textDecoration: 'none' }}>
+                View imported data in My Data →
+              </Link>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Selected files summary (image mode) */}
       {files.length > 0 && (
         <div style={{ textAlign: 'center', marginTop: '1rem', fontSize: '0.8125rem' }}>
           <strong>{files.length} images selected</strong>
@@ -544,7 +744,8 @@ export function AnalyseImages() {
         </div>
       )}
 
-      {/* ── Near-duplicate clustering ─────────────────────────── */}
+      {/* Near-duplicate clustering — temporarily hidden for cleaner UX */}
+      {/*
       <div
         style={{
           marginTop: '2.5rem',
@@ -554,6 +755,7 @@ export function AnalyseImages() {
       >
         <ImageClustering />
       </div>
+      */}
     </div>
   )
 }

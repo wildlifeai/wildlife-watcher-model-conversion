@@ -49,6 +49,7 @@ class Settings(BaseSettings):
     FF_CLUSTERING_ENABLED: bool = Field(False)
     FF_LORAWAN_WEBHOOKS_ENABLED: bool = Field(True)
     FF_PUBLIC_API_ENABLED: bool = Field(False)
+    FF_CAMTRAPDP_IMPORT_ENABLED: bool = Field(True, description="Enable CamtrapDP package import endpoint")
 
     # ── General ──────────────────────────────────────────────────────
     GENERAL_ORG_ID: str = Field(

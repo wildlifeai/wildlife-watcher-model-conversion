@@ -8,7 +8,12 @@ import { LoginPage } from './pages/LoginPage'
 import { MyDataPage } from './pages/MyDataPage'
 import { ManifestPage } from './pages/ManifestPage'
 import { UploadModelPage } from './pages/UploadModelPage'
-import { AnalyseImagesPage } from './pages/AnalyseImagesPage'
+import { UploadDataPage } from './pages/UploadDataPage'
+import { ResetPasswordPage } from './pages/ResetPasswordPage'
+import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage'
+import { SupportPage } from './pages/SupportPage'
+import { TermsOfServicePage } from './pages/TermsOfServicePage'
+import { ResourcesPage } from './pages/ResourcesPage'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from './lib/apiClient'
 import './styles/index.css'
@@ -54,10 +59,11 @@ function Layout({ children }: { children: React.ReactNode }) {
             Wildlife Watcher Web
           </Link>
           <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
+            <Link to="/resources" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Resources</Link>
             {user && (
               <>
                 <Link to="/my-data" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>My Data</Link>
-                <Link to="/analyse-images" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Analyse Images</Link>
+                <Link to="/upload-data" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Upload Data</Link>
                 <Link to="/manifest" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Prepare SD Card</Link>
                 {isOrgManager && (
                   <Link to="/upload-model" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Upload Model</Link>
@@ -84,15 +90,25 @@ function Layout({ children }: { children: React.ReactNode }) {
 
       <footer style={{
         borderTop: '1px solid var(--border)',
-        padding: '2rem 0',
+        padding: '3rem 0',
         backgroundColor: 'var(--surface)',
         color: 'var(--text-color)',
         textAlign: 'center',
-        opacity: 0.8,
-        fontSize: '0.875rem'
+        opacity: 0.9,
       }}>
-        <div className="container">
-          &copy; {new Date().getFullYear()} Wildlife.ai
+        <div className="container" style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '1.5rem' }}>
+
+          <div style={{ opacity: 0.7, fontSize: '0.875rem' }}>
+            &copy; {new Date().getFullYear()} Wildlife.ai
+            {' | '}
+            <Link to="/resources" style={{ color: 'inherit', textDecoration: 'underline' }}>Resources</Link>
+            {' | '}
+            <Link to="/privacy" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacy Policy</Link>
+            {' | '}
+            <Link to="/terms" style={{ color: 'inherit', textDecoration: 'underline' }}>Terms of Service</Link>
+            {' | '}
+            <Link to="/support" style={{ color: 'inherit', textDecoration: 'underline' }}>Support</Link>
+          </div>
         </div>
       </footer>
     </>
@@ -107,8 +123,14 @@ export default function App() {
           <Routes>
             <Route path="/" element={<HomePage />} />
             <Route path="/login" element={<LoginPage />} />
+            <Route path="/reset-password" element={<ResetPasswordPage />} />
+            <Route path="/privacy" element={<PrivacyPolicyPage />} />
+            <Route path="/support" element={<SupportPage />} />
+            <Route path="/terms" element={<TermsOfServicePage />} />
+            <Route path="/resources" element={<ResourcesPage />} />
             <Route path="/my-data" element={<RequireAuth><MyDataPage /></RequireAuth>} />
-            <Route path="/analyse-images" element={<RequireAuth><AnalyseImagesPage /></RequireAuth>} />
+            <Route path="/upload-data" element={<RequireAuth><UploadDataPage /></RequireAuth>} />
+            <Route path="/analyse-images" element={<Navigate to="/upload-data" replace />} />
             <Route path="/manifest" element={<RequireAuth><ManifestPage /></RequireAuth>} />
             <Route path="/upload-model" element={<RequireAuth><UploadModelPage /></RequireAuth>} />
           </Routes>
