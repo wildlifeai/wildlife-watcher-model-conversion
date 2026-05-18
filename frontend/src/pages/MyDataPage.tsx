@@ -1,5 +1,4 @@
 import { useState, useEffect, useMemo } from 'react'
-import { Link } from 'react-router-dom'
 import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { DeploymentMap } from '../components/data/DeploymentMap'
@@ -245,31 +244,7 @@ export function MyDataPage() {
         Browse projects and deployments, explore observation maps and reports, download CamtrapDP packages, or import data from other tools.
       </p>
 
-      {/* Upload data link */}
-      <div style={{
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0.875rem 1rem',
-        border: '1px solid var(--border)',
-        borderRadius: 'var(--radius)',
-        backgroundColor: 'var(--surface)',
-        marginBottom: '1.5rem',
-      }}>
-        <div>
-          <strong style={{ fontSize: '0.875rem' }}>📦 Upload Data</strong>
-          <span style={{ fontSize: '0.8125rem', opacity: 0.7, marginLeft: '0.5rem' }}>
-            Import a CamtrapDP package or Wildlife Watcher media folder
-          </span>
-        </div>
-        <Link
-          to="/upload-data"
-          className="btn"
-          style={{ padding: '0.375rem 0.875rem', textDecoration: 'none', fontSize: '0.8125rem' }}
-        >
-          Go to Upload Data →
-        </Link>
-      </div>
+
 
       {/* Sub-tabs */}
       <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: '1.5rem' }}>
