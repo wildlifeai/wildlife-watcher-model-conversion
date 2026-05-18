@@ -1,4 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
+import { Link } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import { apiClient } from '../../lib/apiClient'
 import { supabase } from '../../config/supabase'
@@ -367,7 +368,13 @@ export function AnalyseImages() {
   const processFiles = (incoming: File[]) => {
     // Check for ZIP files first — route to CamtrapDP
     const zips = incoming.filter(f => f.name.toLowerCase().endsWith('.zip'))
-    if (zips.length > 0) {
+    const imageFiles = incoming.filter((f) =>
+      f.type.startsWith('image/') || f.name.toLowerCase().endsWith('.jpg') || f.name.toLowerCase().endsWith('.jpeg')
+    )
+
+    // Only route to CamtrapDP if there are ZIPs and no images
+    // (a folder with both images and a backup .zip should use the image path)
+    if (zips.length > 0 && imageFiles.length === 0) {
       setZipFile(zips[0])
       setFiles([])
       setFilePaths([])
@@ -379,9 +386,6 @@ export function AnalyseImages() {
     }
 
     // Otherwise handle as image files
-    const imageFiles = incoming.filter((f) =>
-      f.type.startsWith('image/') || f.name.toLowerCase().endsWith('.jpg') || f.name.toLowerCase().endsWith('.jpeg')
-    )
     const paths = imageFiles.map((f) => (f as any).entryPath || f.webkitRelativePath || f.name)
     setFiles(imageFiles)
     setFilePaths(paths)
@@ -404,7 +408,7 @@ export function AnalyseImages() {
       const res = await apiClient.upload('/api/camtrapdp/import', form) as { data: CamtrapImportResult }
       setCamtrapResult(res.data)
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : 'Import failed. Check the file and try again.'
+      const msg = (err as any)?.response?.data?.detail || (err as any)?.response?.data?.error?.message || (err instanceof Error ? err.message : String(err))
       setCamtrapError(msg)
     } finally {
       setCamtrapImporting(false)
@@ -593,7 +597,7 @@ export function AnalyseImages() {
                   ['Media records', camtrapResult.media_imported],
                   ['Observations', camtrapResult.observations_imported],
                 ].map(([label, count]) => (
-                  <div key={String(label)} style={{ textAlign: 'center', padding: '0.375rem', backgroundColor: 'var(--bg-color, #fff)', borderRadius: 'var(--radius)' }}>
+                  <div key={label as string} style={{ textAlign: 'center', padding: '0.375rem', backgroundColor: 'var(--bg-color, #fff)', borderRadius: 'var(--radius)' }}>
                     <div style={{ fontSize: '1.125rem', fontWeight: 700 }}>{count}</div>
                     <div style={{ opacity: 0.6, fontSize: '0.75rem' }}>{label}</div>
                   </div>
@@ -608,9 +612,9 @@ export function AnalyseImages() {
                   </ul>
                 </div>
               )}
-              <a href="/my-data" style={{ color: 'var(--primary)', fontWeight: 500, fontSize: '0.875rem' }}>
+              <Link to="/my-data" style={{ color: 'var(--primary)', fontWeight: 500, fontSize: '0.875rem', textDecoration: 'none' }}>
                 View imported data in My Data →
-              </a>
+              </Link>
             </div>
           )}
         </div>

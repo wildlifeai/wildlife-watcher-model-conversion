@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { Link } from 'react-router-dom'
 import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { DeploymentMap } from '../components/data/DeploymentMap'
@@ -261,13 +262,13 @@ export function MyDataPage() {
             Import a CamtrapDP package or Wildlife Watcher media folder
           </span>
         </div>
-        <a
-          href="/upload-data"
+        <Link
+          to="/upload-data"
           className="btn"
           style={{ padding: '0.375rem 0.875rem', textDecoration: 'none', fontSize: '0.8125rem' }}
         >
           Go to Upload Data →
-        </a>
+        </Link>
       </div>
 
       {/* Sub-tabs */}

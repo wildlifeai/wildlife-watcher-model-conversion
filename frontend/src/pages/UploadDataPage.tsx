@@ -7,6 +7,3 @@ export function UploadDataPage() {
     </div>
   )
 }
-
-/** @deprecated — kept for backward-compatible import in App.tsx redirect */
-export { UploadDataPage as AnalyseImagesPage }
