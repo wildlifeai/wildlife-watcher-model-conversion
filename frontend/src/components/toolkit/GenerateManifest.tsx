@@ -84,11 +84,13 @@ export function GenerateManifest() {
   const { data: job } = useJob(jobId)
 
   // Auto-transition to 'ready' when job completes
+  /* eslint-disable react-hooks/set-state-in-effect */
   useEffect(() => {
     if (job && (job.status === 'completed' || job.status === 'completed_with_errors') && step === 'generating') {
       setStep('ready')
     }
   }, [job, step])
+  /* eslint-enable react-hooks/set-state-in-effect */
 
   const generateMutation = useMutation({
     mutationFn: () => {
@@ -99,6 +101,7 @@ export function GenerateManifest() {
         github_branch: githubBranch,
       })
     },
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     onSuccess: (response: any) => {
       setJobId(response.data?.job_id)
       setStep('generating')
@@ -118,6 +121,7 @@ export function GenerateManifest() {
   }
 
   // Get the selected project name for the summary
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const selectedProject = projects?.find((p: any) => p.id === selectedProjectId) as any
 
   const selectStyle = {
@@ -222,6 +226,7 @@ export function GenerateManifest() {
                         onChange={(e) => setSelectedProjectId(e.target.value)}
                         style={selectStyle}
                       >
+                        {/* eslint-disable-next-line @typescript-eslint/no-explicit-any */}
                         {projects.map((p: any) => (
                           <option key={p.id} value={p.id}>
                             {p.name} {p.organisations?.name ? `(${p.organisations.name})` : ''}

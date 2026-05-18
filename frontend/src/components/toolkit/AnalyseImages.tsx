@@ -5,8 +5,9 @@ import { apiClient } from '../../lib/apiClient'
 import { supabase } from '../../config/supabase'
 import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { PipelineStatusBox, type PipelineState, type LogEntry } from './PipelineStatusBox'
-import { INaturalistPanel } from './INaturalistPanel'
-import { ImageClustering } from './ImageClustering'
+// Temporarily commented out — re-enable when these features are restored
+// import { INaturalistPanel } from './INaturalistPanel'
+// import { ImageClustering } from './ImageClustering'
 
 interface CamtrapImportResult {
   project_id: string
@@ -70,7 +71,7 @@ export function AnalyseImages() {
   
   const [deployments, setDeployments] = useState<Deployment[]>([])
   const folderInputRef = useRef<HTMLInputElement>(null)
-  const zipInputRef = useRef<HTMLInputElement>(null)
+  // const zipInputRef = useRef<HTMLInputElement>(null) // Temporarily disabled — ZIP picker commented out
   const lastSeenSeqRef = useRef<Record<string, number>>({})
 
   // Drive upload options

@@ -91,8 +91,6 @@ export function MediaBrowser({ projectId, deployments }: Props) {
   // Fetch media
   useEffect(() => {
     if (!user) return
-    setLoading(true)
-    setError(null)
 
     const deploymentIds = filterDeployment
       ? [filterDeployment]
@@ -100,9 +98,12 @@ export function MediaBrowser({ projectId, deployments }: Props) {
 
     if (deploymentIds.length === 0) {
       setMedia([])
-      setLoading(false)
       return
     }
+
+    let cancelled = false
+    setLoading(true)
+    setError(null)
 
     supabase
       .from('media')
@@ -112,10 +113,14 @@ export function MediaBrowser({ projectId, deployments }: Props) {
       .order('timestamp', { ascending: false, nullsFirst: false })
       .limit(200)
       .then(({ data, error: err }) => {
+        if (cancelled) return
         if (err) { setError(err.message); setLoading(false); return }
         setMedia((data || []) as unknown as MediaRecord[])
         setLoading(false)
       })
+
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, scopedDeployments, filterDeployment])
 
   // Derive filter options from loaded data
