@@ -52,16 +52,26 @@ interface Props {
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
-/** Try to resolve a file_path to a displayable image URL */
-function resolveImageUrl(filePath: string): string | null {
+/**
+ * Resolve a file_path to a displayable image URL.
+ *
+ * - Public URLs (http/https) → use directly
+ * - Private storage (gdrive://, relative paths, etc.) → proxy through backend
+ * - Empty/missing → null (placeholder shown)
+ */
+function resolveImageUrl(filePath: string, mediaId: string): string | null {
   if (!filePath) return null
+  // Public URLs can be used directly in <img src>
   if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath
-  // Supabase storage path
-  if (filePath.startsWith('media-files/') || filePath.startsWith('media/')) {
-    const { data } = supabase.storage.from('media-files').getPublicUrl(filePath)
-    return data?.publicUrl || null
-  }
-  return null // Relative path from CamtrapDP — not accessible
+  // Everything else goes through the backend proxy (gdrive://, s3://, relative paths, etc.)
+  const apiBase = import.meta.env.VITE_API_BASE_URL || ''
+  return `${apiBase}/api/media/${mediaId}/image`
+}
+
+/** Check if a file_path is a local/private path that needs the proxy */
+function isProxiedPath(filePath: string): boolean {
+  if (!filePath) return true
+  return !filePath.startsWith('http://') && !filePath.startsWith('https://')
 }
 
 // ── Component ────────────────────────────────────────────────────────────────
@@ -155,7 +165,7 @@ export function MediaBrowser({ projectId, deployments }: Props) {
     withDetections: filtered.filter(m => m.detections.length > 0).length,
     annotated: filtered.filter(m => m.observations.length > 0).length,
     favorites: filtered.filter(m => m.favorite).length,
-    noImage: filtered.filter(m => !resolveImageUrl(m.file_path)).length,
+    noImage: filtered.filter(m => !m.file_path).length,
   }), [filtered])
 
   const selectedMedia = filtered.find(m => m.id === selectedMediaId) || null
@@ -247,7 +257,7 @@ export function MediaBrowser({ projectId, deployments }: Props) {
             gap: '0.75rem',
           }}>
             {filtered.map(m => {
-              const imgUrl = resolveImageUrl(m.file_path)
+              const imgUrl = resolveImageUrl(m.file_path, m.id)
               const topObs = m.observations[0]
               const topDet = m.detections[0]
               const label = topObs?.scientific_name || topDet?.category || null

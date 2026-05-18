@@ -27,19 +27,16 @@ const LIFE_STAGES = ['adult', 'subadult', 'juvenile', 'hatchling', 'unknown']
 const SEX_OPTIONS = ['male', 'female', 'unknown']
 const OBS_TYPES = ['animal', 'human', 'vehicle', 'blank', 'unknown']
 
-function resolveImageUrl(filePath: string): string | null {
+function resolveImageUrl(filePath: string, mediaId: string): string | null {
   if (!filePath) return null
   if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath
-  if (filePath.startsWith('media-files/') || filePath.startsWith('media/')) {
-    const { data } = supabase.storage.from('media-files').getPublicUrl(filePath)
-    return data?.publicUrl || null
-  }
-  return null
+  const apiBase = import.meta.env.VITE_API_BASE_URL || ''
+  return `${apiBase}/api/media/${mediaId}/image`
 }
 
 export function MediaDetail({ media, onClose, onUpdated }: Props) {
   const { user } = useAuth()
-  const imgUrl = resolveImageUrl(media.file_path)
+  const imgUrl = resolveImageUrl(media.file_path, media.id)
 
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
