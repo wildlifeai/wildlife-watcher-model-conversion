@@ -3,7 +3,7 @@ import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { DeploymentMap } from '../components/data/DeploymentMap'
 import { ObservationReports } from '../components/data/ObservationReports'
-import { CamtrapImport } from '../components/data/CamtrapImport'
+import { MediaBrowser } from '../components/data/MediaBrowser'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -38,7 +38,7 @@ interface Observation {
   created_at: string
 }
 
-type Tab = 'projects' | 'deployments' | 'map' | 'reports'
+type Tab = 'projects' | 'deployments' | 'map' | 'reports' | 'media'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -235,6 +235,7 @@ export function MyDataPage() {
     { id: 'deployments', label: '📍 Deployments' },
     { id: 'map', label: '🗺 Map' },
     { id: 'reports', label: '📊 Reports' },
+    { id: 'media', label: '📷 Media' },
   ]
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -245,15 +246,7 @@ export function MyDataPage() {
         Browse projects and deployments, explore observation maps and reports, download CamtrapDP packages, or import data from other tools.
       </p>
 
-      {/* CamtrapDP import panel */}
-      <CamtrapImport onImportComplete={(projectId) => {
-        setSelectedProject(projectId)
-        setTab('map')
-        // Refresh projects list
-        supabase.from('projects').select('id, name, description, created_at')
-          .order('created_at', { ascending: false })
-          .then(({ data }) => { if (data) setProjects(data) })
-      }} />
+
 
       {/* Sub-tabs */}
       <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: '1.5rem' }}>
@@ -436,6 +429,14 @@ export function MyDataPage() {
           observations={observations}
           deployments={deployments}
           loading={obsLoading}
+        />
+      )}
+
+      {/* ── Media tab ──────────────────────────────────────────────────────── */}
+      {tab === 'media' && (
+        <MediaBrowser
+          projectId={selectedProject}
+          deployments={deployments.map(d => ({ id: d.id, location_name: d.location_name, project_id: d.project_id }))}
         />
       )}
     </div>
