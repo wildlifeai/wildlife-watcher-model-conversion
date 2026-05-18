@@ -446,8 +446,8 @@ export function AnalyseImages() {
 
   return (
     <div>
-      {/* iNaturalist connection panel (auto-hides when disabled) */}
-      <INaturalistPanel />
+      {/* iNaturalist connection panel — temporarily hidden for cleaner UX */}
+      {/* <INaturalistPanel /> */}
 
       <h3 style={{ marginBottom: '0.5rem' }}>Upload Data</h3>
       <p style={{ opacity: 0.7, marginBottom: '1.5rem' }}>
@@ -492,7 +492,8 @@ export function AnalyseImages() {
         />
       </div>
 
-      {/* Separate ZIP file picker */}
+      {/* ZIP file picker — temporarily hidden; users can drag-drop ZIP onto the main zone */}
+      {/*
       <div style={{ textAlign: 'center', marginTop: '0.75rem' }}>
         <button
           onClick={() => zipInputRef.current?.click()}
@@ -517,6 +518,7 @@ export function AnalyseImages() {
           onChange={(e) => { const f = e.target.files?.[0]; if (f) processFiles([f]) }}
         />
       </div>
+      */}
 
       {/* ── CamtrapDP ZIP panel ────────────────────────────────────── */}
       {uploadMode === 'camtrapdp' && zipFile && (
@@ -741,7 +743,8 @@ export function AnalyseImages() {
         </div>
       )}
 
-      {/* ── Near-duplicate clustering ─────────────────────────── */}
+      {/* Near-duplicate clustering — temporarily hidden for cleaner UX */}
+      {/*
       <div
         style={{
           marginTop: '2.5rem',
@@ -751,6 +754,7 @@ export function AnalyseImages() {
       >
         <ImageClustering />
       </div>
+      */}
     </div>
   )
 }
