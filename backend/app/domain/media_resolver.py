@@ -65,11 +65,15 @@ async def _resolve_gdrive(file_id: str, size: ImageSize) -> Optional[Tuple[bytes
         if size == "thumb":
             # Use Drive's built-in thumbnail (much faster than full download)
             def _get_thumbnail():
-                meta = svc._service.files().get(
-                    fileId=file_id,
-                    fields="thumbnailLink",
-                    supportsAllDrives=True,
-                ).execute()
+                meta = (
+                    svc._service.files()
+                    .get(
+                        fileId=file_id,
+                        fields="thumbnailLink",
+                        supportsAllDrives=True,
+                    )
+                    .execute()
+                )
                 return meta.get("thumbnailLink")
 
             thumb_url = await asyncio.to_thread(_get_thumbnail)
@@ -126,9 +130,7 @@ RESOLVERS: dict[str, tuple[bool, Resolver]] = {
 }
 
 
-async def resolve_media(
-    file_path: str, size: ImageSize = "full"
-) -> Optional[Tuple[bytes, str]]:
+async def resolve_media(file_path: str, size: ImageSize = "full") -> Optional[Tuple[bytes, str]]:
     """Resolve a file_path to (bytes, content_type) using the appropriate provider.
 
     Returns None if the path cannot be resolved.
@@ -138,7 +140,7 @@ async def resolve_media(
 
     for prefix, (strip, resolver) in RESOLVERS.items():
         if file_path.startswith(prefix):
-            key = file_path[len(prefix):] if strip else file_path
+            key = file_path[len(prefix) :] if strip else file_path
             return await resolver(key, size)
 
     # No matching prefix — unresolvable local path
