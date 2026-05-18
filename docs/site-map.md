@@ -21,21 +21,21 @@
 | Route | Component | Description |
 |-------|-----------|-------------|
 | `/my-data` | `MyDataPage` | Data dashboard with 4 tabs: Projects, Deployments, Map (Leaflet), Reports (Recharts). Includes CSV and CamtrapDP export |
-| `/upload-data` | `UploadDataPage` | Unified data upload — auto-detects ZIP (CamtrapDP import) vs media folders (EXIF analysis). Includes Drive upload toggle, iNaturalist panel, image clustering |
+| `/analyse-images` | `AnalyseImagesPage` | Image analysis — upload SD card media folders for EXIF extraction, iNaturalist lookup, image clustering. Includes Drive upload toggle |
 | `/manifest` | `ManifestPage` | Prepare SD Card — download firmware + AI model package for field deployment |
 | `/upload-model` | `UploadModelPage` | AI model upload (organisation managers only) — custom, pre-trained, or SenseCap Zoo models |
 
-### Redirects
+### Planned Renames
 
-| Old Route | Redirects To | Reason |
-|-----------|-------------|--------|
-| `/analyse-images` | `/upload-data` | Renamed in May 2026 — "Analyse Images" → "Upload Data" |
+| Current Route | New Route | Status |
+|---------------|-----------|--------|
+| `/analyse-images` | `/upload-data` | Pending — will unify CamtrapDP import + media upload into single page |
 
 ## Navigation Structure
 
 ### Header Nav (authenticated)
 ```
-Wildlife Watcher Web | Resources | My Data | Upload Data | Prepare SD Card | [Upload Model*] | user@email | Logout
+Wildlife Watcher Web | Resources | My Data | Analyse Images | Prepare SD Card | [Upload Model*] | user@email | Logout
 ```
 \* Upload Model only visible to organisation managers.
 
@@ -55,32 +55,38 @@ Wildlife Watcher Web | Resources | Login
 |-----------|----------|---------|
 | `DeploymentMap` | `components/data/DeploymentMap.tsx` | My Data (Map tab) |
 | `ObservationReports` | `components/data/ObservationReports.tsx` | My Data (Reports tab) |
-| `AnalyseImages` | `components/toolkit/AnalyseImages.tsx` | Upload Data page |
+| `AnalyseImages` | `components/toolkit/AnalyseImages.tsx` | Analyse Images page |
 | `PipelineStatusBox` | `components/toolkit/PipelineStatusBox.tsx` | Upload Data (progress tracking) |
 | `INaturalistPanel` | `components/toolkit/INaturalistPanel.tsx` | Upload Data (species lookup) |
-| `ImageClustering` | `components/toolkit/ImageClustering.tsx` | Upload Data (duplicate detection) |
+| `ImageClustering` | `components/toolkit/ImageClustering.tsx` | Analyse Images (duplicate detection) |
 
-## Upload Data Flow
+## Upload / Import Flows
 
-The Upload Data page (`/upload-data`) is a unified entry point for all data ingestion:
+### CamtrapDP Import (My Data page)
+
+The My Data page includes a collapsible `CamtrapImport` panel:
 
 ```
-User drops/selects files
-        │
-        ├─ .zip file detected?
-        │       ↓
-        │   CamtrapDP Import Pipeline
-        │   POST /api/camtrapdp/import
-        │   → Creates project, devices, deployments, media, observations
-        │   → Shows result summary → Link to My Data
-        │
-        └─ Image files detected?
-                ↓
-            EXIF Analysis Pipeline
-            POST /api/exif/parse (batched, 10 images per request)
-            → Extracts GPS, timestamps, deployment IDs, AI detections
-            → Optional: upload to Google Drive
-            → Shows results table with deployment matching
+User expands "📦 Import CamtrapDP Package" panel
+        ↓
+    Selects .zip file
+        ↓
+    POST /api/camtrapdp/import
+    → Creates project, devices, deployments, media, observations
+    → Shows result summary → Auto-switches to Map tab
+```
+
+### EXIF Analysis (Analyse Images page)
+
+```
+User drops/selects SD card media folder
+        ↓
+    Image files extracted from folder structure
+        ↓
+    POST /api/exif/parse (batched, 10 images per request)
+    → Extracts GPS, timestamps, deployment IDs, AI detections
+    → Optional: upload to Google Drive
+    → Shows results table with deployment matching
 ```
 
 ## Legal Pages Summary
