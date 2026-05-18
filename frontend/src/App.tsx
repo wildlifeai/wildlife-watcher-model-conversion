@@ -12,6 +12,7 @@ import { AnalyseImagesPage } from './pages/AnalyseImagesPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage'
 import { SupportPage } from './pages/SupportPage'
+import { TermsOfServicePage } from './pages/TermsOfServicePage'
 import { ResourcesPage } from './pages/ResourcesPage'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from './lib/apiClient'
@@ -104,6 +105,8 @@ function Layout({ children }: { children: React.ReactNode }) {
             {' | '}
             <Link to="/privacy" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' | '}
+            <Link to="/terms" style={{ color: 'inherit', textDecoration: 'underline' }}>Terms of Service</Link>
+            {' | '}
             <Link to="/support" style={{ color: 'inherit', textDecoration: 'underline' }}>Support</Link>
           </div>
         </div>
@@ -123,6 +126,7 @@ export default function App() {
             <Route path="/reset-password" element={<ResetPasswordPage />} />
             <Route path="/privacy" element={<PrivacyPolicyPage />} />
             <Route path="/support" element={<SupportPage />} />
+            <Route path="/terms" element={<TermsOfServicePage />} />
             <Route path="/resources" element={<ResourcesPage />} />
             <Route path="/my-data" element={<RequireAuth><MyDataPage /></RequireAuth>} />
             <Route path="/analyse-images" element={<RequireAuth><AnalyseImagesPage /></RequireAuth>} />
