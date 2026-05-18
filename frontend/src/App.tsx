@@ -8,7 +8,7 @@ import { LoginPage } from './pages/LoginPage'
 import { MyDataPage } from './pages/MyDataPage'
 import { ManifestPage } from './pages/ManifestPage'
 import { UploadModelPage } from './pages/UploadModelPage'
-import { AnalyseImagesPage } from './pages/AnalyseImagesPage'
+import { UploadDataPage } from './pages/UploadDataPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage'
 import { SupportPage } from './pages/SupportPage'
@@ -62,7 +62,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             {user && (
               <>
                 <Link to="/my-data" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>My Data</Link>
-                <Link to="/analyse-images" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Analyse Images</Link>
+                <Link to="/upload-data" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Upload Data</Link>
                 <Link to="/manifest" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Prepare SD Card</Link>
                 {isOrgManager && (
                   <Link to="/upload-model" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Upload Model</Link>
@@ -125,7 +125,8 @@ export default function App() {
             <Route path="/support" element={<SupportPage />} />
             <Route path="/resources" element={<ResourcesPage />} />
             <Route path="/my-data" element={<RequireAuth><MyDataPage /></RequireAuth>} />
-            <Route path="/analyse-images" element={<RequireAuth><AnalyseImagesPage /></RequireAuth>} />
+            <Route path="/upload-data" element={<RequireAuth><UploadDataPage /></RequireAuth>} />
+            <Route path="/analyse-images" element={<Navigate to="/upload-data" replace />} />
             <Route path="/manifest" element={<RequireAuth><ManifestPage /></RequireAuth>} />
             <Route path="/upload-model" element={<RequireAuth><UploadModelPage /></RequireAuth>} />
           </Routes>

@@ -3,7 +3,6 @@ import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { DeploymentMap } from '../components/data/DeploymentMap'
 import { ObservationReports } from '../components/data/ObservationReports'
-import { CamtrapImport } from '../components/data/CamtrapImport'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -245,15 +244,31 @@ export function MyDataPage() {
         Browse projects and deployments, explore observation maps and reports, download CamtrapDP packages, or import data from other tools.
       </p>
 
-      {/* CamtrapDP import panel */}
-      <CamtrapImport onImportComplete={(projectId) => {
-        setSelectedProject(projectId)
-        setTab('map')
-        // Refresh projects list
-        supabase.from('projects').select('id, name, description, created_at')
-          .order('created_at', { ascending: false })
-          .then(({ data }) => { if (data) setProjects(data) })
-      }} />
+      {/* Upload data link */}
+      <div style={{
+        display: 'flex',
+        alignItems: 'center',
+        justifyContent: 'space-between',
+        padding: '0.875rem 1rem',
+        border: '1px solid var(--border)',
+        borderRadius: 'var(--radius)',
+        backgroundColor: 'var(--surface)',
+        marginBottom: '1.5rem',
+      }}>
+        <div>
+          <strong style={{ fontSize: '0.875rem' }}>📦 Upload Data</strong>
+          <span style={{ fontSize: '0.8125rem', opacity: 0.7, marginLeft: '0.5rem' }}>
+            Import a CamtrapDP package or Wildlife Watcher media folder
+          </span>
+        </div>
+        <a
+          href="/upload-data"
+          className="btn"
+          style={{ padding: '0.375rem 0.875rem', textDecoration: 'none', fontSize: '0.8125rem' }}
+        >
+          Go to Upload Data →
+        </a>
+      </div>
 
       {/* Sub-tabs */}
       <div style={{ display: 'flex', gap: 0, borderBottom: '2px solid var(--border)', marginBottom: '1.5rem' }}>
