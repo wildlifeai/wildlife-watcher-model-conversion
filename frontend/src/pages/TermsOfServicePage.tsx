@@ -1,4 +1,4 @@
-
+import { Link } from 'react-router-dom'
 
 export function TermsOfServicePage() {
   return (
@@ -68,7 +68,7 @@ export function TermsOfServicePage() {
       </ul>
 
       <h2 style={{ marginTop: '2rem', marginBottom: '1rem' }}>6. Privacy</h2>
-      <p>Your use of the platform is also governed by our <a href="/privacy">Privacy Policy</a>, which describes how we collect, use, and protect your personal information.</p>
+      <p>Your use of the platform is also governed by our <Link to="/privacy">Privacy Policy</Link>, which describes how we collect, use, and protect your personal information.</p>
 
       <h2 style={{ marginTop: '2rem', marginBottom: '1rem' }}>7. Service Availability</h2>
       <ul style={{ paddingLeft: '1.5rem', marginBottom: '1rem' }}>
@@ -91,7 +91,7 @@ export function TermsOfServicePage() {
       <ul style={{ paddingLeft: '1.5rem', marginBottom: '1rem' }}>
         <li><strong>By you:</strong> You may delete your account at any time by submitting our <a href="https://forms.gle/aasjsW5N26giYDk96" target="_blank" rel="noreferrer">Account Deletion Request Form</a> or emailing <a href="mailto:contact@wildlife.ai">contact@wildlife.ai</a>.</li>
         <li><strong>By us:</strong> We may suspend or terminate your account if you violate these Terms, with or without notice depending on the severity of the violation.</li>
-        <li><strong>Effect of termination:</strong> Upon account deletion, your personal data is removed in accordance with our <a href="/privacy#account-deletion">Privacy Policy</a>. Anonymised scientific data may be retained.</li>
+        <li><strong>Effect of termination:</strong> Upon account deletion, your personal data is removed in accordance with our <Link to="/privacy#account-deletion">Privacy Policy</Link>. Anonymised scientific data may be retained.</li>
       </ul>
 
       <h2 style={{ marginTop: '2rem', marginBottom: '1rem' }}>10. Changes to These Terms</h2>

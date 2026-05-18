@@ -1,4 +1,5 @@
-
+import React from 'react'
+import { Link } from 'react-router-dom'
 
 export function SupportPage() {
   return (
@@ -15,7 +16,7 @@ export function SupportPage() {
       <FaqItem q="How do I start a monitoring session?">
         Using the Wildlife Watcher mobile app, navigate to your Project and tap the blue "+" button to start monitoring.
         Follow the on-screen instructions to connect to your camera via Bluetooth, configure its settings, and finalise the setup.
-        See our <a href="/resources" style={{ color: 'var(--primary)' }}>Resources</a> page for a detailed step-by-step guide.
+        See our <Link to="/resources" style={{ color: 'var(--primary)' }}>Resources</Link> page for a detailed step-by-step guide.
       </FaqItem>
 
       <FaqItem q="Is Wildlife Watcher free to use?">
@@ -105,7 +106,7 @@ export function SupportPage() {
         or by emailing <a href="mailto:contact@wildlife.ai" style={{ color: 'var(--primary)' }}>contact@wildlife.ai</a>.
         Your request will be processed within 7–14 business days. Personal data is deleted; anonymised wildlife
         observation data is retained for research purposes.
-        See our <a href="/privacy#account-deletion" style={{ color: 'var(--primary)' }}>Privacy Policy</a> for full details.
+        See our <Link to="/privacy#account-deletion" style={{ color: 'var(--primary)' }}>Privacy Policy</Link> for full details.
       </FaqItem>
 
       {/* ── Contact ───────────────────────────────────────────────── */}
@@ -114,7 +115,7 @@ export function SupportPage() {
 
       <ul style={{ paddingLeft: '1.5rem', marginBottom: '1rem' }}>
         <li><strong>Email:</strong> <a href="mailto:contact@wildlife.ai" style={{ color: 'var(--primary)' }}>contact@wildlife.ai</a></li>
-        <li><strong>Resources:</strong> Visit our <a href="/resources" style={{ color: 'var(--primary)' }}>Resources & How-To Guides</a> for detailed setup and troubleshooting instructions.</li>
+        <li><strong>Resources:</strong> Visit our <Link to="/resources" style={{ color: 'var(--primary)' }}>Resources & How-To Guides</Link> for detailed setup and troubleshooting instructions.</li>
       </ul>
 
       <p style={{ marginTop: '2rem', fontStyle: 'italic', color: 'var(--text-muted, #666)' }}>
@@ -147,7 +148,7 @@ function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
         alignItems: 'center',
         gap: '0.5rem',
       }}>
-        <span style={{ fontSize: '0.75rem', opacity: 0.5, transition: 'transform 0.2s' }}>▶</span>
+        <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>▶</span>
         {q}
       </summary>
       <div style={{
