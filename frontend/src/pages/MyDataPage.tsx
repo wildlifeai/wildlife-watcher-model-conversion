@@ -3,6 +3,7 @@ import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { DeploymentMap } from '../components/data/DeploymentMap'
 import { ObservationReports } from '../components/data/ObservationReports'
+import { MediaBrowser } from '../components/data/MediaBrowser'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -37,7 +38,7 @@ interface Observation {
   created_at: string
 }
 
-type Tab = 'projects' | 'deployments' | 'map' | 'reports'
+type Tab = 'projects' | 'deployments' | 'map' | 'reports' | 'media'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
@@ -234,6 +235,7 @@ export function MyDataPage() {
     { id: 'deployments', label: '📍 Deployments' },
     { id: 'map', label: '🗺 Map' },
     { id: 'reports', label: '📊 Reports' },
+    { id: 'media', label: '📷 Media' },
   ]
 
   // ── Render ──────────────────────────────────────────────────────────────────
@@ -427,6 +429,14 @@ export function MyDataPage() {
           observations={observations}
           deployments={deployments}
           loading={obsLoading}
+        />
+      )}
+
+      {/* ── Media tab ──────────────────────────────────────────────────────── */}
+      {tab === 'media' && (
+        <MediaBrowser
+          projectId={selectedProject}
+          deployments={deployments.map(d => ({ id: d.id, location_name: d.location_name, project_id: d.project_id }))}
         />
       )}
     </div>
