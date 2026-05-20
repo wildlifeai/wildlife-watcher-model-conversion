@@ -11,7 +11,7 @@ import asyncio
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, UploadFile
 
-from app.dependencies import get_current_user, get_privileged_client
+from app.dependencies import get_current_user, get_privileged_client, get_user_client
 from app.domain import camtrapdp as domain
 from app.schemas.camtrapdp import CamtrapImportResult
 from app.schemas.common import ApiResponse
@@ -27,6 +27,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 async def import_camtrapdp(
     file: UploadFile,
     user=Depends(get_current_user),
+    user_client=Depends(get_user_client),
     svc=Depends(get_privileged_client),
 ):
     """
@@ -90,7 +91,7 @@ async def import_camtrapdp(
 
     # ── Run import (blocking I/O — run in thread) ──────────────────────
     try:
-        result: CamtrapImportResult = await asyncio.to_thread(domain.import_package, pkg, user.id, org_id, svc)
+        result: CamtrapImportResult = await asyncio.to_thread(domain.import_package, pkg, user.id, org_id, svc, user_client)
     except Exception as exc:
         logger.error("camtrapdp_import_failed", error=str(exc))
         raise HTTPException(
