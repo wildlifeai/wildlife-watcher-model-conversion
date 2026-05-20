@@ -556,10 +556,13 @@ async def convert_github_pretrained_model(architecture: str, resolution: str) ->
             raw_tflite_path = work_dir / "raw.tflite"
             raw_tflite_path.write_bytes(model_bytes)
 
-            try:
-                vela_output = await run_vela_conversion(raw_tflite_path, work_dir)
-            except Exception as e:
-                raise ModelDomainError(f"Vela compilation failed: {e}") from e
+            if config.get("precompiled", False):
+                vela_output = raw_tflite_path
+            else:
+                try:
+                    vela_output = await run_vela_conversion(raw_tflite_path, work_dir)
+                except Exception as e:
+                    raise ModelDomainError(f"Vela compilation failed: {e}") from e
 
             vela_final_path = work_dir / "MOD00001.tfl"
             if vela_final_path.exists():

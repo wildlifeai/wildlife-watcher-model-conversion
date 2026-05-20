@@ -288,9 +288,16 @@ async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: O
             latest = files[0]["name"]
             content = await download_from_storage("firmware", f"himax/{latest}", silent=True)
             if content:
-                (manifest_dir / default_name).write_bytes(content)
-                logger.info("himax_firmware_fallback", filename=latest)
-                return True, default_name
+                img_name = default_name
+                if created_at_str := files[0].get("created_at"):
+                    try:
+                        dt = datetime.fromisoformat(created_at_str.replace("Z", "+00:00"))
+                        img_name = firmware_83_filename("fallback", dt.strftime("%b %d %Y"))
+                    except (ValueError, IndexError, KeyError):
+                        pass
+                (manifest_dir / img_name).write_bytes(content)
+                logger.info("himax_firmware_fallback", filename=latest, saved_as=img_name)
+                return True, img_name
     except Exception as e:
         logger.warning("himax_firmware_discovery_failed", error=str(e))
 
