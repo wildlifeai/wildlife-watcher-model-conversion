@@ -32,3 +32,8 @@ class ManifestRequest(BaseModel):
         "main",
         description="Branch of wildlifeai/Seeed_Grove_Vision_AI_Module_V2 for firmware files",
     )
+    himax_firmware_id: Optional[str] = Field(
+        None,
+        description="Supabase firmware.id for the Himax coprocessor firmware",
+    )
+
