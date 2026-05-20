@@ -16,18 +16,35 @@ export function GenerateManifest() {
 
   // Project-based state
   const [selectedProjectId, setSelectedProjectId] = useState<string>('')
-  const [githubBranch, setGithubBranch] = useState<string>('main')
+  const [selectedFirmwareId, setSelectedFirmwareId] = useState<string>('')
 
-  // Fetch GitHub branches — staleTime matches the 1-hour server-side cache TTL
-  const { data: branches, isLoading: isLoadingBranches } = useQuery({
-    queryKey: ['manifestBranches'],
+  // Fetch Himax firmware versions from DB
+  const { data: firmwares, isLoading: isLoadingFirmwares } = useQuery({
+    queryKey: ['himaxFirmwares'],
     queryFn: async () => {
-      const res = await apiClient.get('/api/manifest/branches')
-      return (res as any).data || ['main']
-    },
-    staleTime: 60 * 60 * 1000,   // 1 hour
-    gcTime: 2 * 60 * 60 * 1000,  // keep in memory for 2 hours
+      const { data, error } = await supabase
+        .from('firmware')
+        .select('id, name, version, is_active, created_at')
+        .eq('type', 'himax')
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+      if (error) throw error
+      return data || []
+    }
   })
+
+  // Derive active/fallback firmware ID if none is explicitly selected
+  const himaxFirmwareId = useMemo(() => {
+    if (selectedFirmwareId) return selectedFirmwareId
+    if (!firmwares?.length) return ''
+    const active = firmwares.find((f: any) => f.is_active)
+    return active ? active.id : firmwares[0].id
+  }, [firmwares, selectedFirmwareId])
+
+  const selectedFirmware = useMemo(() => {
+    if (!firmwares || !himaxFirmwareId) return null
+    return firmwares.find((f: any) => f.id === himaxFirmwareId)
+  }, [firmwares, himaxFirmwareId])
 
   // Fetch accessible projects
   const { data: projects, isLoading: isLoadingProjects } = useQuery({
@@ -98,7 +115,8 @@ export function GenerateManifest() {
         model_source: 'My Project',
         model_name: projectModelInfo?.name || 'None',
         project_id: selectedProjectId,
-        github_branch: githubBranch,
+        github_branch: 'main',
+        himax_firmware_id: himaxFirmwareId,
       })
     },
     // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -118,6 +136,7 @@ export function GenerateManifest() {
     setJobId(null)
     setStep('configure')
     generateMutation.reset()
+    setSelectedFirmwareId('')
   }
 
   // Get the selected project name for the summary
@@ -194,24 +213,26 @@ export function GenerateManifest() {
                 </div>
               ) : (
                 <>
-                  {/* Branch selector */}
+                  {/* Firmware selector */}
                   <div>
-                    <label style={labelStyle}>Software Version</label>
-                    {isLoadingBranches ? (
-                      <div style={{ padding: '0.5rem', opacity: 0.6 }}>Loading options from GitHub...</div>
+                    <label style={labelStyle}>Himax Firmware Version</label>
+                    {isLoadingFirmwares ? (
+                      <div style={{ padding: '0.5rem', opacity: 0.6 }}>Loading firmwares from database...</div>
                     ) : (
                       <select
-                        value={githubBranch}
-                        onChange={(e) => setGithubBranch(e.target.value)}
+                        value={himaxFirmwareId}
+                        onChange={(e) => setSelectedFirmwareId(e.target.value)}
                         style={selectStyle}
                       >
-                        {(branches || ['main']).map((b: string) => (
-                          <option key={b} value={b}>{b}</option>
+                        {(firmwares || []).map((f: any) => (
+                          <option key={f.id} value={f.id}>
+                            {f.name} {f.is_active ? ' (Active)' : ''}
+                          </option>
                         ))}
                       </select>
                     )}
                     <p style={{ fontSize: '0.75rem', opacity: 0.6, marginTop: '0.25rem' }}>
-                      Select the system version for your camera hardware.
+                      Select the Himax firmware version to deploy to the camera.
                     </p>
                   </div>
 
@@ -313,7 +334,7 @@ export function GenerateManifest() {
               <div>
                 <div style={{ fontWeight: 600 }}>Generating setup folder…</div>
                 <div style={{ fontSize: '0.8125rem', opacity: 0.7 }}>
-                  {selectedProject?.name} • {githubBranch}
+                  {selectedProject?.name} • {selectedFirmware?.name || 'Loading...'}
                 </div>
               </div>
             </div>
@@ -372,7 +393,7 @@ export function GenerateManifest() {
               {projectModelInfo?.hasModel && !projectModelInfo.incomplete && (
                 <div><strong>AI Model:</strong> {projectModelInfo.name} v{projectModelInfo.version}</div>
               )}
-              <div><strong>Software:</strong> {githubBranch}</div>
+              <div><strong>Himax Firmware:</strong> {selectedFirmware?.name}</div>
             </div>
 
             {/* Action buttons */}

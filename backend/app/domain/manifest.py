@@ -12,17 +12,19 @@ The MANIFEST.zip is what gets deployed to the camera SD card. Structure:
     ├── CONFIG.MD           # Operational parameters documentation (8.3 format)
     ├── {fw_id}V{ver}.TFL   # AI model binary (8.3 format)
     ├── {fw_id}V{ver}.TXT   # Model labels (8.3 format)
-    └── output.img          # Himax coprocessor firmware
+    └── YYMDDHMM.IMG        # Himax coprocessor firmware (8.3 date-encoded)
 """
 
 # ── GitHub repo constants ────────────────────────────────────────────
 import asyncio
+import calendar
 import io
 import json
 import re
 import shutil
 import tempfile
 import zipfile
+from datetime import datetime
 from pathlib import Path
 from typing import Optional
 
@@ -39,7 +41,6 @@ DEFAULT_FIRMWARE_BRANCHES = ["main", "dev", "firmware_updates", "live_video", "l
 
 GROVE_VISION_REPO = "wildlifeai/Seeed_Grove_Vision_AI_Module_V2"
 MANIFEST_BASE = "EPII_CM55M_APP_S/app/ww_projects/ww500_md/MANIFEST"
-OUTPUT_IMG_PATH = "we2_image_gen_local_dpd/output_case1_sec_wlcsp/output.img"
 
 _GITHUB_MANIFEST_FILES = {
     "CONFIG.TXT": f"{MANIFEST_BASE}/CONFIG.TXT",
@@ -48,6 +49,55 @@ _GITHUB_MANIFEST_FILES = {
 }
 
 logger = structlog.get_logger()
+
+# Month encoding for 8.3 firmware filename: 1-9 for Jan-Sep, A-C for Oct-Dec
+_MONTH_CHAR = {i: (str(i) if i <= 9 else chr(ord("A") + i - 10)) for i in range(1, 13)}
+# Hour encoding: 0-9 for hours 0-9, A-N for hours 10-23
+_HOUR_CHAR = {i: (str(i) if i <= 9 else chr(ord("A") + i - 10)) for i in range(24)}
+
+
+def firmware_83_filename(version: str, build_date: Optional[str] = None) -> str:
+    """Convert a Himax firmware version string into an 8.3 filename.
+
+    Format: YYMDDHMM.IMG
+        YY  = last 2 digits of year
+        M   = month (1-9 for Jan-Sep, A for Oct, B for Nov, C for Dec)
+        DD  = day of month (01-31)
+        H   = hour (0-9 for hours 0-9, A-N for hours 10-23)
+        MM  = minute (00-59)
+
+    The version string from CI looks like:
+        "WW500_C02 10:59:43 May 20 2026"
+
+    Falls back to 'output.img' if the version cannot be parsed.
+    """
+    try:
+        # Try to extract time and date from version string
+        # Pattern: optional_board HH:MM:SS Mon DD YYYY
+        m = re.search(
+            r"(\d{2}):(\d{2}):\d{2}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})",
+            version,
+        )
+        if m:
+            hour = int(m.group(1))
+            minute = int(m.group(2))
+            month_abbr = m.group(3)
+            day = int(m.group(4))
+            year = int(m.group(5))
+
+            month_num = list(calendar.month_abbr).index(month_abbr)
+            yy = year % 100
+            return f"{yy:02d}{_MONTH_CHAR[month_num]}{day:02d}{_HOUR_CHAR[hour]}{minute:02d}.IMG"
+
+        # Fallback: try parsing build_date (e.g. "May 20 2026") — no time info
+        if build_date:
+            dt = datetime.strptime(build_date, "%b %d %Y")
+            yy = dt.year % 100
+            return f"{yy:02d}{_MONTH_CHAR[dt.month]}{dt.day:02d}000.IMG"
+    except (ValueError, IndexError, KeyError):
+        pass
+
+    return "output.img"
 
 
 class ManifestDomainError(Exception):
@@ -105,7 +155,7 @@ async def _fetch_config_firmware(client, manifest_dir: Path) -> bool:
     """
     # Try DB record
     try:
-        response = (
+        response = await asyncio.to_thread(
             client.table("firmware")
             .select("*")
             .eq("type", "config")
@@ -113,7 +163,7 @@ async def _fetch_config_firmware(client, manifest_dir: Path) -> bool:
             .is_("deleted_at", "null")
             .order("created_at", desc=True)
             .limit(1)
-            .execute()
+            .execute
         )
 
         if response.data:
@@ -141,9 +191,13 @@ async def _fetch_config_firmware(client, manifest_dir: Path) -> bool:
 
     # Fallback: list files in the firmware/config bucket folder
     try:
-        files = client.storage.from_("firmware").list("config", {"sortBy": {"column": "created_at", "order": "desc"}})
+        files = await asyncio.to_thread(
+            client.storage.from_("firmware").list,
+            "config",
+            {"sortBy": {"column": "created_at", "order": "desc"}},
+        )
         if not files:
-            files = client.storage.from_("firmware").list("config")
+            files = await asyncio.to_thread(client.storage.from_("firmware").list, "config")
             files.sort(key=lambda x: x.get("created_at", x.get("name")), reverse=True)
 
         # Filter out placeholders
@@ -169,28 +223,32 @@ async def _fetch_config_firmware(client, manifest_dir: Path) -> bool:
 # ── Himax firmware fetching ──────────────────────────────────────────
 
 
-async def _fetch_himax_firmware(client, manifest_dir: Path) -> bool:
-    """Fetch the latest active Himax firmware image into manifest_dir.
+async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: Optional[str] = None) -> tuple[bool, str]:
+    """Fetch the Himax firmware image into manifest_dir.
 
-    The firmware is stored as `output.img` in the `firmware` bucket under the
-    `himax/` prefix.  The CI pipeline (build_and_release.yml) uploads it with
-    type='himax'.
+    The firmware is stored in the `firmware` bucket under the `himax/` prefix.
+    The CI pipeline (upload_firmware.yml) uploads it with type='himax'.
 
-    Tries DB record first, then falls back to storage bucket discovery.
-    Returns True if the firmware was successfully added.
+    The file is saved using the YYMDDHMM.IMG 8.3 filename derived from the
+    firmware build timestamp, so the mobile app and device firmware can
+    identify the build from its filename on the SD card.
+
+    If himax_firmware_id is provided, fetches that specific record.
+    Otherwise, fetches the latest active Himax firmware record.
+
+    Returns (success, filename) — filename is the 8.3 name used on disk.
     """
+    default_name = "output.img"
+
     # Strategy 1: DB record
     try:
-        response = (
-            client.table("firmware")
-            .select("*")
-            .eq("type", "himax")
-            .eq("is_active", True)
-            .is_("deleted_at", "null")
-            .order("created_at", desc=True)
-            .limit(1)
-            .execute()
-        )
+        query = client.table("firmware").select("*").eq("type", "himax").is_("deleted_at", "null")
+        if himax_firmware_id:
+            query = query.eq("id", himax_firmware_id)
+        else:
+            query = query.eq("is_active", True)
+
+        response = await asyncio.to_thread(query.order("created_at", desc=True).limit(1).execute)
 
         if response.data:
             himax_fw = response.data[0]
@@ -198,22 +256,30 @@ async def _fetch_himax_firmware(client, manifest_dir: Path) -> bool:
             content = await download_from_storage("firmware", path, silent=True)
 
             if content:
-                # Always save as output.img regardless of the versioned name in storage
-                (manifest_dir / "output.img").write_bytes(content)
+                img_name = firmware_83_filename(
+                    himax_fw.get("version") or "",
+                    himax_fw.get("build_date"),
+                )
+                (manifest_dir / img_name).write_bytes(content)
                 logger.info(
                     "himax_firmware_added",
                     version=himax_fw.get("version", "latest"),
+                    filename=img_name,
                     size_bytes=len(content),
                 )
-                return True
+                return True, img_name
     except Exception as e:
         logger.warning("himax_firmware_db_failed", error=str(e))
 
     # Strategy 2: Fallback — list files in the himax/ folder of the firmware bucket
     try:
-        files = client.storage.from_("firmware").list("himax", {"sortBy": {"column": "created_at", "order": "desc"}})
+        files = await asyncio.to_thread(
+            client.storage.from_("firmware").list,
+            "himax",
+            {"sortBy": {"column": "created_at", "order": "desc"}},
+        )
         if not files:
-            files = client.storage.from_("firmware").list("himax")
+            files = await asyncio.to_thread(client.storage.from_("firmware").list, "himax")
             files.sort(key=lambda x: x.get("created_at", x.get("name")), reverse=True)
 
         files = [f for f in files if f["name"] != ".emptyFolderPlaceholder" and not f["name"].endswith("/")]
@@ -222,13 +288,13 @@ async def _fetch_himax_firmware(client, manifest_dir: Path) -> bool:
             latest = files[0]["name"]
             content = await download_from_storage("firmware", f"himax/{latest}", silent=True)
             if content:
-                (manifest_dir / "output.img").write_bytes(content)
+                (manifest_dir / default_name).write_bytes(content)
                 logger.info("himax_firmware_fallback", filename=latest)
-                return True
+                return True, default_name
     except Exception as e:
         logger.warning("himax_firmware_discovery_failed", error=str(e))
 
-    return False
+    return False, default_name
 
 
 # ── AI model fetching ────────────────────────────────────────────────
@@ -338,19 +404,6 @@ async def _fetch_github_manifest_files(
     return results
 
 
-async def _fetch_github_output_img(branch: str, manifest_dir: Path) -> bool:
-    """Download output.img from the Grove Vision AI repo."""
-    url = f"https://raw.githubusercontent.com/{GROVE_VISION_REPO}/{branch}/{OUTPUT_IMG_PATH}"
-    try:
-        content = await download_url_content(url)
-        (manifest_dir / "output.img").write_bytes(content)
-        logger.info("github_output_img_downloaded", branch=branch, size=len(content))
-        return True
-    except DownloadError as exc:
-        logger.warning("github_output_img_failed", error=str(exc))
-        return False
-
-
 async def _resolve_project_model(client, project_id: str) -> dict:
     """Query project → ai_models → ai_model_families to resolve firmware IDs.
 
@@ -432,6 +485,7 @@ async def generate_manifest(
     camera_type: str = "Grove Vision AI V2",
     project_id: Optional[str] = None,
     github_branch: str = "main",
+    himax_firmware_id: Optional[str] = None,
     on_progress=None,
 ) -> bytes:
     """Generate a complete MANIFEST.zip package for SD card deployment.
@@ -448,6 +502,7 @@ async def generate_manifest(
         camera_type: Camera config key from CAMERA_CONFIGS.
         project_id: For 'project' source — Supabase projects.id.
         github_branch: Branch for GitHub-sourced firmware files.
+        himax_firmware_id: Supabase firmware.id for Himax firmware.
     """
     # Map frontend friendly names to backend legacy names
     if model_source == "My Project":
@@ -491,9 +546,9 @@ async def generate_manifest(
             gh_results = await _fetch_github_manifest_files(github_branch, manifest_dir)
             config_added = gh_results.get("CONFIG.TXT", False)
 
-            # 2. Download output.img from GitHub
-            await _report("Downloading output.img…")
-            himax_added = await _fetch_github_output_img(github_branch, manifest_dir)
+            # 2. Download Himax firmware from database
+            await _report("Downloading Himax firmware from database…")
+            himax_added, _ = await _fetch_himax_firmware(client, manifest_dir, himax_firmware_id)
 
             # 3. Resolve project model
             await _report("Resolving project model…")
@@ -635,8 +690,8 @@ async def generate_manifest(
             else:
                 model_added = await _fetch_default_model(client, manifest_dir)
 
-            # 3. Fetch Himax firmware image (output.img)
-            himax_added = await _fetch_himax_firmware(client, manifest_dir)
+            # 3. Fetch Himax firmware image (YYMDDHMM.IMG) from database
+            himax_added, _ = await _fetch_himax_firmware(client, manifest_dir)
             if not himax_added:
                 logger.warning("manifest_no_himax_firmware")
 

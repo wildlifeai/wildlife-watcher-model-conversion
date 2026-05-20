@@ -221,6 +221,7 @@ async def generate_manifest_job(job_id: str, params: dict):
             camera_type=params.get("camera_type", "Raspberry Pi"),
             project_id=params.get("project_id"),
             github_branch=params.get("github_branch", "main"),
+            himax_firmware_id=params.get("himax_firmware_id"),
             on_progress=_on_progress,
         )
 

@@ -325,6 +325,14 @@ python -m pytest tests/ --cov=app --cov-report=term-missing
 - Use `conftest.py` fixtures for the FastAPI test client
 - Mock Supabase calls using `unittest.mock.patch`
 
+### Testing with Seed User Accounts
+
+The dev environment includes 17 pre-seeded user accounts with different roles (platform admin, org manager, project admin, project member, unassigned). These can be used for both manual QA and automated role-based access control (RBAC) validation.
+
+- **Credential reference**: [`ww-backend/supabase/seeds/USER-CREDENTIALS-REFERENCE.md`](https://github.com/wildlifeai/ww-backend/blob/dev/supabase/seeds/USER-CREDENTIALS-REFERENCE.md)
+- **Website testing guide**: [`docs/testing-with-seed-users.md`](../docs/testing-with-seed-users.md) — maps each role to website capabilities and outlines automated validation strategies at both the API and browser level.
+- **Password**: stored as a GitHub Secret (`SEED_USER_PASSWORD`), available to developers on request.
+
 ---
 
 ## API Overview
