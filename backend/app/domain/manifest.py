@@ -52,9 +52,9 @@ _GITHUB_MANIFEST_FILES = {
 logger = structlog.get_logger()
 
 # Month encoding for 8.3 firmware filename: 1-9 for Jan-Sep, A-C for Oct-Dec
-_MONTH_CHAR = {i: (str(i) if i <= 9 else chr(ord('A') + i - 10)) for i in range(1, 13)}
+_MONTH_CHAR = {i: (str(i) if i <= 9 else chr(ord("A") + i - 10)) for i in range(1, 13)}
 # Hour encoding: 0-9 for hours 0-9, A-N for hours 10-23
-_HOUR_CHAR = {i: (str(i) if i <= 9 else chr(ord('A') + i - 10)) for i in range(24)}
+_HOUR_CHAR = {i: (str(i) if i <= 9 else chr(ord("A") + i - 10)) for i in range(24)}
 
 
 def firmware_83_filename(version: str, build_date: Optional[str] = None) -> str:
@@ -76,7 +76,7 @@ def firmware_83_filename(version: str, build_date: Optional[str] = None) -> str:
         # Try to extract time and date from version string
         # Pattern: optional_board HH:MM:SS Mon DD YYYY
         m = re.search(
-            r'(\d{2}):(\d{2}):\d{2}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})',
+            r"(\d{2}):(\d{2}):\d{2}\s+(\w{3})\s+(\d{1,2})\s+(\d{4})",
             version,
         )
         if m:
@@ -220,9 +220,7 @@ async def _fetch_config_firmware(client, manifest_dir: Path) -> bool:
 # ── Himax firmware fetching ──────────────────────────────────────────
 
 
-async def _fetch_himax_firmware(
-    client, manifest_dir: Path, himax_firmware_id: Optional[str] = None
-) -> tuple[bool, str]:
+async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: Optional[str] = None) -> tuple[bool, str]:
     """Fetch the Himax firmware image into manifest_dir.
 
     The firmware is stored in the `firmware` bucket under the `himax/` prefix.
@@ -241,12 +239,7 @@ async def _fetch_himax_firmware(
 
     # Strategy 1: DB record
     try:
-        query = (
-            client.table("firmware")
-            .select("*")
-            .eq("type", "himax")
-            .is_("deleted_at", "null")
-        )
+        query = client.table("firmware").select("*").eq("type", "himax").is_("deleted_at", "null")
         if himax_firmware_id:
             query = query.eq("id", himax_firmware_id)
         else:
@@ -562,7 +555,6 @@ async def generate_manifest(
             # 2. Download Himax firmware from database
             await _report("Downloading Himax firmware from database…")
             himax_added, himax_filename = await _fetch_himax_firmware(client, manifest_dir, himax_firmware_id)
-
 
             # 3. Resolve project model
             await _report("Resolving project model…")

@@ -78,6 +78,7 @@ class TestFlattenDirectory:
 class TestFirmware83Filename:
     def test_valid_version_string(self):
         from app.domain.manifest import firmware_83_filename
+
         # YYMDDHMM:
         # 2026 -> 26
         # May -> 5
@@ -89,9 +90,11 @@ class TestFirmware83Filename:
 
     def test_fallback_build_date(self):
         from app.domain.manifest import firmware_83_filename
+
         # Expected: 26520000.IMG (no time info)
         assert firmware_83_filename("WW500_C02", "May 20 2026") == "26520000.IMG"
 
     def test_invalid_fallback(self):
         from app.domain.manifest import firmware_83_filename
+
         assert firmware_83_filename("invalid") == "output.img"

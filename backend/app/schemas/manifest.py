@@ -36,4 +36,3 @@ class ManifestRequest(BaseModel):
         None,
         description="Supabase firmware.id for the Himax coprocessor firmware",
     )
-
