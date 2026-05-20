@@ -14,8 +14,9 @@ export function SupportPage() {
       <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Getting Started</h3>
 
       <FaqItem q="How do I start a monitoring session?">
-        Using the Wildlife Watcher mobile app, navigate to your Project and tap the blue "+" button to start monitoring.
-        Follow the on-screen instructions to connect to your camera via Bluetooth, configure its settings, and finalise the setup.
+        To start a monitoring session, ensure your camera has batteries and a microSD card installed.
+        Open the Wildlife Watcher mobile app, tap "Search for devices" in the app, and physically press the button at the bottom of the device to connect to it.
+        Once connected, you can configure the project and start the monitoring session. When you are done, you can stop the monitoring through the app.
         See our <Link to="/resources" style={{ color: 'var(--primary)' }}>Resources</Link> page for a detailed step-by-step guide.
       </FaqItem>
 
@@ -36,8 +37,7 @@ export function SupportPage() {
       <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Camera & Hardware</h3>
 
       <FaqItem q="What SD card should I use?">
-        Use a <strong>FAT32-formatted</strong> microSD card of <strong>64 GB or less</strong>. We recommend Class 10 or higher
-        for reliable performance. The mobile app includes a "Format SD Card" option (accessible from the Engineer Console)
+        We recommend using a <strong>FAT32-formatted</strong> microSD card with a capacity from <strong>32 GB up to 64 GB</strong> (Class 10 or higher) for optimal performance. The mobile app includes a "Format SD Card" option (accessible from the Engineer Console)
         if you need to reformat in the field.
       </FaqItem>
 
@@ -64,13 +64,13 @@ export function SupportPage() {
 
       <FaqItem q="Does the app work offline?">
         Yes. The mobile app works without an internet connection using the data it has from the last time it was online.
-        You can view projects, deployments, and cached data while offline. Any new data or changes made offline will be
+        You can view projects, monitoring sessions, and cached data while offline. Any new data or changes made offline will be
         automatically uploaded to the cloud when an internet connection becomes available.
       </FaqItem>
 
       <FaqItem q="The app can't connect to my camera via Bluetooth. What should I do?">
         <ol style={{ paddingLeft: '1.5rem', margin: '0.5rem 0' }}>
-          <li>Make sure the camera is powered on and the <strong>blue light is flashing</strong> (advertising mode).</li>
+          <li>Make sure you physically tap the button at the bottom of the device to activate Bluetooth advertising, and ensure the blue light is flashing.</li>
           <li>Ensure Bluetooth is enabled on your phone and you are within range (a few metres).</li>
           <li>If the app is scanning but not finding the device, <strong>close the app completely and reopen it</strong>.</li>
           <li>If the issue persists, restart both the camera and your phone.</li>
@@ -82,7 +82,7 @@ export function SupportPage() {
 
       <FaqItem q="What data formats can I export?">
         You can export your data as <strong>CSV files</strong> or in <strong>CamtrapDP format</strong> — a standardised
-        camera trap data package used by biodiversity databases worldwide. CamtrapDP exports include deployments,
+        camera trap data package used by biodiversity databases worldwide. CamtrapDP exports include monitoring sessions,
         media records, and observations in a single ZIP file.
       </FaqItem>
 
