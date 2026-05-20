@@ -14,8 +14,9 @@ export function SupportPage() {
       <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Getting Started</h3>
 
       <FaqItem q="How do I start a monitoring session?">
-        Using the Wildlife Watcher mobile app, navigate to your Project and tap the blue "+" button to start monitoring.
-        Follow the on-screen instructions to connect to your camera via Bluetooth, configure its settings, and finalise the setup.
+        To start a monitoring session, ensure your camera has batteries and a microSD card installed.
+        Open the Wildlife Watcher mobile app, and physically tap the button at the bottom of the device to activate Bluetooth advertising.
+        The app will automatically discover and connect to your camera, allowing you to configure the project and start the deployment.
         See our <Link to="/resources" style={{ color: 'var(--primary)' }}>Resources</Link> page for a detailed step-by-step guide.
       </FaqItem>
 
@@ -70,7 +71,7 @@ export function SupportPage() {
 
       <FaqItem q="The app can't connect to my camera via Bluetooth. What should I do?">
         <ol style={{ paddingLeft: '1.5rem', margin: '0.5rem 0' }}>
-          <li>Make sure the camera is powered on and the <strong>blue light is flashing</strong> (advertising mode).</li>
+          <li>Make sure you physically tap the button at the bottom of the device to activate Bluetooth advertising, and ensure the blue light is flashing.</li>
           <li>Ensure Bluetooth is enabled on your phone and you are within range (a few metres).</li>
           <li>If the app is scanning but not finding the device, <strong>close the app completely and reopen it</strong>.</li>
           <li>If the issue persists, restart both the camera and your phone.</li>
