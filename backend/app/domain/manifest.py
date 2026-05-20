@@ -41,7 +41,6 @@ DEFAULT_FIRMWARE_BRANCHES = ["main", "dev", "firmware_updates", "live_video", "l
 
 GROVE_VISION_REPO = "wildlifeai/Seeed_Grove_Vision_AI_Module_V2"
 MANIFEST_BASE = "EPII_CM55M_APP_S/app/ww_projects/ww500_md/MANIFEST"
-OUTPUT_IMG_PATH = "we2_image_gen_local_dpd/output_case1_sec_wlcsp/output.img"
 
 _GITHUB_MANIFEST_FILES = {
     "CONFIG.TXT": f"{MANIFEST_BASE}/CONFIG.TXT",
@@ -156,7 +155,7 @@ async def _fetch_config_firmware(client, manifest_dir: Path) -> bool:
     """
     # Try DB record
     try:
-        response = (
+        response = await asyncio.to_thread(
             client.table("firmware")
             .select("*")
             .eq("type", "config")
@@ -164,7 +163,7 @@ async def _fetch_config_firmware(client, manifest_dir: Path) -> bool:
             .is_("deleted_at", "null")
             .order("created_at", desc=True)
             .limit(1)
-            .execute()
+            .execute
         )
 
         if response.data:
@@ -192,9 +191,13 @@ async def _fetch_config_firmware(client, manifest_dir: Path) -> bool:
 
     # Fallback: list files in the firmware/config bucket folder
     try:
-        files = client.storage.from_("firmware").list("config", {"sortBy": {"column": "created_at", "order": "desc"}})
+        files = await asyncio.to_thread(
+            client.storage.from_("firmware").list,
+            "config",
+            {"sortBy": {"column": "created_at", "order": "desc"}},
+        )
         if not files:
-            files = client.storage.from_("firmware").list("config")
+            files = await asyncio.to_thread(client.storage.from_("firmware").list, "config")
             files.sort(key=lambda x: x.get("created_at", x.get("name")), reverse=True)
 
         # Filter out placeholders
@@ -245,7 +248,7 @@ async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: O
         else:
             query = query.eq("is_active", True)
 
-        response = query.order("created_at", desc=True).limit(1).execute()
+        response = await asyncio.to_thread(query.order("created_at", desc=True).limit(1).execute)
 
         if response.data:
             himax_fw = response.data[0]
@@ -254,7 +257,7 @@ async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: O
 
             if content:
                 img_name = firmware_83_filename(
-                    himax_fw.get("version", ""),
+                    himax_fw.get("version") or "",
                     himax_fw.get("build_date"),
                 )
                 (manifest_dir / img_name).write_bytes(content)
@@ -270,9 +273,13 @@ async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: O
 
     # Strategy 2: Fallback — list files in the himax/ folder of the firmware bucket
     try:
-        files = client.storage.from_("firmware").list("himax", {"sortBy": {"column": "created_at", "order": "desc"}})
+        files = await asyncio.to_thread(
+            client.storage.from_("firmware").list,
+            "himax",
+            {"sortBy": {"column": "created_at", "order": "desc"}},
+        )
         if not files:
-            files = client.storage.from_("firmware").list("himax")
+            files = await asyncio.to_thread(client.storage.from_("firmware").list, "himax")
             files.sort(key=lambda x: x.get("created_at", x.get("name")), reverse=True)
 
         files = [f for f in files if f["name"] != ".emptyFolderPlaceholder" and not f["name"].endswith("/")]
@@ -395,19 +402,6 @@ async def _fetch_github_manifest_files(
             results[filename] = False
             logger.warning("github_file_failed", file=filename, error=str(exc))
     return results
-
-
-async def _fetch_github_output_img(branch: str, manifest_dir: Path) -> bool:
-    """Download output.img from the Grove Vision AI repo."""
-    url = f"https://raw.githubusercontent.com/{GROVE_VISION_REPO}/{branch}/{OUTPUT_IMG_PATH}"
-    try:
-        content = await download_url_content(url)
-        (manifest_dir / "output.img").write_bytes(content)
-        logger.info("github_output_img_downloaded", branch=branch, size=len(content))
-        return True
-    except DownloadError as exc:
-        logger.warning("github_output_img_failed", error=str(exc))
-        return False
 
 
 async def _resolve_project_model(client, project_id: str) -> dict:
@@ -554,7 +548,7 @@ async def generate_manifest(
 
             # 2. Download Himax firmware from database
             await _report("Downloading Himax firmware from database…")
-            himax_added, himax_filename = await _fetch_himax_firmware(client, manifest_dir, himax_firmware_id)
+            himax_added, _ = await _fetch_himax_firmware(client, manifest_dir, himax_firmware_id)
 
             # 3. Resolve project model
             await _report("Resolving project model…")
@@ -697,7 +691,7 @@ async def generate_manifest(
                 model_added = await _fetch_default_model(client, manifest_dir)
 
             # 3. Fetch Himax firmware image (YYMDDHMM.IMG) from database
-            himax_added, himax_filename = await _fetch_himax_firmware(client, manifest_dir)
+            himax_added, _ = await _fetch_himax_firmware(client, manifest_dir)
             if not himax_added:
                 logger.warning("manifest_no_himax_firmware")
 
