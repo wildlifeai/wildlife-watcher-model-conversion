@@ -24,6 +24,7 @@ MODEL_REGISTRY = {
                 "url": "https://raw.githubusercontent.com/wildlifeai/Seeed_Grove_Vision_AI_Module_V2/main/model_zoo/tflm_yolov8_od/yolov8n_od_192_delete_transpose_0xB7B000.tflite",
                 "type": "tflite",
                 "filename": "yolov8n_od_192.tflite",
+                "precompiled": True,
             }
         },
         "labels": ["object"],
@@ -35,11 +36,13 @@ MODEL_REGISTRY = {
                 "url": "https://raw.githubusercontent.com/wildlifeai/Seeed_Grove_Vision_AI_Module_V2/main/model_zoo/tflm_yolo11_od/yolo11n_full_integer_quant_192_241219_batch_matmul_vela.tflite",
                 "type": "tflite",
                 "filename": "yolo11n_od_192.tflite",
+                "precompiled": True,
             },
             "224x224": {
                 "url": "https://raw.githubusercontent.com/wildlifeai/Seeed_Grove_Vision_AI_Module_V2/main/model_zoo/tflm_yolo11_od/yolo11n_full_integer_quant_vela_imgz_224_kris_nopost_241230.tflite",
                 "type": "tflite",
                 "filename": "yolo11n_od_224.tflite",
+                "precompiled": True,
             },
         },
         "labels": ["object"],
@@ -51,6 +54,7 @@ MODEL_REGISTRY = {
                 "url": "https://raw.githubusercontent.com/wildlifeai/Seeed_Grove_Vision_AI_Module_V2/main/model_zoo/tflm_yolov8_pose/yolov8n_pose_256_vela_3_9_0x3BB000.tflite",
                 "type": "tflite",
                 "filename": "yolov8n_pose_256.tflite",
+                "precompiled": True,
             }
         },
         "labels": ["person_pose"],

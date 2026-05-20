@@ -176,6 +176,7 @@ def import_package(
     user_id: str,
     org_id: str,
     svc,  # Supabase service-role client
+    user_client=None,  # Authenticated client for trigger context
 ) -> CamtrapImportResult:
     """
     Insert a parsed CamtrapDP package into the WW database.
@@ -197,7 +198,13 @@ def import_package(
 
     # ── 1. Create project ──────────────────────────────────────────────
     project_id = str(uuid.uuid4())
-    svc.table("projects").insert(
+
+    # We must use user_client to create the project so the database trigger
+    # automatically assigns the creator as project_admin using auth.uid().
+    # Using svc (Service Role) would evaluate auth.uid() to NULL and crash the trigger.
+    client_to_use = user_client if user_client else svc
+
+    client_to_use.table("projects").insert(
         {
             "id": project_id,
             "name": project_title,
@@ -207,16 +214,7 @@ def import_package(
         }
     ).execute()
 
-    # Add the importing user as a project admin
-    svc.table("user_roles").insert(
-        {
-            "user_id": user_id,
-            "scope_type": "project",
-            "scope_id": project_id,
-            "role": "project_admin",
-            "modified_by": user_id,
-        }
-    ).execute()
+    # The database trigger automatically creates the project_admin role in user_roles.
 
     logger.info("camtrapdp_import_project_created", project_id=project_id, title=project_title)
 
