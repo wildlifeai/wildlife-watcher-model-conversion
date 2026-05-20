@@ -87,7 +87,7 @@ export function ResourcesPage() {
       <div style={{ marginBottom: '2rem' }}>
         <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📚 Resources & How-To Guides</h1>
         <p style={{ opacity: 0.7, maxWidth: '640px', lineHeight: 1.6 }}>
-          Everything you need to set up, deploy, and analyse data from your Wildlife Watcher camera.
+          Everything you need to set up, monitor, and analyse data from your Wildlife Watcher camera.
           From unboxing to AI-powered species identification — all in one place.
         </p>
       </div>
@@ -119,7 +119,7 @@ export function ResourcesPage() {
             <H3>What you will need</H3>
             <Ul items={[
               '4x high-quality AA batteries (non-rechargeable premium alkaline or lithium are recommended).',
-              'A microSD card of at least 32 GB (Class 10 recommended, supports up to 64 GB).'
+              'A microSD card with a capacity from 32 GB up to 64 GB is recommended (Class 10).'
             ]} />
           </Section>
 
@@ -170,10 +170,10 @@ export function ResourcesPage() {
               'Submit — you will be automatically logged in and taken to the app\'s home screen with instructions on how to use it.',
             ]} />
 
-            <H3>Before your first deployment</H3>
+            <H3>Before your first monitoring session</H3>
             <Ul items={[
               'Check the batteries — ensure fresh premium alkaline or lithium AA batteries are installed.',
-              'Check SD card available space — ensure microSD has at least 32 GB of space.',
+              'Check SD card available space — a microSD card with a capacity from 32 GB up to 64 GB is recommended (Class 10).',
               'Test the camera preview to verify field of view.',
             ]} />
             <Note>💡 Always test the camera before heading into the field to avoid wasted trips.</Note>
@@ -185,15 +185,15 @@ export function ResourcesPage() {
               All images captured during the session are stored locally and can be reviewed in the app.
             </p>
 
-            <H3>Starting a deployment</H3>
+            <H3>Starting monitoring</H3>
             <Step n={1}>
               <strong>Preparation:</strong> Ensure the camera has batteries and a microSD card installed. Mount the camera in the field.
             </Step>
             <Step n={2}>
-              <strong>Connect:</strong> Open the Mobile App. Physically tap the button located at the bottom of the device—this starts the camera advertising via Bluetooth. The app will search for nearby devices and connect automatically.
+              <strong>Connect:</strong> Open the Mobile App. Tap "Search for devices" in the mobile app and physically press the button at the bottom of the device to connect to it.
             </Step>
             <Step n={3}>
-              <strong>Configure:</strong> The app displays the configuration screen. The mandatory steps are to associate the session with a Project and optionally add deployment notes.
+              <strong>Configure:</strong> The app displays the configuration screen. The mandatory steps are to associate the session with a Project and optionally add monitoring notes.
             </Step>
             <Step n={4}>
               <strong>Advanced Settings (Optional):</strong> Access the expandable section to set specific location data, camera height, preview the field of view, perform a quick motion detection test, or update firmware (though firmware should ideally be done before the field).
@@ -208,15 +208,15 @@ export function ResourcesPage() {
               <strong>Disconnect:</strong> You may disconnect the app; the camera will continue monitoring independently.
             </Step>
 
-            <H3>Ending a deployment</H3>
+            <H3>Ending monitoring</H3>
             <Step n={1}>
-              <strong>Connect:</strong> Tap the button at the bottom of the device to activate Bluetooth. Tap "Search for devices" in the mobile app. The app connects and goes directly to the live stream view.
+              <strong>Connect:</strong> Tap "Search for devices" in the mobile app and physically press the button at the bottom of the device to connect to it. The app connects and goes directly to the live stream view.
             </Step>
             <Step n={2}>
-              <strong>Select Stop:</strong> Below the live stream, tap the Stop Monitoring button.
+              <strong>Select Stop:</strong> Once connected, you can stop the monitoring. Below the live stream, tap the Stop Monitoring button.
             </Step>
             <Step n={3}>
-              <strong>Confirm:</strong> Add any final notes regarding the deployment, then click Confirm Stop.
+              <strong>Confirm:</strong> Add any final notes regarding the monitoring session, then click Confirm Stop.
             </Step>
             <Step n={4}>
               <strong>Data:</strong> All information is stored securely on both the centralized database and the local device.
@@ -231,7 +231,7 @@ export function ResourcesPage() {
             <H3>Step-by-step workflow</H3>
             <Step n={1}>Copy the media folder from the SD card to your computer.</Step>
             <Step n={2}>Log in to the Wildlife Watcher web toolkit.</Step>
-            <Step n={3}>Drag and drop the entire media folder into the interface. The website automatically understands which photos they are and their source deployment.</Step>
+            <Step n={3}>Drag and drop the entire media folder into the interface. The website automatically understands which photos they are and their source monitoring session.</Step>
             <Step n={4}>The user reviews and annotates the images.</Step>
             <Step n={5}>Once completed, you can visualize all animal observations and data distributions directly on the platform.</Step>
 

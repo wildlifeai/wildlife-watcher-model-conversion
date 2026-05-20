@@ -19,6 +19,7 @@ from typing import Any, Dict, List, Tuple
 
 import structlog
 
+from app.config import settings
 from app.registries.model_registry import get_model_config
 from app.services.http_client import download_url_content
 from app.services.supabase_client import create_service_client
@@ -120,8 +121,6 @@ async def resolve_or_create_model_family(
     Raises:
         ModelDomainError: If the insert fails.
     """
-    from app.config import settings
-
     gen_org_id = settings.GENERAL_ORG_ID
 
     if firmware_model_id is not None:
@@ -296,8 +295,6 @@ async def upload_and_register(
     Raises:
         ModelDomainError: If upload or registration fails.
     """
-    from app.config import settings
-
     client = create_service_client()
     storage_path_tfl = None
     storage_path_txt = None
