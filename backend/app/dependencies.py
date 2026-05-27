@@ -59,6 +59,7 @@ async def get_user_client(authorization: str = Header(...)):
     token = authorization.replace("Bearer ", "")
     client = supabase_client.create_anon_client()
     client.auth.set_session(access_token=token, refresh_token="")
+    client.postgrest.auth(token)
     return client
 
 

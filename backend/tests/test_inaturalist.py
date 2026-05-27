@@ -52,10 +52,12 @@ class TestPKCE:
         assert c1 != c2
 
 
+from app.config import settings
+
 class TestAuthorizationURL:
     def test_url_contains_client_id(self):
         url = build_authorization_url("test_state", "test_challenge")
-        assert "client_id=test_client_id" in url
+        assert f"client_id={settings.INAT_CLIENT_ID}" in url
 
     def test_url_contains_state(self):
         url = build_authorization_url("my_state_123", "challenge")

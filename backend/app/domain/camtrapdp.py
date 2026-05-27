@@ -210,6 +210,7 @@ def import_package(
             "name": project_title,
             "description": project_description,
             "organisation_id": org_id,
+            "created_by": user_id,
             "modified_by": user_id,
         }
     ).execute()

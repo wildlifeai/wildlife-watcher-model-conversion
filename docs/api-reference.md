@@ -47,6 +47,8 @@ On error:
 - [LoRaWAN Webhooks](#lorawan-webhooks)
 - [iNaturalist Integration](#inaturalist-integration)
 - [Image Clustering](#image-clustering)
+- [AI Pipeline](#ai-pipeline)
+- [FiftyOne Integration](#fiftyone-integration)
 - [Error Codes](#error-codes)
 
 ---
@@ -796,7 +798,263 @@ Same clustering logic, but returns results as a downloadable CSV file.
 
 ---
 
+---
+
+## AI Pipeline
+
+> Gated behind the `FF_PIPELINE_ENABLED` feature flag. All endpoints return 404 when disabled.
+
+### `POST /api/pipeline/run`
+
+Run an AI inference pipeline on a deployment's media. Executes detection and/or classification steps sequentially.
+
+**Authentication:** Required (JWT Bearer token)
+
+**Request Body:**
+
+```json
+{
+  "deployment_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "steps": ["megadetector"],
+  "confidence_threshold": 0.2,
+  "config": {}
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `deployment_id` | string | Yes | — | UUID of the target deployment |
+| `steps` | string[] | No | `["megadetector"]` | Ordered pipeline steps: `megadetector`, `species_classifier`, `empty_frame`, `custom` |
+| `confidence_threshold` | float | No | `0.2` | Minimum confidence to retain detections (0.0–1.0) |
+| `config` | object | No | `{}` | Step-specific configuration overrides |
+
+**Response (200):**
+
+```json
+{
+  "data": {
+    "deployment_id": "a1b2c3d4-...",
+    "annotation_run_id": "def-456",
+    "steps": [
+      {
+        "step": "megadetector",
+        "observations_created": 150,
+        "media_processed": 200,
+        "errors": 0,
+        "duration_seconds": 12.5,
+        "model_version": "MDv6-stub"
+      }
+    ],
+    "total_media": 200,
+    "total_observations": 150,
+    "duration_seconds": 12.5
+  },
+  "meta": { "request_id": "..." }
+}
+```
+
+---
+
+### `POST /api/pipeline/events/cluster`
+
+Cluster observations into ecological events using temporal gap analysis.
+
+**Authentication:** Required (JWT Bearer token)
+
+**Request Body:**
+
+```json
+{
+  "deployment_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
+  "gap_minutes": 30,
+  "min_images": 1
+}
+```
+
+**Parameters:**
+
+| Field | Type | Required | Default | Description |
+|-------|------|----------|---------|-------------|
+| `deployment_id` | string | Yes | — | UUID of the deployment to cluster |
+| `gap_minutes` | int | No | `30` | Temporal gap threshold (1–1440 minutes) |
+| `min_images` | int | No | `1` | Minimum media count per valid event |
+
+**Response (200):**
+
+```json
+{
+  "data": {
+    "deployment_id": "a1b2c3d4-...",
+    "events_created": 15,
+    "observations_linked": 45,
+    "events": [
+      {
+        "id": "evt-789",
+        "deployment_id": "a1b2c3d4-...",
+        "taxon_id": "txn-001",
+        "scientific_name": "Apteryx mantelli",
+        "start_time": "2026-04-12T22:30:00Z",
+        "end_time": "2026-04-12T22:45:00Z",
+        "event_duration_seconds": 900,
+        "media_count": 3,
+        "review_status": "ai_reviewed",
+        "confidence": 0.85
+      }
+    ]
+  },
+  "meta": { "request_id": "..." }
+}
+```
+
+---
+
+### `POST /api/pipeline/effort/{deployment_id}`
+
+Compute and store effort statistics (trap nights, camera uptime, false trigger rate) for a deployment.
+
+**Authentication:** Required (JWT Bearer token)
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `deployment_id` | string | UUID of the deployment |
+
+**Response (200):**
+
+```json
+{
+  "data": {
+    "deployment_id": "a1b2c3d4-...",
+    "trap_nights": 14.5,
+    "camera_uptime_hours": 348.0,
+    "total_events": 42,
+    "total_media": 1200,
+    "false_trigger_rate": 0.12,
+    "computed_at": "2026-04-12T03:00:00Z"
+  },
+  "meta": { "request_id": "..." }
+}
+```
+
+---
+
+### `GET /api/pipeline/effort/{deployment_id}`
+
+Retrieve cached effort statistics from the `deployment_effort` table.
+
+**Authentication:** Required (JWT Bearer token)
+
+**Response (200):** Same format as `POST` response above.
+
+---
+
+## FiftyOne Integration
+
+> Gated behind the `FF_FIFTYONE_ENABLED` feature flag. Requires `fiftyone` Python package. All endpoints return 404 when disabled.
+
+### `POST /api/fiftyone/sync/{deployment_id}`
+
+Sync a deployment's media and observations into an ephemeral FiftyOne dataset.
+
+**Authentication:** Required (JWT Bearer token)
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `deployment_id` | string | UUID of the deployment to sync |
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `overwrite` | bool | `true` | Delete and recreate the dataset if it exists |
+
+**Response (200):**
+
+```json
+{
+  "data": {
+    "dataset_name": "ww-a1b2c3d4",
+    "num_samples": 200,
+    "num_detections": 150
+  },
+  "meta": { "request_id": "..." }
+}
+```
+
+---
+
+### `POST /api/fiftyone/writeback/{deployment_id}`
+
+Write human annotations from a FiftyOne dataset back to the Supabase database.
+
+**Authentication:** Required (JWT Bearer token)
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `deployment_id` | string | UUID of the deployment |
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `dataset_name` | string | `ww-{id[:8]}` | FiftyOne dataset name to read from |
+
+**Response (200):**
+
+```json
+{
+  "data": {
+    "observations_updated": 25
+  },
+  "meta": { "request_id": "..." }
+}
+```
+
+---
+
+### `POST /api/fiftyone/launch/{deployment_id}`
+
+Launch a FiftyOne App session for visual review of a deployment.
+
+**Authentication:** Required (JWT Bearer token)
+
+**Path Parameters:**
+
+| Parameter | Type | Description |
+|-----------|------|-------------|
+| `deployment_id` | string | UUID of the deployment |
+
+**Query Parameters:**
+
+| Parameter | Type | Default | Description |
+|-----------|------|---------|-------------|
+| `port` | int | `5151` | Port for the FiftyOne App server |
+
+**Response (200):**
+
+```json
+{
+  "data": {
+    "session_url": "http://localhost:5151",
+    "dataset_name": "ww-a1b2c3d4",
+    "num_samples": 200,
+    "num_detections": 150
+  },
+  "meta": { "request_id": "..." }
+}
+```
+
+---
+
 ## Error Codes
+
 
 | HTTP Code | Meaning | Retryable |
 |-----------|---------|-----------|
