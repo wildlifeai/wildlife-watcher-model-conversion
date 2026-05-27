@@ -14,6 +14,10 @@ import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage'
 import { SupportPage } from './pages/SupportPage'
 import { TermsOfServicePage } from './pages/TermsOfServicePage'
 import { ResourcesPage } from './pages/ResourcesPage'
+import { LabelingPage } from './pages/LabelingPage'
+import { EventReviewPage } from './pages/EventReviewPage'
+import { AnalysisPage } from './pages/AnalysisPage'
+import { ReportingPage } from './pages/ReportingPage'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from './lib/apiClient'
 import './styles/index.css'
@@ -133,6 +137,10 @@ export default function App() {
             <Route path="/analyse-images" element={<Navigate to="/upload-data" replace />} />
             <Route path="/manifest" element={<RequireAuth><ManifestPage /></RequireAuth>} />
             <Route path="/upload-model" element={<RequireAuth><UploadModelPage /></RequireAuth>} />
+            <Route path="/labeling/:deployment_id" element={<RequireAuth><LabelingPage /></RequireAuth>} />
+            <Route path="/events/:deployment_id" element={<RequireAuth><EventReviewPage /></RequireAuth>} />
+            <Route path="/analysis/:deployment_id" element={<RequireAuth><AnalysisPage /></RequireAuth>} />
+            <Route path="/reporting/:deployment_id" element={<RequireAuth><ReportingPage /></RequireAuth>} />
           </Routes>
         </Layout>
       </BrowserRouter>

@@ -1,4 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
 import { DeploymentMap } from '../components/data/DeploymentMap'
@@ -46,6 +47,7 @@ type Tab = 'projects' | 'deployments' | 'map' | 'reports' | 'media'
 
 export function MyDataPage() {
   const { user } = useAuth()
+  const navigate = useNavigate()
   const [tab, setTab] = useState<Tab>('projects')
   const [projects, setProjects] = useState<Project[]>([])
   const [deployments, setDeployments] = useState<Deployment[]>([])
@@ -382,11 +384,12 @@ export function MyDataPage() {
                 <th style={thStyle} onClick={() => handleSort('latitude')}>GPS {renderSortIcon('latitude')}</th>
                 <th style={thStyle} onClick={() => handleSort('deployment_start')}>Start {renderSortIcon('deployment_start')}</th>
                 <th style={thStyle} onClick={() => handleSort('deployment_end')}>End {renderSortIcon('deployment_end')}</th>
+                <th style={{ ...thStyle, cursor: 'default' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {sortedDeployments.length === 0 && (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: 'center', opacity: 0.5, padding: '2rem' }}>No deployments found</td></tr>
+                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: 'center', opacity: 0.5, padding: '2rem' }}>No deployments found</td></tr>
               )}
               {sortedDeployments.map(d => (
                 <tr key={d.id}
@@ -403,6 +406,38 @@ export function MyDataPage() {
                   </td>
                   <td style={{ ...tdStyle, fontSize: '0.75rem' }}>{d.deployment_start ? new Date(d.deployment_start).toLocaleDateString() : '—'}</td>
                   <td style={{ ...tdStyle, fontSize: '0.75rem' }}>{d.deployment_end ? new Date(d.deployment_end).toLocaleDateString() : '—'}</td>
+                  <td style={tdStyle}>
+                    <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); navigate(`/labeling/${d.id}`) }}
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}
+                        title="Start labeling images"
+                      >
+                        Label 🏷️
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); navigate(`/events/${d.id}`) }}
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}
+                        title="Group observation events"
+                      >
+                        Events 📂
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); navigate(`/analysis/${d.id}`) }}
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}
+                        title="Analyse science data"
+                      >
+                        Analyse 📊
+                      </button>
+                      <button
+                        onClick={(e) => { e.stopPropagation(); navigate(`/reporting/${d.id}`) }}
+                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}
+                        title="Generate reports"
+                      >
+                        Report 📦
+                      </button>
+                    </div>
+                  </td>
                 </tr>
               ))}
             </tbody>
