@@ -16,7 +16,6 @@ interface MediaRecord {
   file_public: boolean
   media_comments: string | null
   observations: ObservationRecord[]
-  detections: DetectionRecord[]
 }
 
 export interface ObservationRecord {
@@ -33,20 +32,13 @@ export interface ObservationRecord {
   classified_by: string | null
   classification_probability: number | null
   observation_comments: string | null
-}
-
-export interface DetectionRecord {
-  id: string
-  media_id: string
-  ai_model_id: string | null
-  category: string | null
-  confidence: number | null
-  bbox: { x: number; y: number; w: number; h: number } | null
-  is_blank_candidate: boolean
+  bbox_x?: number | null
+  bbox_y?: number | null
+  bbox_w?: number | null
+  bbox_h?: number | null
 }
 
 interface Props {
-  projectId: string | null
   deployments: { id: string; location_name: string | null; project_id: string }[]
 }
 
@@ -70,7 +62,7 @@ function resolveImageUrl(filePath: string, mediaId: string, size: 'thumb' | 'ful
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function MediaBrowser({ projectId, deployments }: Props) {
+export function MediaBrowser({ deployments }: Props) {
   const { user } = useAuth()
   const [media, setMedia] = useState<MediaRecord[]>([])
   const [loading, setLoading] = useState(false)
@@ -84,9 +76,8 @@ export function MediaBrowser({ projectId, deployments }: Props) {
 
   // Scope deployments to selected project
   const scopedDeployments = useMemo(() => {
-    if (!projectId) return deployments
-    return deployments.filter(d => d.project_id === projectId)
-  }, [deployments, projectId])
+    return deployments
+  }, [deployments])
 
   // Fetch media
   useEffect(() => {
@@ -97,6 +88,7 @@ export function MediaBrowser({ projectId, deployments }: Props) {
       : scopedDeployments.map(d => d.id)
 
     if (deploymentIds.length === 0) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setMedia([])
       return
     }
@@ -107,7 +99,7 @@ export function MediaBrowser({ projectId, deployments }: Props) {
 
     supabase
       .from('media')
-      .select('id, deployment_id, file_path, file_name, file_mediatype, timestamp, favorite, file_public, media_comments, observations(id, deployment_id, media_id, observation_type, scientific_name, count, life_stage, sex, behavior, classification_method, classified_by, classification_probability, observation_comments), detections(id, media_id, ai_model_id, category, confidence, bbox, is_blank_candidate)')
+      .select('id, deployment_id, file_path, file_name, file_mediatype, timestamp, favorite, file_public, media_comments, observations(id, deployment_id, media_id, observation_type, scientific_name, count, life_stage, sex, behavior, classification_method, classified_by, classification_probability, observation_comments, bbox_x, bbox_y, bbox_w, bbox_h)')
       .in('deployment_id', deploymentIds)
       .is('deleted_at', null)
       .order('timestamp', { ascending: false, nullsFirst: false })
@@ -120,7 +112,6 @@ export function MediaBrowser({ projectId, deployments }: Props) {
       })
 
     return () => { cancelled = true }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user, scopedDeployments, filterDeployment])
 
   // Derive filter options from loaded data
@@ -128,7 +119,6 @@ export function MediaBrowser({ projectId, deployments }: Props) {
     const names = new Set<string>()
     media.forEach(m => {
       m.observations.forEach(o => { if (o.scientific_name) names.add(o.scientific_name) })
-      m.detections.forEach(d => { if (d.category) names.add(d.category) })
     })
     return Array.from(names).sort()
   }, [media])
@@ -146,8 +136,7 @@ export function MediaBrowser({ projectId, deployments }: Props) {
     let result = media
     if (filterSpecies) {
       result = result.filter(m =>
-        m.observations.some(o => o.scientific_name === filterSpecies) ||
-        m.detections.some(d => d.category === filterSpecies)
+        m.observations.some(o => o.scientific_name === filterSpecies)
       )
     }
     if (filterAnnotator) {
@@ -161,8 +150,8 @@ export function MediaBrowser({ projectId, deployments }: Props) {
   // KPI stats
   const stats = useMemo(() => ({
     total: filtered.length,
-    withDetections: filtered.filter(m => m.detections.length > 0).length,
-    annotated: filtered.filter(m => m.observations.length > 0).length,
+    withDetections: filtered.filter(m => m.observations.some(o => o.classification_method === 'machine')).length,
+    annotated: filtered.filter(m => m.observations.some(o => o.classification_method === 'human')).length,
     favorites: filtered.filter(m => m.favorite).length,
     noImage: filtered.filter(m => !m.file_path).length,
   }), [filtered])
@@ -182,8 +171,8 @@ export function MediaBrowser({ projectId, deployments }: Props) {
     fontSize: '0.8125rem',
   }
 
-  if (!projectId && deployments.length === 0) {
-    return <p style={{ opacity: 0.6, padding: '2rem 0' }}>Select a project to browse media.</p>
+  if (deployments.length === 0) {
+    return <p style={{ opacity: 0.6, padding: '2rem 0' }}>Select a project or add deployments to browse media.</p>
   }
 
   return (
@@ -257,10 +246,15 @@ export function MediaBrowser({ projectId, deployments }: Props) {
           }}>
             {filtered.map(m => {
               const imgUrl = resolveImageUrl(m.file_path, m.id)
-              const topObs = m.observations[0]
-              const topDet = m.detections[0]
-              const label = topObs?.scientific_name || topDet?.category || null
-              const conf = topObs?.classification_probability ?? topDet?.confidence ?? null
+              // Prioritize human observations first, then machine
+              const sortedObs = [...m.observations].sort((a, b) => {
+                if (a.classification_method === 'human' && b.classification_method !== 'human') return -1
+                if (a.classification_method !== 'human' && b.classification_method === 'human') return 1
+                return 0
+              })
+              const topObs = sortedObs[0] || null
+              const label = topObs?.scientific_name || null
+              const conf = topObs?.classification_probability ?? null
               const isSelected = selectedMediaId === m.id
 
               return (

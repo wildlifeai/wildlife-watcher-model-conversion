@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import { supabase } from '../../config/supabase'
 import { useAuth } from '../../hooks/useAuth'
-import type { ObservationRecord, DetectionRecord } from './MediaBrowser'
+import type { ObservationRecord } from './MediaBrowser'
 
 interface MediaRecord {
   id: string
@@ -14,7 +14,6 @@ interface MediaRecord {
   file_public: boolean
   media_comments: string | null
   observations: ObservationRecord[]
-  detections: DetectionRecord[]
 }
 
 interface Props {
@@ -167,36 +166,47 @@ export function MediaDetail({ media, onClose, onUpdated }: Props) {
         {imgUrl ? (
           <>
             <img src={imgUrl} alt={media.file_name || ''} style={{ width: '100%', display: 'block' }} />
-            {/* Detection bounding boxes */}
-            {media.detections.map(det => det.bbox && (
-              <div
-                key={det.id}
-                style={{
-                  position: 'absolute',
-                  left: `${det.bbox.x * 100}%`,
-                  top: `${det.bbox.y * 100}%`,
-                  width: `${det.bbox.w * 100}%`,
-                  height: `${det.bbox.h * 100}%`,
-                  border: '2px solid rgba(76,175,80,0.8)',
-                  borderRadius: '2px',
-                  pointerEvents: 'none',
-                }}
-              >
-                <span style={{
-                  position: 'absolute',
-                  top: -18,
-                  left: 0,
-                  backgroundColor: 'rgba(76,175,80,0.85)',
-                  color: '#fff',
-                  fontSize: '0.625rem',
-                  padding: '1px 4px',
-                  borderRadius: '2px',
-                  whiteSpace: 'nowrap',
-                }}>
-                  {det.category} {det.confidence ? `${(det.confidence * 100).toFixed(0)}%` : ''}
-                </span>
-              </div>
-            ))}
+            {/* Bounding boxes from observations with bbox data */}
+            {media.observations.map(obs => {
+              const hasBbox = obs.bbox_x !== undefined && obs.bbox_x !== null &&
+                              obs.bbox_y !== undefined && obs.bbox_y !== null &&
+                              obs.bbox_w !== undefined && obs.bbox_w !== null &&
+                              obs.bbox_h !== undefined && obs.bbox_h !== null
+              if (!hasBbox) return null
+              const isMachine = obs.classification_method === 'machine'
+              const color = isMachine ? 'rgba(76,175,80,0.8)' : 'rgba(33,150,243,0.8)'
+              const label = obs.scientific_name || obs.observation_type || 'Unknown'
+              const conf = obs.classification_probability
+              return (
+                <div
+                  key={obs.id}
+                  style={{
+                    position: 'absolute',
+                    left: `${obs.bbox_x! * 100}%`,
+                    top: `${obs.bbox_y! * 100}%`,
+                    width: `${obs.bbox_w! * 100}%`,
+                    height: `${obs.bbox_h! * 100}%`,
+                    border: `2px solid ${color}`,
+                    borderRadius: '2px',
+                    pointerEvents: 'none',
+                  }}
+                >
+                  <span style={{
+                    position: 'absolute',
+                    top: -18,
+                    left: 0,
+                    backgroundColor: color,
+                    color: '#fff',
+                    fontSize: '0.625rem',
+                    padding: '1px 4px',
+                    borderRadius: '2px',
+                    whiteSpace: 'nowrap',
+                  }}>
+                    {label} {conf ? `${(conf * 100).toFixed(0)}%` : ''}
+                  </span>
+                </div>
+              )
+            })}
           </>
         ) : (
           <div style={{ textAlign: 'center', padding: '2rem', opacity: 0.5 }}>
@@ -213,7 +223,9 @@ export function MediaDetail({ media, onClose, onUpdated }: Props) {
       <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', fontSize: '0.75rem', opacity: 0.7 }}>
         {media.timestamp && <div>📅 {new Date(media.timestamp).toLocaleString()}</div>}
         <div>📁 {media.file_mediatype}</div>
-        {media.detections.length > 0 && <div>🔍 {media.detections.length} detection{media.detections.length > 1 ? 's' : ''}</div>}
+        {media.observations.filter(o => o.classification_method === 'machine').length > 0 && (
+          <div>🔍 {media.observations.filter(o => o.classification_method === 'machine').length} AI detection{media.observations.filter(o => o.classification_method === 'machine').length > 1 ? 's' : ''}</div>
+        )}
       </div>
 
       {/* ── Observations ───────────────────────────────────── */}

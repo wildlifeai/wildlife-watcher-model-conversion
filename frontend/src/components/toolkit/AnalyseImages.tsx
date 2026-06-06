@@ -70,6 +70,11 @@ export function AnalyseImages() {
   })
   
   const [deployments, setDeployments] = useState<Deployment[]>([])
+  
+  // Track detailed validation state of unknown deployments
+  // Key: deployment ID, Value: 'no_access' | 'not_found'
+  const [invalidDeployments, setInvalidDeployments] = useState<Record<string, 'no_access' | 'not_found'>>({})
+  
   const folderInputRef = useRef<HTMLInputElement>(null)
   // const zipInputRef = useRef<HTMLInputElement>(null) // Temporarily disabled — ZIP picker commented out
   const lastSeenSeqRef = useRef<Record<string, number>>({})
@@ -82,6 +87,26 @@ export function AnalyseImages() {
   const [camtrapImporting, setCamtrapImporting] = useState(false)
   const [camtrapResult, setCamtrapResult] = useState<CamtrapImportResult | null>(null)
   const [camtrapError, setCamtrapError] = useState<string | null>(null)
+  const [camtrapElapsed, setCamtrapElapsed] = useState(0)
+  const [camtrapStage, setCamtrapStage] = useState(0)
+  const [showAllWarnings, setShowAllWarnings] = useState(false)
+
+  const CAMTRAP_STAGES = [
+    { label: 'Uploading package…',         pct: 10, after: 500   },
+    { label: 'Parsing deployments…',       pct: 25, after: 3000  },
+    { label: 'Registering taxa via iNat…', pct: 45, after: 8000  },
+    { label: 'Importing media records…',   pct: 65, after: 15000 },
+    { label: 'Importing observations…',    pct: 80, after: 22000 },
+    { label: 'Finalising import…',         pct: 92, after: 30000 },
+  ]
+
+  useEffect(() => {
+    if (!camtrapImporting) { setCamtrapStage(0); setCamtrapElapsed(0); return }
+    const start = Date.now()
+    const ticker = setInterval(() => setCamtrapElapsed(Math.floor((Date.now() - start) / 1000)), 1000)
+    const timers = CAMTRAP_STAGES.map((s, i) => setTimeout(() => setCamtrapStage(i), s.after))
+    return () => { clearInterval(ticker); timers.forEach(clearTimeout) }
+  }, [camtrapImporting])
 
   // Which upload mode is active
   type UploadMode = 'idle' | 'images' | 'camtrapdp'
@@ -366,7 +391,7 @@ export function AnalyseImages() {
     }
   })
 
-  const processFiles = (incoming: File[]) => {
+  const processFiles = async (incoming: File[]) => {
     // Check for ZIP files first — route to CamtrapDP
     const zips = incoming.filter(f => f.name.toLowerCase().endsWith('.zip'))
     const imageFiles = incoming.filter((f) =>
@@ -374,7 +399,6 @@ export function AnalyseImages() {
     )
 
     // Only route to CamtrapDP if there are ZIPs and no images
-    // (a folder with both images and a backup .zip should use the image path)
     if (zips.length > 0 && imageFiles.length === 0) {
       setZipFile(zips[0])
       setFiles([])
@@ -383,6 +407,7 @@ export function AnalyseImages() {
       setCamtrapResult(null)
       setCamtrapError(null)
       setPipelineState({ totalFiles: 0, uploadedFiles: 0, jobs: [], logs: [], lastUpdateTs: Date.now() })
+      setInvalidDeployments({})
       return
     }
 
@@ -396,6 +421,40 @@ export function AnalyseImages() {
     setCamtrapError(null)
     setPipelineState({ totalFiles: 0, uploadedFiles: 0, jobs: [], logs: [], lastUpdateTs: Date.now() })
     lastSeenSeqRef.current = {}
+    setInvalidDeployments({})
+
+    // Detect unique deployment prefixes from paths
+    const folderDepIds = Array.from(new Set(
+      paths
+        .map((p) => {
+          const m = p.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
+          return m ? m[1].toUpperCase() : null
+        })
+        .filter(Boolean) as string[]
+    ))
+    
+    const unknownIds = folderDepIds.filter(
+      id => !deployments.some(d => d.id.toUpperCase().startsWith(id))
+    )
+
+    if (unknownIds.length > 0) {
+      try {
+        const response = await apiClient.post('/api/deployments/validate', {
+          deployment_ids: unknownIds
+        })
+        const validationResults: Record<string, 'valid' | 'no_access' | 'not_found'> = response.data
+        const newInvalid: Record<string, 'no_access' | 'not_found'> = {}
+        
+        for (const [id, status] of Object.entries(validationResults)) {
+          if (status === 'no_access' || status === 'not_found') {
+            newInvalid[id] = status
+          }
+        }
+        setInvalidDeployments(newInvalid)
+      } catch (err) {
+        console.error("Failed to validate deployments", err)
+      }
+    }
   }
 
   const handleCamtrapImport = async () => {
@@ -435,15 +494,26 @@ export function AnalyseImages() {
     }
   }
 
-  // Count unique deployment prefixes from paths
-  const folderDepCount = new Set(
+  // Detect unique deployment prefixes from paths
+  const folderDepIds = Array.from(new Set(
     filePaths
       .map((p) => {
         const m = p.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
         return m ? m[1].toUpperCase() : null
       })
-      .filter(Boolean)
-  ).size
+      .filter(Boolean) as string[]
+  ))
+  const folderDepCount = folderDepIds.length
+  
+  const notFoundDeployments = Object.entries(invalidDeployments)
+    .filter(([_, status]) => status === 'not_found')
+    .map(([id]) => id)
+    
+  const noAccessDeployments = Object.entries(invalidDeployments)
+    .filter(([_, status]) => status === 'no_access')
+    .map(([id]) => id)
+    
+  const hasInvalidDeployments = notFoundDeployments.length > 0 || noAccessDeployments.length > 0
 
   return (
     <div>
@@ -558,15 +628,35 @@ export function AnalyseImages() {
             from the CamtrapDP package. You can explore the imported data in <strong>My Data</strong> afterwards.
           </p>
 
-          {!camtrapResult && (
+          {!camtrapResult && !camtrapImporting && (
             <button
               className="btn"
               onClick={handleCamtrapImport}
-              disabled={camtrapImporting}
               style={{ padding: '0.5rem 1.25rem' }}
             >
-              {camtrapImporting ? '⏳ Importing…' : '⬆ Import CamtrapDP Package'}
+              ⬆ Import CamtrapDP Package
             </button>
+          )}
+
+          {camtrapImporting && (
+            <div style={{ marginTop: '0.25rem', padding: '1rem', borderRadius: 'var(--radius)', backgroundColor: 'var(--bg-color, #fff)', border: '1px solid var(--border)' }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.5rem' }}>
+                <span style={{ fontSize: '0.8125rem', fontWeight: 500 }}>{CAMTRAP_STAGES[camtrapStage]?.label ?? 'Importing…'}</span>
+                <span style={{ fontSize: '0.75rem', opacity: 0.55, fontVariantNumeric: 'tabular-nums' }}>{camtrapElapsed}s</span>
+              </div>
+              <div style={{ height: '6px', backgroundColor: 'var(--border)', borderRadius: '3px', overflow: 'hidden' }}>
+                <div style={{
+                  height: '100%',
+                  width: `${CAMTRAP_STAGES[camtrapStage]?.pct ?? 10}%`,
+                  borderRadius: '3px',
+                  transition: 'width 1.2s ease',
+                  backgroundImage: 'linear-gradient(90deg, var(--primary, #4caf50), #66bb6a)',
+                }} />
+              </div>
+              <p style={{ fontSize: '0.75rem', opacity: 0.5, marginTop: '0.5rem', marginBottom: 0 }}>
+                Large packages with many taxa can take 30–60 s. Please keep this tab open.
+              </p>
+            </div>
           )}
 
           {camtrapError && (
@@ -607,12 +697,21 @@ export function AnalyseImages() {
                 ))}
               </div>
               {camtrapResult.warnings.length > 0 && (
-                <div style={{ opacity: 0.7, marginBottom: '0.5rem' }}>
-                  <strong>Warnings:</strong>
+                <div style={{ opacity: 0.75, marginBottom: '0.5rem' }}>
+                  <strong>Warnings ({camtrapResult.warnings.length}):</strong>
                   <ul style={{ margin: '0.25rem 0 0 1rem', padding: 0 }}>
-                    {camtrapResult.warnings.slice(0, 10).map((w, i) => <li key={i}>{w}</li>)}
-                    {camtrapResult.warnings.length > 10 && <li>…and {camtrapResult.warnings.length - 10} more</li>}
+                    {(showAllWarnings ? camtrapResult.warnings : camtrapResult.warnings.slice(0, 3)).map((w, i) => (
+                      <li key={i} style={{ marginBottom: '0.2rem', wordBreak: 'break-word' }}>{w}</li>
+                    ))}
                   </ul>
+                  {camtrapResult.warnings.length > 3 && (
+                    <button
+                      onClick={() => setShowAllWarnings(v => !v)}
+                      style={{ marginTop: '0.35rem', background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontSize: '0.75rem', padding: 0 }}
+                    >
+                      {showAllWarnings ? '▲ Show fewer' : `▼ Show all ${camtrapResult.warnings.length} warnings`}
+                    </button>
+                  )}
                 </div>
               )}
               <Link to="/my-data" style={{ color: 'var(--primary)', fontWeight: 500, fontSize: '0.875rem', textDecoration: 'none' }}>
@@ -668,6 +767,37 @@ export function AnalyseImages() {
             />
             ☁️ Upload images to Google Drive
           </label>
+          
+          {uploadToDrive && hasInvalidDeployments && (
+            <div style={{
+              marginTop: '1rem',
+              padding: '0.75rem',
+              borderRadius: 'var(--radius)',
+              backgroundColor: 'rgba(255, 152, 0, 0.1)',
+              border: '1px solid rgba(255, 152, 0, 0.3)',
+              fontSize: '0.8125rem'
+            }}>
+              <strong style={{ color: '#e65100', display: 'block', marginBottom: '0.25rem' }}>
+                ⚠️ Upload Will Fail for Some Images
+              </strong>
+              
+              {notFoundDeployments.length > 0 && (
+                <p style={{ margin: '0.5rem 0 0 0', opacity: 0.9, color: '#e65100' }}>
+                  The following deployments <strong>do not exist in the database</strong>: <br />
+                  <strong style={{ fontFamily: 'monospace' }}>{notFoundDeployments.join(', ')}</strong>.
+                  <br />Please create these deployments before uploading.
+                </p>
+              )}
+              
+              {noAccessDeployments.length > 0 && (
+                <p style={{ margin: '0.5rem 0 0 0', opacity: 0.9, color: '#e65100' }}>
+                  The following deployments <strong>belong to a project you do not have access to</strong>: <br />
+                  <strong style={{ fontFamily: 'monospace' }}>{noAccessDeployments.join(', ')}</strong>.
+                  <br />Please contact your project administrator to request access.
+                </p>
+              )}
+            </div>
+          )}
         </div>
       )}
 
@@ -723,7 +853,12 @@ export function AnalyseImages() {
                     {r.matched_deployment ? (
                       <span style={{ color: 'var(--success)' }}>✓ {r.matched_deployment}</span>
                     ) : r.deployment_id ? (
-                      <span style={{ fontSize: '0.75rem', fontFamily: 'monospace' }}>{r.deployment_id.slice(0, 8)}…</span>
+                      <span style={{ color: 'var(--error)', fontSize: '0.75rem' }} title="Deployment not fully accessible">
+                        ⚠️ <span style={{ fontFamily: 'monospace' }}>{r.deployment_id.slice(0, 8)}…</span> 
+                        {invalidDeployments[r.deployment_id.slice(0, 8).toUpperCase()] === 'no_access' 
+                          ? ' (No Access)' 
+                          : ' (Not Found)'}
+                      </span>
                     ) : (
                       <span style={{ opacity: 0.4 }}>—</span>
                     )}

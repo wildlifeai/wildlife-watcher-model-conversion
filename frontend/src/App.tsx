@@ -3,6 +3,8 @@ import { BrowserRouter, Routes, Route, Link, Navigate } from 'react-router-dom'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/queryClient'
 import { useAuth } from './hooks/useAuth'
+import { ProjectSelectionProvider } from './hooks/useProjectSelection'
+import { GlobalProjectSelector } from './components/common/GlobalProjectSelector'
 import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
 import { MyDataPage } from './pages/MyDataPage'
@@ -63,10 +65,13 @@ function Layout({ children }: { children: React.ReactNode }) {
             Wildlife Watcher Web
           </Link>
           <nav style={{ display: 'flex', gap: '1rem', alignItems: 'center' }}>
-            <Link to="/resources" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Resources</Link>
+            {!user && (
+              <Link to="/resources" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Resources</Link>
+            )}
             {user && (
               <>
                 <Link to="/my-data" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>My Data</Link>
+                <Link to="/labeling" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Labeling</Link>
                 <Link to="/upload-data" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Upload Data</Link>
                 <Link to="/manifest" style={{ textDecoration: 'none', color: 'var(--text-color)' }}>Prepare SD Card</Link>
                 {isOrgManager && (
@@ -76,6 +81,7 @@ function Layout({ children }: { children: React.ReactNode }) {
             )}
             {user ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                <GlobalProjectSelector />
                 <span style={{ fontSize: '0.875rem', opacity: 0.8 }}>{user.email}</span>
                 <button className="btn" onClick={logout} style={{ padding: '0.25rem 0.75rem', backgroundColor: 'transparent', border: '1px solid var(--border)', color: 'var(--text-color)' }}>Logout</button>
               </div>
@@ -122,28 +128,31 @@ function Layout({ children }: { children: React.ReactNode }) {
 export default function App() {
   return (
     <QueryClientProvider client={queryClient}>
-      <BrowserRouter>
-        <Layout>
-          <Routes>
-            <Route path="/" element={<HomePage />} />
-            <Route path="/login" element={<LoginPage />} />
-            <Route path="/reset-password" element={<ResetPasswordPage />} />
-            <Route path="/privacy" element={<PrivacyPolicyPage />} />
-            <Route path="/support" element={<SupportPage />} />
-            <Route path="/terms" element={<TermsOfServicePage />} />
-            <Route path="/resources" element={<ResourcesPage />} />
-            <Route path="/my-data" element={<RequireAuth><MyDataPage /></RequireAuth>} />
-            <Route path="/upload-data" element={<RequireAuth><UploadDataPage /></RequireAuth>} />
-            <Route path="/analyse-images" element={<Navigate to="/upload-data" replace />} />
-            <Route path="/manifest" element={<RequireAuth><ManifestPage /></RequireAuth>} />
-            <Route path="/upload-model" element={<RequireAuth><UploadModelPage /></RequireAuth>} />
-            <Route path="/labeling/:deployment_id" element={<RequireAuth><LabelingPage /></RequireAuth>} />
-            <Route path="/events/:deployment_id" element={<RequireAuth><EventReviewPage /></RequireAuth>} />
-            <Route path="/analysis/:deployment_id" element={<RequireAuth><AnalysisPage /></RequireAuth>} />
-            <Route path="/reporting/:deployment_id" element={<RequireAuth><ReportingPage /></RequireAuth>} />
-          </Routes>
-        </Layout>
-      </BrowserRouter>
+      <ProjectSelectionProvider>
+        <BrowserRouter>
+          <Layout>
+            <Routes>
+              <Route path="/" element={<HomePage />} />
+              <Route path="/login" element={<LoginPage />} />
+              <Route path="/reset-password" element={<ResetPasswordPage />} />
+              <Route path="/privacy" element={<PrivacyPolicyPage />} />
+              <Route path="/support" element={<SupportPage />} />
+              <Route path="/terms" element={<TermsOfServicePage />} />
+              <Route path="/resources" element={<ResourcesPage />} />
+              <Route path="/my-data" element={<RequireAuth><MyDataPage /></RequireAuth>} />
+              <Route path="/upload-data" element={<RequireAuth><UploadDataPage /></RequireAuth>} />
+              <Route path="/analyse-images" element={<Navigate to="/upload-data" replace />} />
+              <Route path="/manifest" element={<RequireAuth><ManifestPage /></RequireAuth>} />
+              <Route path="/upload-model" element={<RequireAuth><UploadModelPage /></RequireAuth>} />
+              <Route path="/labeling" element={<RequireAuth><LabelingPage /></RequireAuth>} />
+              <Route path="/labeling/:deployment_id" element={<RequireAuth><LabelingPage /></RequireAuth>} />
+              <Route path="/events/:deployment_id" element={<RequireAuth><EventReviewPage /></RequireAuth>} />
+              <Route path="/analysis/:deployment_id" element={<RequireAuth><AnalysisPage /></RequireAuth>} />
+              <Route path="/reporting/:deployment_id" element={<RequireAuth><ReportingPage /></RequireAuth>} />
+            </Routes>
+          </Layout>
+        </BrowserRouter>
+      </ProjectSelectionProvider>
     </QueryClientProvider>
   )
 }

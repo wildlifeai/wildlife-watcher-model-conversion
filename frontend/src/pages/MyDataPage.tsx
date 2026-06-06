@@ -2,6 +2,7 @@ import { useState, useEffect, useMemo } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
+import { useProjectSelection } from '../hooks/useProjectSelection'
 import { DeploymentMap } from '../components/data/DeploymentMap'
 import { ObservationReports } from '../components/data/ObservationReports'
 import { MediaBrowser } from '../components/data/MediaBrowser'
@@ -47,6 +48,7 @@ type Tab = 'projects' | 'deployments' | 'map' | 'reports' | 'media'
 
 export function MyDataPage() {
   const { user } = useAuth()
+  const { selectedProjectIds, clearAll, toggleProject } = useProjectSelection()
   const navigate = useNavigate()
   const [tab, setTab] = useState<Tab>('projects')
   const [projects, setProjects] = useState<Project[]>([])
@@ -55,7 +57,6 @@ export function MyDataPage() {
   const [loading, setLoading] = useState(true)
   const [obsLoading, setObsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null)
   const [sortCol, setSortCol] = useState<string>('')
   const [sortAsc, setSortAsc] = useState(true)
@@ -91,7 +92,9 @@ export function MyDataPage() {
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
 
-    if (selectedProject) query = query.eq('project_id', selectedProject)
+    if (selectedProjectIds.length > 0) {
+      query = query.in('project_id', selectedProjectIds)
+    }
 
     query.then(({ data, error: err }) => {
       if (err) { setError(err.message); setLoading(false); return }
@@ -106,7 +109,7 @@ export function MyDataPage() {
       setDeployments(rows)
       setLoading(false)
     })
-  }, [user, tab, selectedProject])
+  }, [user, tab, selectedProjectIds])
 
   // ── Fetch observations for Map + Reports tabs ───────────────────────────────
   useEffect(() => {
@@ -135,15 +138,16 @@ export function MyDataPage() {
 
   // ── Download CamtrapDP ZIP ──────────────────────────────────────────────────
   const downloadCamtrapDP = async () => {
-    if (!selectedProject) {
-      setExportError('Select a project first to download its CamtrapDP package.')
+    if (selectedProjectIds.length !== 1) {
+      setExportError('Please select exactly one project from the global filter to download its CamtrapDP package.')
       return
     }
+    const projectId = selectedProjectIds[0]
     setIsExporting(true)
     setExportError(null)
     try {
       const { data, error: fnErr } = await supabase.functions.invoke('export-camtrap-dp', {
-        body: { project_id: selectedProject },
+        body: { project_id: projectId },
       })
       if (fnErr) throw new Error(fnErr.message)
 
@@ -152,7 +156,7 @@ export function MyDataPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `camtrapdp-${selectedProject}-${new Date().toISOString().slice(0, 10)}.zip`
+      a.download = `camtrapdp-${projectId}-${new Date().toISOString().slice(0, 10)}.zip`
       a.click()
       URL.revokeObjectURL(url)
     } catch (err: unknown) {
@@ -274,16 +278,6 @@ export function MyDataPage() {
       {/* Project filter (shared across non-projects tabs) */}
       {tab !== 'projects' && (
         <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <select
-            id="project-filter"
-            value={selectedProject || ''}
-            onChange={e => setSelectedProject(e.target.value || null)}
-            style={{ padding: '0.5rem', borderRadius: 'var(--radius)', border: '1px solid var(--border)', backgroundColor: 'var(--surface)', color: 'var(--text-color)' }}
-          >
-            <option value="">All projects</option>
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-
           {tab === 'deployments' && (
             <>
               <input
@@ -298,9 +292,9 @@ export function MyDataPage() {
                 id="download-camtrapdp-btn"
                 className="btn"
                 onClick={downloadCamtrapDP}
-                disabled={isExporting || !selectedProject}
-                title={!selectedProject ? 'Select a project to download CamtrapDP' : 'Download CamtrapDP package (ZIP)'}
-                style={{ padding: '0.5rem 1rem', whiteSpace: 'nowrap', opacity: !selectedProject ? 0.5 : 1 }}
+                disabled={isExporting || selectedProjectIds.length !== 1}
+                title={selectedProjectIds.length !== 1 ? 'Select exactly one project from the top right to download CamtrapDP' : 'Download CamtrapDP package (ZIP)'}
+                style={{ padding: '0.5rem 1rem', whiteSpace: 'nowrap', opacity: selectedProjectIds.length !== 1 ? 0.5 : 1 }}
               >
                 {isExporting ? '⏳ Exporting…' : '📦 Download CamtrapDP'}
               </button>
@@ -354,11 +348,11 @@ export function MyDataPage() {
                     <td style={{ ...tdStyle, fontSize: '0.75rem' }}>{new Date(p.created_at).toLocaleDateString()}</td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
-                        <button onClick={() => { setSelectedProject(p.id); setTab('deployments') }}
+                        <button onClick={() => { clearAll(); toggleProject(p.id); setTab('deployments') }}
                           style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}>
                           Deployments →
                         </button>
-                        <button onClick={() => { setSelectedProject(p.id); setTab('map') }}
+                        <button onClick={() => { clearAll(); toggleProject(p.id); setTab('map') }}
                           style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}>
                           Map →
                         </button>
@@ -470,7 +464,6 @@ export function MyDataPage() {
       {/* ── Media tab ──────────────────────────────────────────────────────── */}
       {tab === 'media' && (
         <MediaBrowser
-          projectId={selectedProject}
           deployments={deployments.map(d => ({ id: d.id, location_name: d.location_name, project_id: d.project_id }))}
         />
       )}
