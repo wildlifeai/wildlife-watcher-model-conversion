@@ -262,3 +262,104 @@ async def batch_poll_observations(
         )
 
     return results
+
+
+async def search_and_fetch_inat_taxon(scientific_name: str) -> Optional[Dict[str, Any]]:
+    """Search for a taxon by scientific name and fetch its complete lineage.
+    
+    Returns a dictionary matching the `taxa` table schema, or None if not found
+    or if the iNat API request fails.
+    """
+    async with httpx.AsyncClient(timeout=15) as client:
+        # Step 1: Search for the taxon ID
+        search_res = await client.get(
+            f"{INAT_API_BASE}/taxa/autocomplete",
+            params={"q": scientific_name, "per_page": 1},
+        )
+        if search_res.status_code != 200 or not search_res.json().get("results"):
+            return None
+            
+        taxon_id = search_res.json()["results"][0].get("id")
+        if not taxon_id:
+            return None
+            
+        # Step 2: Fetch the full taxon details
+        detail_res = await client.get(f"{INAT_API_BASE}/taxa/{taxon_id}")
+        if detail_res.status_code != 200 or not detail_res.json().get("results"):
+            return None
+            
+        taxon = detail_res.json()["results"][0]
+        
+    rank = taxon.get("rank")
+    allowed_ranks = {'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'subspecies'}
+    if rank not in allowed_ranks:
+        return None
+        
+    lineage = {
+        "kingdom": None,
+        "phylum": None,
+        "class": None,
+        "order_name": None,
+        "family": None,
+        "genus": None,
+        "species": None
+    }
+    
+    for ancestor in taxon.get("ancestors", []):
+        a_rank = ancestor.get("rank")
+        a_name = ancestor.get("name")
+        if a_rank == "kingdom":
+            lineage["kingdom"] = a_name
+        elif a_rank == "phylum":
+            lineage["phylum"] = a_name
+        elif a_rank == "class":
+            lineage["class"] = a_name
+        elif a_rank == "order":
+            lineage["order_name"] = a_name
+        elif a_rank == "family":
+            lineage["family"] = a_name
+        elif a_rank == "genus":
+            lineage["genus"] = a_name
+            
+    name = taxon.get("name")
+    if rank == "kingdom":
+        lineage["kingdom"] = name
+    elif rank == "phylum":
+        lineage["phylum"] = name
+    elif rank == "class":
+        lineage["class"] = name
+    elif rank == "order":
+        lineage["order_name"] = name
+    elif rank == "family":
+        lineage["family"] = name
+    elif rank == "genus":
+        lineage["genus"] = name
+    elif rank in ("species", "subspecies"):
+        lineage["species"] = name
+
+    conservation_status = None
+    cs_obj = taxon.get("conservation_status")
+    if cs_obj and isinstance(cs_obj, dict):
+        conservation_status = cs_obj.get("status")
+    else:
+        cs_list = taxon.get("conservation_statuses", [])
+        if cs_list and isinstance(cs_list, list):
+            conservation_status = cs_list[0].get("status")
+
+    return {
+        "scientific_name": name,
+        "common_name": taxon.get("preferred_common_name") or taxon.get("name"),
+        "rank": rank,
+        "kingdom": lineage["kingdom"],
+        "phylum": lineage["phylum"],
+        "class": lineage["class"],
+        "order_name": lineage["order_name"],
+        "family": lineage["family"],
+        "genus": lineage["genus"],
+        "species": lineage["species"],
+        "gbif_taxon_id": str(taxon.get("gbif_id")) if taxon.get("gbif_id") else None,
+        "inat_taxon_id": str(taxon_id),
+        "nzor_id": None,
+        "conservation_status": conservation_status,
+        "invasive_status": False,
+    }

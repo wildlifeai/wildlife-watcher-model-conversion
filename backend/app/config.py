@@ -53,6 +53,12 @@ class Settings(BaseSettings):
     FF_PIPELINE_ENABLED: bool = Field(False, description="Enable AI pipeline inference endpoints")
     FF_FIFTYONE_ENABLED: bool = Field(False, description="Enable FiftyOne visual review endpoints")
 
+    # ── CVAT Annotation Integration ───────────────────────────────────
+    CVAT_URL: str = Field("http://cvat_server:8080", description="Internal CVAT server URL (Docker network)")
+    CVAT_USERNAME: str = Field("ww-service", description="CVAT service account username")
+    CVAT_PASSWORD: str = Field("", description="CVAT service account password")
+    CVAT_WEBHOOK_SECRET: str = Field("", description="HMAC-SHA256 secret shared with CVAT for webhook verification")
+
     # ── General ──────────────────────────────────────────────────────
     GENERAL_ORG_ID: str = Field(
         "b0000000-0000-0000-0000-000000000001",

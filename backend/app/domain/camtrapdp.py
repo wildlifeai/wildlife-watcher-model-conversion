@@ -16,7 +16,7 @@ from typing import Optional
 
 import structlog
 
-from app.schemas.camtrapdp import CamtrapImportResult
+from app.schemas.camtrapdp import CamtrapImportResult, PendingDriveUpload
 
 logger = structlog.get_logger()
 
@@ -32,6 +32,8 @@ class CamtrapPackage:
     media: list[dict] = field(default_factory=list)
     observations: list[dict] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    # Image files physically present inside the zip: {relative_path → bytes}
+    zip_files: dict[str, bytes] = field(default_factory=dict)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -77,6 +79,15 @@ def parse_zip(zip_bytes: bytes) -> CamtrapPackage:
     pkg.deployments = read_csv("deployments.csv")
     pkg.media = read_csv("media.csv")
     pkg.observations = read_csv("observations.csv")
+
+    # Collect image/video files physically embedded in the zip
+    _IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".gif", ".mp4", ".avi", ".mov", ".webm"}
+    for name in names:
+        ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+        if f".{ext}" in _IMAGE_EXTS:
+            pkg.zip_files[name] = zf.read(name)
+            # Also index by basename so relative paths like 'media/foo.jpg' resolve
+            pkg.zip_files[name.split("/")[-1]] = zf.read(name)
 
     if not pkg.deployments:
         pkg.warnings.append("deployments.csv is empty or missing.")
@@ -199,10 +210,10 @@ def import_package(
     # ── 1. Create project ──────────────────────────────────────────────
     project_id = str(uuid.uuid4())
 
-    # We must use user_client to create the project so the database trigger
-    # automatically assigns the creator as project_admin using auth.uid().
-    # Using svc (Service Role) would evaluate auth.uid() to NULL and crash the trigger.
-    client_to_use = user_client if user_client else svc
+    # Use the service-role client (svc) to bypass Row Level Security.
+    # The database trigger handle_new_project uses NEW.created_by to create
+    # the project_admin role, so using svc is safe and avoids RLS violations.
+    client_to_use = svc
 
     client_to_use.table("projects").insert(
         {
@@ -225,21 +236,27 @@ def import_package(
     device_map: dict[str, str] = {}  # cameraID → ww device UUID
 
     for camera_id in camera_ids:
-        device_uuid = str(uuid.uuid4())
         device_name = f"[imported] {camera_id}"[:100]  # truncate if needed
+        # Generate a stable bluetooth_id from the camera name so re-imports are idempotent.
+        bt_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{device_name}"))
         try:
-            svc.table("devices").insert(
-                {
-                    "id": device_uuid,
-                    "name": device_name,
-                    "organisation_id": org_id,
-                    "modified_by": user_id,
-                    # bluetooth_id is NOT NULL in WW schema; generate a stable
-                    # placeholder so imported cameras don't conflict with real devices.
-                    "bluetooth_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{device_name}")),
-                }
-            ).execute()
-            device_map[camera_id] = device_uuid
+            # First check if a device with this bluetooth_id already exists.
+            existing = svc.table("devices").select("id").eq("bluetooth_id", bt_id).limit(1).execute()
+            if existing.data:
+                device_map[camera_id] = existing.data[0]["id"]
+                logger.info("camtrapdp_import_device_reused", camera_id=camera_id, device_id=existing.data[0]["id"])
+            else:
+                device_uuid = str(uuid.uuid4())
+                svc.table("devices").insert(
+                    {
+                        "id": device_uuid,
+                        "name": device_name,
+                        "organisation_id": org_id,
+                        "modified_by": user_id,
+                        "bluetooth_id": bt_id,
+                    }
+                ).execute()
+                device_map[camera_id] = device_uuid
         except Exception as e:
             warnings.append(f"Could not create placeholder device for camera '{camera_id}': {e}")
 
@@ -264,23 +281,49 @@ def import_package(
         device_uuid = device_map.get(camera_id)
 
         if not device_uuid:
-            # Create on-the-fly if missing
-            device_uuid = str(uuid.uuid4())
+            # Create on-the-fly if missing (fallback for cameras not in the pre-scan set).
+            fallback_name = f"[imported] {camera_id or 'unknown'}"[:100]
+            bt_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{fallback_name}"))
             try:
-                fallback_name = f"[imported] {camera_id or 'unknown'}"[:100]
-                svc.table("devices").insert(
-                    {
-                        "id": device_uuid,
-                        "name": fallback_name,
-                        "organisation_id": org_id,
-                        "modified_by": user_id,
-                        "bluetooth_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, f"imported-{fallback_name}")),
-                    }
-                ).execute()
-                device_map[camera_id] = device_uuid
+                # Reuse if already exists.
+                existing = svc.table("devices").select("id").eq("bluetooth_id", bt_id).limit(1).execute()
+                if existing.data:
+                    device_uuid = existing.data[0]["id"]
+                    device_map[camera_id] = device_uuid
+                    logger.info("camtrapdp_import_device_reused", camera_id=camera_id, device_id=device_uuid)
+                else:
+                    device_uuid = str(uuid.uuid4())
+                    svc.table("devices").insert(
+                        {
+                            "id": device_uuid,
+                            "name": fallback_name,
+                            "organisation_id": org_id,
+                            "modified_by": user_id,
+                            "bluetooth_id": bt_id,
+                        }
+                    ).execute()
+                    device_map[camera_id] = device_uuid
             except Exception as e:
                 warnings.append(f"Could not create device for deployment '{cdp_id}': {e}")
                 continue
+
+        # Check if a deployment already exists for this device + start time.
+        # This makes re-imports idempotent: reuse the existing row's ID so that
+        # subsequent media and observations can still be linked correctly.
+        existing_dep = svc.table("deployments").select("id").eq(
+            "device_id", device_uuid
+        ).eq("deployment_start", dep_start).limit(1).execute()
+
+        if existing_dep.data:
+            existing_id = existing_dep.data[0]["id"]
+            dep_id_map[cdp_id] = existing_id
+            logger.info(
+                "camtrapdp_import_deployment_reused",
+                cdp_id=cdp_id,
+                existing_id=existing_id,
+            )
+            deps_inserted += 1
+            continue
 
         ww_id = str(uuid.uuid4())
         dep_id_map[cdp_id] = ww_id
@@ -324,8 +367,11 @@ def import_package(
 
     # ── 4. Insert media (bulk, chunked) ──────────────────────────────────
     media_id_map: dict[str, str] = {}  # camtrapDP mediaID → ww UUID
+    # Map ww_media_id → ww_dep_id for Drive upload URL backfill
+    media_dep_map: dict[str, str] = {}
     media_inserted = 0
     media_batch: list[dict] = []
+    pending_drive_uploads: list[PendingDriveUpload] = []
     BULK_CHUNK = 100  # PostgREST bulk insert chunk size
 
     for m in pkg.media:
@@ -342,14 +388,44 @@ def import_package(
         ww_id = str(uuid.uuid4())
         if cdp_media_id:
             media_id_map[cdp_media_id] = ww_id
+        media_dep_map[ww_id] = ww_dep_id
+
+        # ── Classify filePath ──────────────────────────────────────────
+        # Case 1: public URL → store as-is, no upload needed
+        # Case 2: relative path found in zip → queue for Google Drive upload
+        # Case 3: relative path NOT in zip → store path as-is (external reference)
+        stored_path = file_path  # what goes into the DB for now
+        if file_path and not file_path.startswith(("http://", "https://")):
+            # Look up in the zip by full relative path or basename
+            zip_bytes = pkg.zip_files.get(file_path) or pkg.zip_files.get(file_path.split("/")[-1])
+            if zip_bytes:
+                # Resolve deployment context for Drive folder naming
+                dep_row = next(
+                    (d for d in pkg.deployments
+                     if dep_id_map.get(d.get("deploymentID", "").strip()) == ww_dep_id),
+                    {}
+                )
+                pending_drive_uploads.append(PendingDriveUpload(
+                    filename=file_name,
+                    mime_type=mime,
+                    file_bytes=zip_bytes,
+                    deployment_id=ww_dep_id,
+                    deployment_start=_str(dep_row.get("deploymentStart")),
+                    location_name=_str(dep_row.get("locationName")),
+                    project_id=project_id,
+                    project_name=project_title,
+                ))
+                # stored_path will be updated by the router after Drive upload
+                # For now leave as the relative path; router patches it afterward
 
         row = {
             "id": ww_id,
             "deployment_id": ww_dep_id,
-            "file_path": file_path,
+            "file_path": stored_path,
             "file_name": file_name,
             "file_mediatype": mime,
             "timestamp": _str(m.get("timestamp")),
+            "file_public": file_path.startswith(("http://", "https://")),
             "favorite": m.get("favorite", "").lower() == "true",
             "media_comments": _str(m.get("mediaComments")),
         }
@@ -372,9 +448,109 @@ def import_package(
         except Exception as e:
             warnings.append(f"Failed to insert media batch: {e}")
 
-    logger.info("camtrapdp_import_media", inserted=media_inserted)
+    logger.info(
+        "camtrapdp_import_media",
+        inserted=media_inserted,
+        pending_drive_uploads=len(pending_drive_uploads),
+    )
 
     # ── 5. Insert observations (bulk, chunked) ─────────────────────────
+    #
+    # observation_events must be created BEFORE observations because of
+    # fk_observations_event (observation_event_id, deployment_id) →
+    # observation_events (id, deployment_id).
+    #
+    # Strategy: one pre-pass groups observations by (eventID, dep_id),
+    # derives start/end time from linked media timestamps (or falls back to
+    # deployment_start), creates the event rows, then a second pass inserts
+    # the observations referencing those event UUIDs.
+
+    # Build a lookup: cdp eventID → WW observation_event UUID
+    # Key: (cdp_event_id, ww_dep_id)  →  ww_event_uuid
+    event_id_map: dict[tuple[str, str], str] = {}
+
+    # Group observations by (eventID, deploymentID) to derive timestamps
+    from collections import defaultdict
+    event_groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
+    for o in pkg.observations:
+        cdp_event_id = _str(o.get("eventID"))
+        cdp_dep_id = o.get("deploymentID", "").strip()
+        ww_dep_id = dep_id_map.get(cdp_dep_id)
+        if cdp_event_id and ww_dep_id:
+            event_groups[(cdp_event_id, ww_dep_id)].append(o)
+
+    # Build and insert observation_events rows
+    obs_event_batch: list[dict] = []
+    for (cdp_event_id, ww_dep_id), obs_in_event in event_groups.items():
+        ww_event_uuid = str(uuid.uuid5(uuid.NAMESPACE_DNS, f"{cdp_event_id}-{ww_dep_id}"))
+        event_id_map[(cdp_event_id, ww_dep_id)] = ww_event_uuid
+
+        # Collect timestamps from linked media
+        timestamps = []
+        for o in obs_in_event:
+            cdp_media_id = o.get("mediaID", "").strip()
+            ww_media_id = media_id_map.get(cdp_media_id)
+            if ww_media_id:
+                # Find timestamp from media batch (we may have it in pkg.media)
+                for m in pkg.media:
+                    if m.get("mediaID", "").strip() == cdp_media_id:
+                        ts = _str(m.get("timestamp"))
+                        if ts:
+                            timestamps.append(ts)
+                        break
+
+        if timestamps:
+            start_time = min(timestamps)
+            end_time = max(timestamps)
+        else:
+            # Fall back: use deployment start as placeholder
+            dep_row_start = next(
+                (d.get("deploymentStart") for d in pkg.deployments
+                 if dep_id_map.get(d.get("deploymentID", "").strip()) == ww_dep_id),
+                None,
+            )
+            start_time = dep_row_start or "1970-01-01T00:00:00Z"
+            end_time = start_time
+
+        # Compute duration in seconds (best-effort; 0 if same time)
+        try:
+            from datetime import datetime, timezone
+            fmt = "%Y-%m-%dT%H:%M:%S%z"
+            # Try parsing with fractional seconds too
+            def _parse_dt(s: str):
+                for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%d %H:%M:%S%z"):
+                    try:
+                        return datetime.strptime(s, fmt)
+                    except ValueError:
+                        continue
+                return None
+            dt_start = _parse_dt(start_time)
+            dt_end = _parse_dt(end_time)
+            duration = max(0, int((dt_end - dt_start).total_seconds())) if dt_start and dt_end else 0
+        except Exception:
+            duration = 0
+
+        obs_event_batch.append({
+            "id": ww_event_uuid,
+            "deployment_id": ww_dep_id,
+            "start_time": start_time,
+            "end_time": end_time,
+            "event_duration_seconds": duration,
+            "media_count": max(1, len(obs_in_event)),
+            "created_by": user_id,
+        })
+
+    # Insert observation_events in chunks (reuse same BULK_CHUNK)
+    for i in range(0, len(obs_event_batch), BULK_CHUNK):
+        chunk = obs_event_batch[i:i + BULK_CHUNK]
+        try:
+            # Upsert so re-imports don't fail on duplicate event UUIDs
+            svc.table("observation_events").upsert(chunk, on_conflict="id").execute()
+        except Exception as e:
+            warnings.append(f"Failed to insert observation_events batch: {e}")
+
+    logger.info("camtrapdp_import_observation_events", count=len(obs_event_batch))
+
     obs_inserted = 0
     obs_batch: list[dict] = []
 
@@ -407,14 +583,19 @@ def import_package(
         if cls_method and cls_method not in valid_cls:
             cls_method = None
 
+        cdp_event_id = _str(o.get("eventID"))
+        ww_event_id = event_id_map.get((cdp_event_id, ww_dep_id)) if cdp_event_id else None
+
         row = {
             "id": str(uuid.uuid4()),
             "deployment_id": ww_dep_id,
             "media_id": ww_media_id,
-            "event_id": str(uuid.uuid5(uuid.NAMESPACE_DNS, o.get("eventID", ""))) if _str(o.get("eventID")) else None,
-            "observation_level": _str(o.get("observationLevel")),
+            "observation_event_id": ww_event_id,
+            "observation_level": _str(o.get("observationLevel")) or ("media" if ww_media_id else "event"),
             "observation_type": obs_type,
             "scientific_name": _str(o.get("scientificName")),
+            "source_type": "imported",
+            "review_status": "unreviewed",
             "count": _int(o.get("count")),
             "life_stage": life_stage,
             "sex": sex,
@@ -423,8 +604,15 @@ def import_package(
             "classification_method": cls_method,
             "classified_by": _str(o.get("classifiedBy")),
             "classification_probability": _float(o.get("classificationProbability")),
+            "confidence": _float(o.get("classificationProbability")),
             "gbif_taxon_key": _int(o.get("taxonID")),
             "observation_comments": _str(o.get("observationComments")),
+            # CamtrapDP 1.0 bbox fields (camelCase) → WW schema (snake_case)
+            # bboxWidth/bboxHeight in CamtrapDP ↔ bbox_w/bbox_h in our DB
+            "bbox_x": _float(o.get("bboxX")),
+            "bbox_y": _float(o.get("bboxY")),
+            "bbox_w": _float(o.get("bboxWidth")),
+            "bbox_h": _float(o.get("bboxHeight")),
         }
         row = {k: v for k, v in row.items() if v is not None}
         obs_batch.append(row)
@@ -460,4 +648,5 @@ def import_package(
         media_imported=media_inserted,
         observations_imported=obs_inserted,
         warnings=warnings,
+        pending_drive_uploads=pending_drive_uploads,
     )

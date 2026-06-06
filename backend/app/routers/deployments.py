@@ -1,0 +1,82 @@
+from fastapi import APIRouter, Depends
+from typing import List, Dict, Any
+from pydantic import BaseModel
+from app.dependencies import get_current_user, get_user_client
+from app.services.supabase_client import create_service_client
+
+router = APIRouter(prefix="/api/deployments", tags=["deployments"])
+
+class ValidateDeploymentsRequest(BaseModel):
+    deployment_ids: List[str]
+
+@router.post("/validate")
+async def validate_deployments(
+    request: ValidateDeploymentsRequest,
+    user: Any = Depends(get_current_user),
+    user_client: Any = Depends(get_user_client)
+) -> Dict[str, str]:
+    """
+    Given a list of deployment IDs (or 8-char prefixes), determine their state:
+    - 'valid': exists and user has access
+    - 'no_access': exists but user does not belong to project
+    - 'not_found': does not exist
+    """
+    if not request.deployment_ids:
+        return {}
+
+    results = {dep_id: "not_found" for dep_id in request.deployment_ids}
+    
+    admin_client = create_service_client()
+    
+    full_uuids = [d for d in request.deployment_ids if len(d) > 8]
+    prefixes = [d for d in request.deployment_ids if len(d) == 8]
+    
+    user_found_ids = set()
+    admin_found_ids = set()
+    
+    # 1. Check full UUIDs
+    if full_uuids:
+        # Admin check
+        try:
+            admin_res = admin_client.table("deployments").select("id").in_("id", full_uuids).execute()
+            admin_found_ids.update(r["id"].lower() for r in admin_res.data)
+        except Exception:
+            pass
+            
+        # User check
+        try:
+            user_res = user_client.table("deployments").select("id").in_("id", full_uuids).execute()
+            user_found_ids.update(r["id"].lower() for r in user_res.data)
+        except Exception:
+            pass
+
+    # 2. Check prefixes
+    if prefixes:
+        for prefix in prefixes:
+            # Admin check
+            try:
+                admin_res = admin_client.table("deployments").select("id").ilike("id", f"{prefix}%").limit(1).execute()
+                if admin_res.data:
+                    admin_found_ids.add(prefix.lower())
+            except Exception:
+                pass
+                
+            # User check
+            try:
+                user_res = user_client.table("deployments").select("id").ilike("id", f"{prefix}%").limit(1).execute()
+                if user_res.data:
+                    user_found_ids.add(prefix.lower())
+            except Exception:
+                pass
+
+    # 3. Compile results
+    for dep_id in request.deployment_ids:
+        lower_id = dep_id.lower()
+        if lower_id in user_found_ids:
+            results[dep_id] = "valid"
+        elif lower_id in admin_found_ids:
+            results[dep_id] = "no_access"
+        else:
+            results[dep_id] = "not_found"
+
+    return results

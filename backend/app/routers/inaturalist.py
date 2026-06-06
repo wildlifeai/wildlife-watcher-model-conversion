@@ -17,6 +17,8 @@ Observations:
 """
 
 import secrets
+import httpx
+import asyncio
 
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
@@ -37,6 +39,7 @@ from app.schemas.inaturalist import (
     INatConnectionStatus,
     INatCreateObservation,
     INatObservationStatus,
+    INatAddTaxonBody,
 )
 from app.services.inat_oauth import (
     INatOAuthError,
@@ -47,6 +50,7 @@ from app.services.inat_oauth import (
     revoke_user_token,
     store_user_token,
 )
+from app.services.supabase_client import create_service_client
 
 logger = structlog.get_logger()
 
@@ -253,3 +257,159 @@ async def batch_poll_inat_observations(
         data=results,
         meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
     )
+
+
+@router.get("/taxa/search")
+async def search_inat_taxa(
+    request: Request,
+    q: str = Query(..., description="Taxon search query"),
+    user=Depends(get_current_user),
+):
+    """Search for taxa on the public iNaturalist API."""
+    if not settings.FF_INAT_ENABLED:
+        raise HTTPException(404, detail="iNaturalist integration is not enabled")
+    
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(
+            f"{INAT_API_BASE}/taxa/autocomplete",
+            params={"q": q, "per_page": 10},
+        )
+        
+    if response.status_code != 200:
+        raise HTTPException(400, detail="Failed to search iNaturalist taxa")
+        
+    return ApiResponse(
+        data=response.json().get("results", []),
+        meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
+    )
+
+
+@router.post("/taxa")
+async def add_inat_taxon(
+    body: INatAddTaxonBody,
+    request: Request,
+    user=Depends(get_current_user),
+):
+    """Fetch complete taxonomic lineage from iNat and register in local taxa table."""
+    if not settings.FF_INAT_ENABLED:
+        raise HTTPException(404, detail="iNaturalist integration is not enabled")
+    
+    taxon_id = body.taxon_id
+    
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(f"{INAT_API_BASE}/taxa/{taxon_id}")
+        
+    if response.status_code != 200:
+        raise HTTPException(400, detail=f"Failed to fetch taxon {taxon_id} from iNaturalist")
+        
+    results = response.json().get("results", [])
+    if not results:
+        raise HTTPException(404, detail="Taxon not found on iNaturalist")
+        
+    taxon = results[0]
+    rank = taxon.get("rank")
+    
+    allowed_ranks = {'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'subspecies'}
+    if rank not in allowed_ranks:
+        raise HTTPException(
+            400, 
+            detail=f"Taxon rank '{rank}' is not supported. Supported ranks are {allowed_ranks}"
+        )
+        
+    # Extract lineage
+    lineage = {
+        "kingdom": None,
+        "phylum": None,
+        "class": None,
+        "order_name": None,
+        "family": None,
+        "genus": None,
+        "species": None
+    }
+    
+    for ancestor in taxon.get("ancestors", []):
+        a_rank = ancestor.get("rank")
+        a_name = ancestor.get("name")
+        if a_rank == "kingdom":
+            lineage["kingdom"] = a_name
+        elif a_rank == "phylum":
+            lineage["phylum"] = a_name
+        elif a_rank == "class":
+            lineage["class"] = a_name
+        elif a_rank == "order":
+            lineage["order_name"] = a_name
+        elif a_rank == "family":
+            lineage["family"] = a_name
+        elif a_rank == "genus":
+            lineage["genus"] = a_name
+            
+    # Include current taxon rank info
+    name = taxon.get("name")
+    if rank == "kingdom":
+        lineage["kingdom"] = name
+    elif rank == "phylum":
+        lineage["phylum"] = name
+    elif rank == "class":
+        lineage["class"] = name
+    elif rank == "order":
+        lineage["order_name"] = name
+    elif rank == "family":
+        lineage["family"] = name
+    elif rank == "genus":
+        lineage["genus"] = name
+    elif rank in ("species", "subspecies"):
+        lineage["species"] = name
+
+    # Handle conservation status
+    conservation_status = None
+    cs_obj = taxon.get("conservation_status")
+    if cs_obj and isinstance(cs_obj, dict):
+        conservation_status = cs_obj.get("status")
+    else:
+        cs_list = taxon.get("conservation_statuses", [])
+        if cs_list and isinstance(cs_list, list):
+            conservation_status = cs_list[0].get("status")
+            
+    # Check if already exists in DB to prevent conflicts
+    db_client = create_service_client()
+    
+    def check_existing():
+        return db_client.table("taxa").select("*").eq("scientific_name", name).execute()
+        
+    existing = await asyncio.to_thread(check_existing)
+    if existing.data:
+        return ApiResponse(
+            data=existing.data[0],
+            meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
+        )
+        
+    new_taxon = {
+        "scientific_name": name,
+        "common_name": taxon.get("preferred_common_name") or taxon.get("name"),
+        "rank": rank,
+        "kingdom": lineage["kingdom"],
+        "phylum": lineage["phylum"],
+        "class": lineage["class"],
+        "order_name": lineage["order_name"],
+        "family": lineage["family"],
+        "genus": lineage["genus"],
+        "species": lineage["species"],
+        "gbif_taxon_id": str(taxon.get("gbif_id")) if taxon.get("gbif_id") else None,
+        "inat_taxon_id": str(taxon_id),
+        "nzor_id": None,
+        "conservation_status": conservation_status,
+        "invasive_status": False,
+    }
+    
+    def insert_taxon():
+        return db_client.table("taxa").insert(new_taxon).execute()
+        
+    insert_res = await asyncio.to_thread(insert_taxon)
+    if not insert_res.data:
+        raise HTTPException(500, detail="Failed to insert taxon into database")
+        
+    return ApiResponse(
+        data=insert_res.data[0],
+        meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
+    )
+

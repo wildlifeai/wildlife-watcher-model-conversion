@@ -296,13 +296,14 @@ class GoogleDriveService:
                     if not project or not deployment:
                         logger.warning("drive_upload_skipped_no_context", filename=file_info.get("filename"))
                         completed_count += 1
-                        stats["skipped"] += 1
+                        stats["failed"] += 1
                         if file_callback:
                             await file_callback(
-                                action="skipped",
+                                action="failed",
                                 filename=file_info.get("filename", ""),
                                 index=completed_count,
                                 total=total_files,
+                                error="Missing project or deployment context",
                             )
                         return
 
