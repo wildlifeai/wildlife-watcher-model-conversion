@@ -52,6 +52,7 @@ The Wildlife Watcher Website is a multi-service platform that lets conservation 
 3. **Generate firmware manifests** — wrap camera configs and model binaries into `MANIFEST.zip` packages for SD card deployment.
 4. **Ingest LoRaWAN telemetry** — receive real-time device data via TTN and Chirpstack webhooks.
 5. **Browse project data** — view projects, deployments, GPS coordinates and export CSV.
+6. **Label and Triage Media** — interactive single-photo bounding box editor, slider-controlled multi-photo thumbnail grid, bulk operations (apply labels, clear observations, soft-delete), temporal event review, diel activity dashboards, and Darwin Core / CamtrapDP reporting.
 
 ---
 
@@ -176,12 +177,17 @@ ww-website/
 │   │   ├── config.py            # Pydantic BaseSettings — env validation
 │   │   ├── dependencies.py      # Auth DI — JWT validation, Supabase clients
 │   │   ├── domain/              # Pure business logic (no HTTP imports)
+│   │   │   ├── camtrapdp.py     # Camtrap DP import/export logic
+│   │   │   ├── clustering.py    # Temporal and perceptual hashing clustering
+│   │   │   ├── events.py        # Event creation logic
 │   │   │   ├── exif.py          # JPEG EXIF parsing + deployment matching
+│   │   │   ├── inaturalist.py   # iNaturalist integration
 │   │   │   ├── lorawan.py       # LoRaWAN uplink processing
 │   │   │   ├── manifest.py      # MANIFEST.zip assembly
+│   │   │   ├── media_resolver.py# Resolves media from different storages
 │   │   │   ├── model.py         # Vela conversion + upload/register
 │   │   │   ├── photo_preprocessing.py  # GPS→local time, filename/folder naming
-│   │   │   ├── inaturalist.py   # iNaturalist integration (Phase 6)
+│   │   │   ├── pipeline.py      # End-to-end processing pipeline
 │   │   │   └── public_api.py    # Public API domain logic
 │   │   ├── jobs/                # Async job system
 │   │   │   ├── definitions.py   # Job functions (Drive upload, model convert)
@@ -196,13 +202,19 @@ ww-website/
 │   │   │   ├── camera_configs.py
 │   │   │   └── model_registry.py
 │   │   ├── routers/             # HTTP endpoints (thin validate + delegate)
+│   │   │   ├── camtrapdp.py     # POST /api/camtrapdp/import
+│   │   │   ├── clustering.py    # POST /api/clustering/run
+│   │   │   ├── cvat.py          # CVAT annotation tool integration
 │   │   │   ├── exif.py          # POST /api/exif/parse
+│   │   │   ├── fiftyone.py      # FiftyOne viewer integration
+│   │   │   ├── inaturalist.py   # iNaturalist OAuth endpoints
 │   │   │   ├── jobs.py          # GET  /api/jobs/{id}
 │   │   │   ├── lorawan.py       # POST /api/lorawan/webhook/*
 │   │   │   ├── manifest.py      # POST /api/manifest/generate
+│   │   │   ├── media.py         # Media endpoints
 │   │   │   ├── models.py        # POST /api/models/convert
-│   │   │   ├── public_api.py    # Public data endpoints
-│   │   │   └── inaturalist.py   # iNaturalist OAuth endpoints
+│   │   │   ├── pipeline.py      # Trigger end-to-end pipelines
+│   │   │   └── public_api.py    # Public data endpoints
 │   │   ├── schemas/             # Pydantic request/response models
 │   │   │   ├── common.py        # ApiResponse, ApiError, ApiMeta
 │   │   │   ├── job.py           # JobStatus, JobInfo, ProgressEvent
@@ -233,10 +245,20 @@ ww-website/
 │   │   ├── App.tsx              # Router + Layout + Auth guard
 │   │   ├── main.tsx             # React entry point
 │   │   ├── pages/               # Route-level components
+│   │   │   ├── AnalysisPage.tsx # Trap nights, diel activity abundance grids, confidence histograms
+│   │   │   ├── EventReviewPage.tsx # Temporal cluster review & aggregation job launcher
 │   │   │   ├── HomePage.tsx     # Landing page + image analysis
+│   │   │   ├── LabelingPage.tsx # Multi-scope annotation workspace
 │   │   │   ├── LoginPage.tsx    # Supabase Auth UI
-│   │   │   ├── MyDataPage.tsx   # Projects + Deployments browser
 │   │   │   ├── ManifestPage.tsx # Firmware manifest builder
+│   │   │   ├── MyDataPage.tsx   # Projects + Deployments browser
+│   │   │   ├── PrivacyPolicyPage.tsx # Privacy Policy
+│   │   │   ├── ReportingPage.tsx # camtrapDP, Darwin Core occurrence exports, repeatability logs
+│   │   │   ├── ResetPasswordPage.tsx # Reset Password
+│   │   │   ├── ResourcesPage.tsx # User resources and documentation
+│   │   │   ├── SupportPage.tsx  # Support / Contact Us
+│   │   │   ├── TermsOfServicePage.tsx # Terms of Service
+│   │   │   ├── UploadDataPage.tsx # Upload Images
 │   │   │   └── UploadModelPage.tsx
 │   │   ├── components/
 │   │   │   ├── toolkit/         # Core feature components
@@ -490,6 +512,10 @@ graph LR
 | `/my-data` | `MyDataPage` | Yes | Browse projects, deployments with sorting, search, CSV export |
 | `/manifest` | `ManifestPage` | Yes | Configure and generate firmware MANIFEST.zip |
 | `/upload-model` | `UploadModelPage` | Yes | Upload Edge Impulse ZIPs for Vela conversion |
+| `/labeling` | `LabelingPage` | Yes | Multi-scope annotation workspace (deployment, species, unreviewed) supporting single/grid views, bulk actions, and iNat autocomplete registration |
+| `/events/:deployment_id` | `EventReviewPage` | Yes | Temporal event aggregation dashboard with trigger diagnostics, mismatch checks, and job runner |
+| `/analysis/:deployment_id` | `AnalysisPage` | Yes | Trap nights analytics, diel activity density, Leaflet trap density maps, and model similarity pairs |
+| `/reporting/:deployment_id` | `ReportingPage` | Yes | High-fidelity scientific download center for CamtrapDP, Darwin Core, summary PDFs, and repeatability run logs |
 
 ---
 
@@ -507,6 +533,8 @@ graph LR
 | `POST` | `/api/clustering/*` | No | Image clustering and representative selection |
 | `*` | `/api/v1/*` | API Key | Public API (when `FF_PUBLIC_API_ENABLED=true`) |
 | `*` | `/api/inat/*` | Yes | iNaturalist OAuth flow (when `FF_INAT_ENABLED=true`) |
+| `GET` | `/api/inat/taxa/search` | Yes | Search public iNaturalist taxa autocomplete (no OAuth required) |
+| `POST` | `/api/inat/taxa` | Yes | Fetch complete scientific lineage from iNat and register in DB |
 
 Full API docs are auto-generated at http://localhost:8000/docs (Swagger) and http://localhost:8000/redoc (ReDoc).
 

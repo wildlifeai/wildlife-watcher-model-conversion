@@ -17,6 +17,9 @@ CamtrapDP ZIP (uploaded or downloaded)
    │
    ├─ parse_zip()      → CamtrapPackage (in-memory)
    ├─ validate_package() → warnings list
+   ├─ Automated Taxa Registration
+   │    └─ Fetch missing taxa via iNaturalist API
+   │    └─ Insert into taxa table
    └─ import_package()  → inserts into Supabase
         ├─ projects     (1 new project)
         ├─ devices      (placeholder per unique cameraID)
@@ -24,6 +27,14 @@ CamtrapDP ZIP (uploaded or downloaded)
         ├─ media        (file references + timestamps)
         └─ observations (species IDs + classification provenance)
 ```
+
+### Automated Taxa Registration
+
+During the CamtrapDP import, the system will automatically scan all observations for new `scientificName` values. Any species not already present in the local `taxa` table will be automatically registered:
+1. The scientific name is used to query the iNaturalist API (`api.inaturalist.org`).
+2. The full taxonomy lineage (kingdom, family, etc.) and `inat_taxon_id` are fetched.
+3. The new taxon is inserted into the `taxa` table with a unique `inat_taxon_id` constraint.
+4. If a name cannot be resolved against iNaturalist, a warning is logged, and the observation is imported without formal taxonomy linking.
 
 ---
 

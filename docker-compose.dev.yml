@@ -5,6 +5,8 @@ services:
       target: dev
     volumes:
       - ./backend/app:/app/app
+      - ./service-account.json:/app/service-account.json:ro
     environment:
       - ALLOWED_ORIGINS=http://localhost:5173
       - LOG_LEVEL=debug
+      - GOOGLE_SERVICE_ACCOUNT_JSON=/app/service-account.json

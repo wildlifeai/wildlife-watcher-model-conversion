@@ -1,6 +1,15 @@
 version: "3.9"
 
 services:
+  # --- FiftyOne MongoDB ---
+  mongodb:
+    image: mongo:6.0
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    restart: unless-stopped
+
   # --- API Server ---
   api:
     build:
@@ -8,6 +17,7 @@ services:
       target: base
     ports:
       - "8000:8000"
+      - "5151:5151"
     environment:
       # Supabase
       - SUPABASE_URL=${SUPABASE_URL}
@@ -30,6 +40,8 @@ services:
       - GOOGLE_DRIVE_MAX_FILE_SIZE_MB=${GOOGLE_DRIVE_MAX_FILE_SIZE_MB:-50}
       # Feature Flags
       - FF_INAT_ENABLED=${FF_INAT_ENABLED:-false}
+      - FF_FIFTYONE_ENABLED=true
+      - FIFTYONE_DATABASE_URI=mongodb://mongodb:27017/fiftyone
       - FF_ML_ENABLED=${FF_ML_ENABLED:-false}
       - FF_CLUSTERING_ENABLED=${FF_CLUSTERING_ENABLED:-false}
       - FF_LORAWAN_WEBHOOKS_ENABLED=${FF_LORAWAN_WEBHOOKS_ENABLED:-true}
@@ -47,3 +59,6 @@ services:
       timeout: 5s
       retries: 3
     restart: unless-stopped
+
+volumes:
+  mongo_data:
