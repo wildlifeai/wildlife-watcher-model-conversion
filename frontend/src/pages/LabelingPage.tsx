@@ -49,7 +49,7 @@ export function LabelingPage() {
 
   // ── URL Search Param Parsers ──────────────────────────────────────────────
   const urlScope = searchParams.get('scope') || (deployment_id ? 'deployment' : '')
-  
+
   const urlDeploymentIds = useMemo(() => {
     if (deployment_id) return [deployment_id]
     const ids = searchParams.get('deployment_ids')
@@ -72,27 +72,8 @@ export function LabelingPage() {
   const loadingStartRef = useRef<number>(0)
   const [media, setMedia] = useState<MediaFile[]>([])
   const [currentIndex, setCurrentIndex] = useState(0)
-  const [fiftyoneOnline, setFiftyoneOnline] = useState(false)
-  const [iframeUrl, setIframeUrl] = useState('')
-  const [fiftyoneDatasetName, setFiftyoneDatasetName] = useState('')  // for writeback
   const [showExitModal, setShowExitModal] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
-  const [savingFiftyOne, setSavingFiftyOne] = useState(false)
-
-  // ── CVAT annotation job state ─────────────────────────────────────────────
-  const [cvatJobId, setCvatJobId] = useState<string | null>(null)
-  const [cvatTaskUrl, setCvatTaskUrl] = useState<string | null>(null)
-  const [cvatJobStatus, setCvatJobStatus] = useState<'idle'|'creating'|'active'|'synced'|'failed'>('idle')
-  const [cvatSynced, setCvatSynced] = useState(0)
-  const [cvatTotal, setCvatTotal] = useState(0)
-  const [cvatToast, setCvatToast] = useState<string | null>(null)
-  const [cvatMetrics, setCvatMetrics] = useState<Record<string, any> | null>(null)
-  const [cvatStalenessWarning, setCvatStalenessWarning] = useState<string | null>(null)
-  const cvatPollRef = useRef<ReturnType<typeof setInterval> | null>(null)
-
-  // ── Job History State ─────────────────────────────────────────────────────
-  const [annotationJobs, setAnnotationJobs] = useState<any[]>([])
-  const [loadingJobs, setLoadingJobs] = useState(false)
 
   // ── User Settings Panel ───────────────────────────────────────────────────
   const [viewMode, setViewMode] = useState<'single' | 'grid'>('single')
@@ -131,53 +112,6 @@ export function LabelingPage() {
       }
     })
   }, [])
-
-  // Fetch annotation jobs
-  useEffect(() => {
-    async function fetchJobs() {
-      setLoadingJobs(true)
-      try {
-        const res = await apiClient.get('/api/annotation-jobs') as any
-        setAnnotationJobs(res?.data?.jobs || [])
-      } catch (err) {
-        console.error('Failed to fetch annotation jobs', err)
-      } finally {
-        setLoadingJobs(false)
-      }
-    }
-    if (!urlScope) fetchJobs()
-  }, [urlScope])
-
-  const handlePullJob = async (jobId: string) => {
-    try {
-      setCvatToast('Pulling annotations...')
-      await apiClient.post(`/api/annotation-jobs/${jobId}/pull`)
-      setCvatToast('Pull successful!')
-      const res = await apiClient.get('/api/annotation-jobs') as any
-      setAnnotationJobs(res?.data?.jobs || [])
-    } catch (err) {
-      console.error(err)
-      setCvatToast('Failed to pull annotations.')
-    }
-  }
-
-  const handleExportJob = async (jobId: string) => {
-    try {
-      setCvatToast('Generating export...')
-      const response = await apiClient.get(`/api/annotation-jobs/${jobId}/export/camtrapdp`) as Blob
-      const url = window.URL.createObjectURL(response)
-      const link = document.createElement('a')
-      link.href = url
-      link.setAttribute('download', `observations_${jobId}.csv`)
-      document.body.appendChild(link)
-      link.click()
-      link.remove()
-      setCvatToast('Export complete')
-    } catch (err) {
-      console.error(err)
-      setCvatToast('Failed to export.')
-    }
-  }
 
   // Fetch projects, deployments, and taxa on load
   useEffect(() => {
@@ -247,51 +181,7 @@ export function LabelingPage() {
 
     async function initPage() {
       setLoading(true)
-      setLoadingStage('Checking annotation tools…')
       try {
-        // Try FiftyOne — single deployment uses /launch/:id, multiple uses /launch-multi
-        if (urlScope === 'deployment' && urlDeploymentIds.length >= 1) {
-          try {
-            setLoadingStage(
-              urlDeploymentIds.length === 1
-                ? 'Launching FiftyOne visualiser…'
-                : `Merging ${urlDeploymentIds.length} deployments into FiftyOne…`
-            )
-
-            const foRes = urlDeploymentIds.length === 1
-              ? await apiClient.post(`/api/fiftyone/launch/${urlDeploymentIds[0]}`)
-              : await apiClient.post('/api/fiftyone/launch-multi', { deployment_ids: urlDeploymentIds })
-
-            const resData = (foRes as any)
-            if (resData?.data?.session_url) {
-              setFiftyoneOnline(true)
-              setIframeUrl(resData.data.session_url)
-              setFiftyoneDatasetName(resData.data.dataset_name || '')
-            } else if (resData?.error) {
-              const code = resData.error.code
-              const msg  = resData.error.message || 'Unknown error'
-              console.warn('[FiftyOne] launch error:', code, msg)
-              setLoadingStage(
-                code === 'FIFTYONE_NOT_AVAILABLE'
-                  ? 'FiftyOne not installed — using fallback viewer'
-                  : code === 'NO_MEDIA'
-                  ? 'No media found — using fallback viewer'
-                  : `FiftyOne unavailable (${code}) — using fallback viewer`
-              )
-              setFiftyoneOnline(false)
-            } else {
-              console.warn('[FiftyOne] launch returned no session_url:', resData)
-              setFiftyoneOnline(false)
-            }
-          } catch (err: any) {
-            console.error('[FiftyOne] launch exception:', err?.message || err)
-            setLoadingStage('FiftyOne connection failed — using fallback viewer')
-            setFiftyoneOnline(false)
-          }
-        } else {
-          setFiftyoneOnline(false)
-        }
-
         // Fetch media with observations recursively using nested Supabase queries
         let mediaQuery = supabase
           .from('media')
@@ -319,6 +209,7 @@ export function LabelingPage() {
         if (error) throw error
 
         if (data && data.length > 0) {
+          setLoadingStage('Mapping annotations…')
           let mapped: MediaFile[] = data.map((m: any, idx: number) => {
             const predictions = (m.observations || [])
               .filter((o: any) => o.source_type === 'ai' && !o.deleted_at)
@@ -402,7 +293,7 @@ export function LabelingPage() {
 
   // ── Drawing Bounding Box Handling ─────────────────────────────────────────
   const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    if (fiftyoneOnline || !canvasRef.current) return
+    if (!canvasRef.current) return
     const rect = canvasRef.current.getBoundingClientRect()
     const x = (e.clientX - rect.left) / rect.width
     const y = (e.clientY - rect.top) / rect.height
@@ -431,7 +322,7 @@ export function LabelingPage() {
 
   // Draw overlay predictions & annotations
   useEffect(() => {
-    if (fiftyoneOnline || !canvasRef.current || media.length === 0 || viewMode === 'grid') return
+    if (!canvasRef.current || media.length === 0 || viewMode === 'grid') return
     const canvas = canvasRef.current
     const ctx = canvas.getContext('2d')
     if (!ctx) return
@@ -504,7 +395,7 @@ export function LabelingPage() {
         ctx.setLineDash([])
       }
     }
-  }, [currentIndex, media, boxOpacity, customBbox, fiftyoneOnline, viewMode, showBBoxes])
+  }, [currentIndex, media, boxOpacity, customBbox, viewMode, showBBoxes])
 
   // ── Database persistence observers ────────────────────────────────────────
   const persistHumanObservation = async (mediaId: string, deploymentId: string, speciesName: string, bbox?: any) => {
@@ -771,110 +662,6 @@ export function LabelingPage() {
     setShowExitModal(true)
   }
 
-  const handleFiftyOneSaveSession = async () => {
-    setSavingFiftyOne(true)
-    try {
-      if (urlDeploymentIds.length > 1 && fiftyoneDatasetName) {
-        // Multi-deployment writeback — uses dataset_name to identify which FiftyOne dataset
-        await apiClient.post('/api/fiftyone/writeback-multi', {
-          dataset_name: fiftyoneDatasetName,
-          deployment_ids: urlDeploymentIds,
-        })
-      } else {
-        // Single deployment writeback
-        const dsName = fiftyoneDatasetName || `ww-${urlDeploymentIds[0]?.slice(0, 8)}`
-        await apiClient.post(`/api/fiftyone/writeback/${urlDeploymentIds[0]}`, {
-          dataset_name: dsName,
-        })
-      }
-      setShowExitModal(true)
-    } catch (err) {
-      console.error('Failed to save and sync FiftyOne session:', err)
-      alert('Error syncing annotations back to Supabase. Please verify the backend server is running and try again.')
-    } finally {
-      setSavingFiftyOne(false)
-    }
-  }
-  // ── CVAT: open annotation tool ────────────────────────────────────────────
-  const handleOpenInCvat = async () => {
-    if (!iframeUrl || !fiftyoneDatasetName) return
-    setCvatJobStatus('creating')
-    try {
-      const res = await apiClient.post('/api/fiftyone/cvat/annotate', {
-        deployment_id: urlDeploymentIds[0],
-        dataset_name: fiftyoneDatasetName,
-        label_classes: [],  // auto-resolved from taxa on backend
-      }) as any
-      if (res?.data) {
-        const { annotation_job_id, cvat_task_url, sample_count } = res.data
-        setCvatJobId(annotation_job_id)
-        
-        let finalTaskUrl = cvat_task_url
-        if (cvat_task_url) {
-          try {
-            const tokenRes = await apiClient.get('/api/cvat/session-token') as any
-            if (tokenRes?.data?.token) {
-              const urlObj = new URL(cvat_task_url)
-              urlObj.searchParams.set('token', tokenRes.data.token)
-              finalTaskUrl = urlObj.toString()
-            }
-          } catch (tokenErr) {
-            console.warn('Could not fetch CVAT session token, falling back to standard URL', tokenErr)
-          }
-        }
-
-        setCvatTaskUrl(finalTaskUrl)
-        setCvatTotal(sample_count || 0)
-        setCvatJobStatus('active')
-        if (finalTaskUrl) window.open(finalTaskUrl, '_blank')
-
-        // Poll for sync progress every 5s via /metrics (Phase 2)
-        if (cvatPollRef.current) clearInterval(cvatPollRef.current)
-        cvatPollRef.current = setInterval(async () => {
-          try {
-            const poll = await apiClient.get(
-              `/api/annotation-jobs/${annotation_job_id}/metrics`
-            ) as any
-            const m = poll?.data?.metrics || {}
-            const synced  = m.synced_count  ?? 0
-            const total   = m.total_targets ?? 0
-            const failed  = m.failed_count  ?? 0
-            const pct     = m.completion_pct ?? 0
-            setCvatSynced(synced)
-            setCvatTotal(total)
-
-            // Surface staleness warning from job error_message
-            const jobResp = await apiClient.get(`/api/annotation-jobs/${annotation_job_id}`) as any
-            const errMsg = jobResp?.data?.job?.error_message || ''
-            setCvatStalenessWarning(errMsg.startsWith('⚠') ? errMsg : null)
-
-            if (failed > 0 && synced + failed >= total) {
-              setCvatJobStatus('failed')
-              if (cvatPollRef.current) clearInterval(cvatPollRef.current)
-            } else if (pct >= 100 && failed === 0) {
-              setCvatJobStatus('synced')
-              setCvatToast(`✅ All ${total} images synced to Supabase`)
-              setCvatMetrics(m)
-              if (cvatPollRef.current) clearInterval(cvatPollRef.current)
-            }
-          } catch { /* polling error — keep trying */ }
-        }, 5000)
-      } else {
-        setCvatJobStatus('failed')
-        console.error('[CVAT] create job error:', res?.error)
-      }
-    } catch (err: any) {
-      setCvatJobStatus('failed')
-      console.error('[CVAT] create job exception:', err?.message || err)
-    }
-  }
-
-  // Cleanup polling on unmount
-  useEffect(() => {
-    return () => { if (cvatPollRef.current) clearInterval(cvatPollRef.current) }
-  }, [])
-
-
   const launchSession = () => {
     let qString = `?scope=${activeTab}`
     if (activeTab === 'deployment') {
@@ -938,8 +725,6 @@ export function LabelingPage() {
               📸 Unreviewed
             </button>
           </div>
-
-
 
           {/* TAB CONTENT: DEPLOYMENT SCOPE */}
           {activeTab === 'deployment' && (
@@ -1021,77 +806,6 @@ export function LabelingPage() {
             🚀 Launch Workspace Session
           </button>
         </div>
-
-        {/* ── JOB HISTORY PANEL ── */}
-        <div style={{
-          padding: '2rem',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: '1rem',
-          border: '1px solid var(--border)',
-          borderRadius: 'var(--radius)',
-          backgroundColor: 'var(--surface)',
-          backdropFilter: 'blur(10px)',
-          boxShadow: '0 8px 32px 0 rgba(0, 0, 0, 0.3)',
-        }}>
-          <h3 style={{ margin: 0, color: 'var(--primary)', letterSpacing: '0.5px' }}>Annotation Job History</h3>
-          <p style={{ opacity: 0.8, fontSize: '0.875rem', margin: 0 }}>Recent annotation tasks created from your deployments.</p>
-          
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem', marginTop: '0.5rem' }}>
-            {loadingJobs ? (
-              <span style={{ fontSize: '0.875rem', opacity: 0.7 }}>Loading jobs...</span>
-            ) : annotationJobs.length > 0 ? (
-              annotationJobs.filter((job: any) => selectedProjectIds.length === 0 || selectedProjectIds.includes(deployments.find(d => d.id === job.deployment_id)?.project_id)).map((job: any) => (
-                <div key={job.id} style={{
-                  display: 'flex', justifyContent: 'space-between', alignItems: 'center',
-                  padding: '1rem', backgroundColor: 'rgba(0,0,0,0.15)', borderRadius: 'var(--radius)',
-                  border: '1px solid var(--border)'
-                }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
-                    <span style={{ fontWeight: 600, fontSize: '0.875rem' }}>
-                      {job.dataset_name || `Deployment: ${job.deployment_id.slice(0, 8)}`}
-                    </span>
-                    <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>
-                      {job.sample_count} items • Created: {new Date(job.created_at).toLocaleDateString()}
-                    </span>
-                  </div>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-                    <span style={{
-                      fontSize: '0.75rem', padding: '0.25rem 0.625rem', borderRadius: '4px',
-                      backgroundColor: job.status === 'synced' ? 'rgba(76,175,80,0.2)' :
-                                     job.status === 'failed' ? 'rgba(244,67,54,0.2)' :
-                                     job.status === 'active' ? 'rgba(33,150,243,0.2)' : 'rgba(255,255,255,0.1)',
-                      color: job.status === 'synced' ? '#4caf50' :
-                             job.status === 'failed' ? '#f44336' :
-                             job.status === 'active' ? '#2196f3' : '#fff'
-                    }}>
-                      {job.status.toUpperCase()}
-                    </span>
-                    <button 
-                      onClick={() => handlePullJob(job.id)}
-                      style={{ fontSize: '0.8125rem', cursor: 'pointer', background: 'transparent', border: '1px solid var(--border)', padding: '0.25rem 0.5rem', borderRadius: '4px', color: 'var(--text-color)' }}>
-                      Pull
-                    </button>
-                    <button 
-                      onClick={() => handleExportJob(job.id)}
-                      style={{ fontSize: '0.8125rem', cursor: 'pointer', background: 'transparent', border: '1px solid var(--border)', padding: '0.25rem 0.5rem', borderRadius: '4px', color: 'var(--text-color)' }}>
-                      CSV Export
-                    </button>
-                    {job.cvat_task_url && (
-                      <a href={job.cvat_task_url} target="_blank" rel="noopener noreferrer" style={{ fontSize: '0.875rem', color: 'var(--primary)', textDecoration: 'none', fontWeight: 600 }}>
-                        Open in CVAT ↗
-                      </a>
-                    )}
-                  </div>
-                </div>
-              ))
-            ) : (
-              <div style={{ padding: '2rem', textAlign: 'center', backgroundColor: 'rgba(0,0,0,0.1)', borderRadius: 'var(--radius)', border: '1px dashed var(--border)' }}>
-                <span style={{ fontSize: '0.875rem', opacity: 0.6 }}>No annotation jobs found for {selectedProjectIds.length > 0 ? 'the selected projects' : 'your account'}.</span>
-              </div>
-            )}
-          </div>
-        </div>
       </div>
     )
   }
@@ -1099,9 +813,7 @@ export function LabelingPage() {
   // Loading animation State
   if (loading) {
     const STAGES = [
-      { label: 'Checking annotation tools…',      pct: 15 },
-      { label: 'Launching FiftyOne visualiser…',   pct: 35 },
-      { label: 'Loading media and observations…',  pct: 70 },
+      { label: 'Loading media and observations…',  pct: 60 },
       { label: 'Mapping annotations…',             pct: 90 },
       { label: 'Initialising session…',            pct: 5  },
     ]
@@ -1135,233 +847,6 @@ export function LabelingPage() {
     )
   }
 
-  // Full-screen FiftyOne session — breaks out of the page layout container
-  if (fiftyoneOnline) {
-    return (
-      <div style={{
-        position: 'fixed',
-        top: '57px',      // below the site navbar
-        left: 0,
-        right: 0,
-        bottom: 0,
-        zIndex: 100,
-        display: 'flex',
-        flexDirection: 'column',
-        backgroundColor: '#0d0d0d',
-      }}>
-        {/* ── Slim control strip ── */}
-        <div style={{
-          display: 'flex',
-          justifyContent: 'space-between',
-          alignItems: 'center',
-          padding: '0.375rem 1rem',
-          backgroundColor: 'rgba(20,20,20,0.95)',
-          borderBottom: '1px solid var(--border)',
-          backdropFilter: 'blur(8px)',
-          gap: '1rem',
-          flexShrink: 0,
-        }}>
-          {/* Status */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem' }}>
-            <div style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#4caf50', animation: 'pulse 1.5s infinite', flexShrink: 0 }} />
-            <span style={{ fontWeight: 600, fontSize: '0.8125rem', color: '#4caf50' }}>⚡ FiftyOne Active</span>
-            <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>•</span>
-            <span style={{ fontSize: '0.75rem', opacity: 0.75 }}>
-              {deployments.find(d => d.id === urlDeploymentIds[0])?.location_name || urlDeploymentIds[0]?.slice(0, 8)}
-            </span>
-          </div>
-
-          {/* Actions */}
-          <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-            <span
-              title="FiftyOne's 'Unsaved' indicator refers to the view filter, not your label changes. Use Save & Sync to persist your annotations to the database."
-              style={{ fontSize: '0.7rem', opacity: 0.45, cursor: 'help', userSelect: 'none' }}
-            >
-              ⓘ About&nbsp;"Unsaved"
-            </span>
-            <button
-              className="btn"
-              onClick={handleFiftyOneSaveSession}
-              disabled={savingFiftyOne}
-              style={{ backgroundColor: 'var(--primary)', display: 'flex', alignItems: 'center', gap: '0.375rem', fontSize: '0.8125rem', padding: '0.375rem 0.875rem', fontWeight: 600 }}
-            >
-              {savingFiftyOne ? (
-                <><div style={{ width: '12px', height: '12px', border: '2px solid rgba(255,255,255,0.2)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />Saving…</>
-              ) : (
-                '💾 Save & Sync'
-              )}
-            </button>
-            <button
-              className="btn"
-              onClick={handleOpenInCvat}
-              disabled={cvatJobStatus === 'creating' || cvatJobStatus === 'active'}
-              title="Send images to CVAT for bounding-box annotation. Opens CVAT in a new tab."
-              style={{
-                backgroundColor: cvatJobStatus === 'synced' ? '#2d7a4f' :
-                                 cvatJobStatus === 'active'  ? '#5c4300' :
-                                 cvatJobStatus === 'failed'  ? '#7a2d2d' :
-                                 'rgba(255,255,255,0.08)',
-                border: '1px solid rgba(255,255,255,0.15)',
-                display: 'flex', alignItems: 'center', gap: '0.375rem',
-                fontSize: '0.8125rem', padding: '0.375rem 0.875rem',
-                transition: 'background 0.2s',
-              }}
-            >
-              {cvatJobStatus === 'creating' ? (
-                <><div style={{ width: '12px', height: '12px', border: '2px solid rgba(255,255,255,0.2)', borderTop: '2px solid #fff', borderRadius: '50%', animation: 'spin 1s linear infinite' }} />Creating task…</>
-              ) : cvatJobStatus === 'active' ? (
-                `🖊 CVAT — ${cvatSynced}/${cvatTotal} synced`
-              ) : cvatJobStatus === 'synced' ? (
-                '✅ CVAT done'
-              ) : cvatJobStatus === 'failed' ? (
-                '⚠ CVAT failed — retry'
-              ) : (
-                '🖊 Open in Annotation Tool'
-              )}
-            </button>
-            <button
-              className="btn"
-              onClick={() => navigate('/my-data')}
-              style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', fontSize: '0.8125rem', padding: '0.375rem 0.875rem' }}
-            >
-              Exit
-            </button>
-          </div>
-        </div>
-
-        {/* ── CVAT job progress panel ── */}
-        {cvatJobStatus !== 'idle' && (
-          <div style={{ flexShrink: 0, borderBottom: '1px solid var(--border)' }}>
-            {/* ── Main progress row ── */}
-            <div style={{
-              padding: '0.5rem 1rem',
-              backgroundColor: cvatJobStatus === 'synced' ? 'rgba(45,122,79,0.2)' :
-                               cvatJobStatus === 'failed'  ? 'rgba(122,45,45,0.2)' :
-                               'rgba(255,255,255,0.04)',
-              display: 'flex', alignItems: 'center', gap: '0.875rem',
-              transition: 'background 0.4s',
-            }}>
-              {/* Progress bar — visible while active */}
-              {(cvatJobStatus === 'active' || cvatJobStatus === 'creating') && (
-                <div style={{ flex: 1, height: '3px', borderRadius: '2px', backgroundColor: 'rgba(255,255,255,0.1)', overflow: 'hidden', minWidth: '80px' }}>
-                  <div style={{
-                    height: '100%',
-                    width: cvatTotal > 0 ? `${Math.round(100 * cvatSynced / cvatTotal)}%` : '0%',
-                    backgroundColor: 'var(--primary)',
-                    borderRadius: '2px',
-                    transition: 'width 0.5s ease',
-                    animation: cvatJobStatus === 'creating' ? 'pulse 1.5s infinite' : undefined,
-                  }} />
-                </div>
-              )}
-
-              {/* Status text */}
-              <span style={{ fontSize: '0.75rem', whiteSpace: 'nowrap', opacity: 0.85 }}>
-                {cvatJobStatus === 'creating' && '⏳ Creating CVAT task…'}
-                {cvatJobStatus === 'active'   && `🖊 Annotating — ${cvatSynced}/${cvatTotal} synced`}
-                {cvatJobStatus === 'synced'   && (cvatToast || `✅ ${cvatTotal} images synced to Supabase`)}
-                {cvatJobStatus === 'failed'   && `⚠ ${cvatTotal - cvatSynced} targets failed`}
-              </span>
-
-              {/* Metrics chips — shown when synced */}
-              {cvatJobStatus === 'synced' && cvatMetrics && (
-                <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-                  {cvatMetrics.label_corrections > 0 && (
-                    <span style={{ fontSize: '0.7rem', padding: '0.125rem 0.5rem', borderRadius: '999px', backgroundColor: 'rgba(255,200,50,0.15)', color: '#ffc832', border: '1px solid rgba(255,200,50,0.25)', whiteSpace: 'nowrap' }}>
-                      {cvatMetrics.label_corrections} label correction{cvatMetrics.label_corrections !== 1 ? 's' : ''}
-                    </span>
-                  )}
-                  {cvatMetrics.avg_secs_per_image && (
-                    <span style={{ fontSize: '0.7rem', opacity: 0.55, whiteSpace: 'nowrap' }}>
-                      ~{Math.round(cvatMetrics.avg_secs_per_image)}s/image
-                    </span>
-                  )}
-                </div>
-              )}
-
-              {/* Retry button — shown when there are failures */}
-              {cvatJobStatus === 'failed' && cvatJobId && (
-                <button
-                  onClick={async () => {
-                    try {
-                      const res = await apiClient.post(`/api/annotation-jobs/${cvatJobId}/retry`) as any
-                      const { synced, failed } = res?.data || {}
-                      setCvatSynced(s => s + (synced ?? 0))
-                      if (failed === 0) {
-                        setCvatJobStatus('synced')
-                        setCvatToast(`✅ Retry succeeded — all images synced`)
-                      }
-                    } catch { /* swallow, user can retry again */ }
-                  }}
-                  style={{ fontSize: '0.75rem', padding: '0.25rem 0.625rem', borderRadius: '4px', background: 'rgba(255,255,255,0.1)', border: '1px solid rgba(255,255,255,0.2)', cursor: 'pointer', color: 'inherit', whiteSpace: 'nowrap' }}
-                >
-                  🔁 Retry failed
-                </button>
-              )}
-
-              {/* Open CVAT link */}
-              {cvatTaskUrl && cvatJobStatus === 'active' && (
-                <a href={cvatTaskUrl} target="_blank" rel="noopener noreferrer"
-                  style={{ fontSize: '0.75rem', color: 'var(--primary)', textDecoration: 'underline', whiteSpace: 'nowrap' }}>
-                  Open CVAT ↗
-                </a>
-              )}
-
-              {/* Dismiss */}
-              {(cvatJobStatus === 'synced' || cvatJobStatus === 'failed') && (
-                <button onClick={() => { setCvatJobStatus('idle'); setCvatToast(null); setCvatMetrics(null) }}
-                  style={{ background: 'none', border: 'none', cursor: 'pointer', opacity: 0.4, fontSize: '1rem', padding: 0, color: 'inherit', marginLeft: 'auto' }}
-                  title="Dismiss">✕</button>
-              )}
-            </div>
-
-            {/* ── Staleness warning (Phase 2) ── */}
-            {cvatStalenessWarning && (
-              <div style={{ padding: '0.25rem 1rem', backgroundColor: 'rgba(255,160,0,0.12)', fontSize: '0.7rem', color: '#ffb020', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
-                ⚠ {cvatStalenessWarning}
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* ── FiftyOne iframe — fills all remaining space ── */}
-        <iframe
-          src={iframeUrl}
-          style={{ flex: 1, border: 'none', width: '100%', display: 'block' }}
-          title="FiftyOne Visualiser"
-          allow="fullscreen"
-        />
-
-        {/* Congratulations modal */}
-        {showExitModal && (
-          <div style={{ position: 'fixed', top: 0, left: 0, right: 0, bottom: 0, backgroundColor: 'rgba(0,0,0,0.75)', display: 'flex', justifyContent: 'center', alignItems: 'center', zIndex: 200, backdropFilter: 'blur(8px)' }}>
-            <div className="glass-card" style={{ width: '450px', padding: '2rem', textAlign: 'center', display: 'flex', flexDirection: 'column', gap: '1.5rem', border: '1px solid rgba(255,255,255,0.1)' }}>
-              <span style={{ fontSize: '3rem' }}>🎉</span>
-              <h3 style={{ margin: 0 }}>Review Complete!</h3>
-              <p style={{ opacity: 0.8, fontSize: '0.875rem', margin: 0, lineHeight: 1.5 }}>
-                Your FiftyOne session has been saved. All annotations have been synced to Supabase.
-              </p>
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-                <button className="btn" onClick={() => navigate(`/events/${urlDeploymentIds[0]}`)} style={{ width: '100%', backgroundColor: 'var(--primary)', display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '0.5rem' }}>
-                  Run Event Aggregation Now 📂
-                </button>
-                <button className="btn" onClick={() => { setShowExitModal(false); navigate('/my-data') }} style={{ width: '100%', backgroundColor: 'transparent', border: '1px solid var(--border)' }}>
-                  Return to Dashboard
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        <style>{`
-          @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: 0.4; } }
-          @keyframes spin  { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        `}</style>
-      </div>
-    )
-  }
-
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.5rem', color: 'var(--text-color)' }}>
       {/* ── ACTIVE WORKSPACE HEADER ── */}
@@ -1372,17 +857,6 @@ export function LabelingPage() {
             <h3 style={{ margin: 0 }}>Review Space</h3>
             <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.25rem' }}>
               <span style={{ fontSize: '0.8125rem', opacity: 0.7 }}>Scope: {urlScope.toUpperCase()}</span>
-              <span 
-                style={{ 
-                  fontSize: '0.75rem', padding: '2px 8px', borderRadius: '4px', 
-                  backgroundColor: fiftyoneOnline ? 'rgba(76,175,80,0.15)' : 'rgba(255,152,0,0.15)', 
-                  color: fiftyoneOnline ? '#4caf50' : '#ff9800', fontWeight: 600,
-                  cursor: 'help'
-                }}
-                title={fiftyoneOnline ? 'Voxel51 FiftyOne server is running!' : "FiftyOne library not found in backend Python environment. Fallback high-fidelity viewer is active. Run 'pip install fiftyone' inside the backend virtual environment to enable."}
-              >
-                {fiftyoneOnline ? '⚡ FiftyOne UI Active' : '⚠ Fallback Viewer (FiftyOne Offline)'}
-              </span>
             </div>
           </div>
         </div>
@@ -1405,41 +879,37 @@ export function LabelingPage() {
 
         {/* Mode Toggle & Control buttons */}
         <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
-          {!fiftyoneOnline && (
-            <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', padding: '2px', backgroundColor: 'rgba(0,0,0,0.2)' }}>
-              <button
-                onClick={() => setViewMode('single')}
-                style={{
-                  padding: '0.375rem 0.75rem', border: 'none', borderRadius: 'calc(var(--radius) - 4px)',
-                  backgroundColor: viewMode === 'single' ? 'var(--primary)' : 'transparent',
-                  color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600
-                }}
-              >
-                🖼️ Single
-              </button>
-              <button
-                onClick={() => setViewMode('grid')}
-                style={{
-                  padding: '0.375rem 0.75rem', border: 'none', borderRadius: 'calc(var(--radius) - 4px)',
-                  backgroundColor: viewMode === 'grid' ? 'var(--primary)' : 'transparent',
-                  color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600
-                }}
-              >
-                🎛️ Grid
-              </button>
-            </div>
-          )}
-
-          {!fiftyoneOnline && (
+          <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden', padding: '2px', backgroundColor: 'rgba(0,0,0,0.2)' }}>
             <button
-              className="btn"
-              onClick={() => setShowSettings(!showSettings)}
-              style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', padding: '0.5rem', cursor: 'pointer' }}
-              title="Toggle settings panel"
+              onClick={() => setViewMode('single')}
+              style={{
+                padding: '0.375rem 0.75rem', border: 'none', borderRadius: 'calc(var(--radius) - 4px)',
+                backgroundColor: viewMode === 'single' ? 'var(--primary)' : 'transparent',
+                color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600
+              }}
             >
-              ⚙️
+              🖼️ Single
             </button>
-          )}
+            <button
+              onClick={() => setViewMode('grid')}
+              style={{
+                padding: '0.375rem 0.75rem', border: 'none', borderRadius: 'calc(var(--radius) - 4px)',
+                backgroundColor: viewMode === 'grid' ? 'var(--primary)' : 'transparent',
+                color: '#fff', cursor: 'pointer', fontSize: '0.75rem', fontWeight: 600
+              }}
+            >
+              🎛️ Grid
+            </button>
+          </div>
+
+          <button
+            className="btn"
+            onClick={() => setShowSettings(!showSettings)}
+            style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', padding: '0.5rem', cursor: 'pointer' }}
+            title="Toggle settings panel"
+          >
+            ⚙️
+          </button>
 
           <button className="btn" onClick={handleSaveSession} style={{ backgroundColor: 'var(--primary)' }}>
             💾 Save Session
@@ -1458,7 +928,7 @@ export function LabelingPage() {
             boxShadow: '0 8px 24px rgba(0,0,0,0.4)', display: 'flex', flexDirection: 'column', gap: '1rem'
           }}>
             <h4 style={{ margin: 0, borderBottom: '1px solid var(--border)', paddingBottom: '0.5rem', color: 'var(--primary)' }}>Labeler Settings</h4>
-            
+
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               <span style={{ fontSize: '0.75rem', fontWeight: 600 }}>Default Workspace Mode</span>
               <div style={{ display: 'flex', gap: '0.5rem', marginTop: '0.25rem' }}>
@@ -1645,7 +1115,7 @@ export function LabelingPage() {
             {/* Tagging / Species selector */}
             <div className="glass-card" style={{ padding: '1.25rem', position: 'relative' }}>
               <h4 style={{ marginTop: 0, marginBottom: '1rem' }}>Quick Taxonomy Tags</h4>
-              
+
               {/* Standard Quick List */}
               <div style={{ display: 'flex', flexDirection: 'column', gap: '0.625rem' }}>
                 {NZ_SPECIES.map(spec => (

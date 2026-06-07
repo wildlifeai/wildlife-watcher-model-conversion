@@ -1,6 +1,6 @@
 # Copyright (c) 2024
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Pre-trained model registry — extracted verbatim from app.py L32-78.
+"""Pre-trained model registry for firmware manifest generation.
 
 Each entry maps a model name → available resolutions → download URL + type.
 """

@@ -13,9 +13,17 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
 
-# --- Dev target ---
+# --- Dev target (base + test tooling + heavy ML so local in-process embedding works) ---
 FROM base AS dev
-COPY requirements-dev.txt .
-RUN pip install --no-cache-dir -r requirements-dev.txt
+COPY requirements-dev.txt requirements-ml.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt -r requirements-ml.txt
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+# --- Embedding worker target (base + heavy ML; GPU at runtime) ---
+# Runs the ARQ worker that processes embedding/inference jobs off the lean API.
+# Activating offload also requires Redis + switching enqueue to ARQ (see jobs/worker.py).
+FROM base AS worker
+COPY requirements-ml.txt .
+RUN pip install --no-cache-dir -r requirements-ml.txt
+CMD ["arq", "app.jobs.worker.WorkerSettings"]
 

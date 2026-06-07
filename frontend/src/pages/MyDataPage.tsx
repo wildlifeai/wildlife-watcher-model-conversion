@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
@@ -6,17 +6,86 @@ import { useProjectSelection } from '../hooks/useProjectSelection'
 import { DeploymentMap } from '../components/data/DeploymentMap'
 import { ObservationReports } from '../components/data/ObservationReports'
 import { MediaBrowser } from '../components/data/MediaBrowser'
+import { useClusters } from '../hooks/useBrain'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Types
+// Shared button style (lifecycle nav + overflow)
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Project {
-  id: string
-  name: string
-  description: string | null
-  created_at: string
+const NAV_BTN: React.CSSProperties = {
+  padding: '0.25rem 0.5rem',
+  fontSize: '0.75rem',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius)',
+  backgroundColor: 'transparent',
+  color: 'var(--primary)',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OverflowMenu — secondary actions hidden behind a "⋯" button
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface OverflowItem { label: string; onClick: () => void; title?: string }
+
+function OverflowMenu({ items }: { items: OverflowItem[] }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(v => !v) }}
+        style={{ ...NAV_BTN, letterSpacing: '0.05em' }}
+        title="More actions"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', right: 0, top: '110%', zIndex: 40,
+          backgroundColor: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+          minWidth: '140px', padding: '0.25rem 0',
+        }}>
+          {items.map(item => (
+            <button
+              key={item.label}
+              title={item.title}
+              onClick={e => { e.stopPropagation(); setOpen(false); item.onClick() }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '0.4rem 0.75rem', fontSize: '0.8125rem',
+                border: 'none', backgroundColor: 'transparent',
+                color: 'var(--text-color)', cursor: 'pointer',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(76,175,80,0.08)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DeploymentActionRow — v4 lifecycle nav with live cluster badge
+// Each row is its own component so useClusters can be called at the top level.
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface Deployment {
   id: string
@@ -31,6 +100,68 @@ interface Deployment {
   created_at: string
   observation_count?: number
 }
+
+function DeploymentActionRow({ d, navigate }: { d: Deployment; navigate: ReturnType<typeof useNavigate> }) {
+  const { data: brainData } = useClusters(d.id)
+
+  const clusters      = brainData?.clusters ?? []
+  const total         = clusters.length
+  const confirmed     = clusters.filter(c => c.review_state === 'confirmed').length
+  const openCount     = clusters.filter(c => c.review_state === 'open').length
+  const hasRun        = !!brainData?.embedding_run_id
+
+  return (
+    <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', alignItems: 'center' }}>
+      {/* Primary lifecycle steps */}
+      <button style={NAV_BTN} title="Browse images in this deployment"
+        onClick={e => { e.stopPropagation(); navigate(`/explore/${d.id}`) }}>
+        🖼 Explore
+      </button>
+
+      <button
+        style={{ ...NAV_BTN, ...(hasRun && confirmed < total ? { fontWeight: 600 } : {}) }}
+        title={hasRun ? `${confirmed} of ${total} clusters confirmed` : 'Run Wildlife Brain to generate clusters'}
+        onClick={e => { e.stopPropagation(); navigate(`/clusters/${d.id}`) }}
+      >
+        ◧ Clusters{hasRun ? ` (${confirmed}/${total})` : ''}
+      </button>
+
+      <button
+        style={{ ...NAV_BTN, ...(openCount > 0 ? { color: 'var(--warning, #f59e0b)', borderColor: 'var(--warning, #f59e0b)' } : {}) }}
+        title={openCount > 0 ? `${openCount} items pending review` : 'Active-learning review queue'}
+        onClick={e => { e.stopPropagation(); navigate(`/review/${d.id}`) }}
+      >
+        ▶ Review{openCount > 0 ? ` (${openCount})` : ''}
+      </button>
+
+      <button style={NAV_BTN} title="Visualise embedding space"
+        onClick={e => { e.stopPropagation(); navigate(`/umap/${d.id}`) }}>
+        ✦ UMAP
+      </button>
+
+      {/* Secondary actions in overflow */}
+      <OverflowMenu items={[
+        { label: '🏷️ Label', title: 'Start labeling images', onClick: () => navigate(`/labeling/${d.id}`) },
+        { label: '📂 Events', title: 'Group observation events', onClick: () => navigate(`/events/${d.id}`) },
+        { label: '📊 Analyse', title: 'Analyse science data', onClick: () => navigate(`/analysis/${d.id}`) },
+        { label: '📦 Report', title: 'Generate reports', onClick: () => navigate(`/reporting/${d.id}`) },
+      ]} />
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface Project {
+  id: string
+  name: string
+  description: string | null
+  created_at: string
+}
+
+// Deployment is declared above (needed by DeploymentActionRow)
 
 interface Observation {
   id: string
@@ -349,12 +480,17 @@ export function MyDataPage() {
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
                         <button onClick={() => { clearAll(); toggleProject(p.id); setTab('deployments') }}
-                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}>
-                          Deployments →
+                          style={NAV_BTN}>
+                          📍 Deployments
                         </button>
                         <button onClick={() => { clearAll(); toggleProject(p.id); setTab('map') }}
-                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}>
-                          Map →
+                          style={NAV_BTN}>
+                          🗺 Map
+                        </button>
+                        <button onClick={() => navigate(`/intelligence/${p.id}`)}
+                          style={NAV_BTN}
+                          title="Dataset health dashboard">
+                          📊 Health
                         </button>
                       </div>
                     </td>
@@ -400,37 +536,8 @@ export function MyDataPage() {
                   </td>
                   <td style={{ ...tdStyle, fontSize: '0.75rem' }}>{d.deployment_start ? new Date(d.deployment_start).toLocaleDateString() : '—'}</td>
                   <td style={{ ...tdStyle, fontSize: '0.75rem' }}>{d.deployment_end ? new Date(d.deployment_end).toLocaleDateString() : '—'}</td>
-                  <td style={tdStyle}>
-                    <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); navigate(`/labeling/${d.id}`) }}
-                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}
-                        title="Start labeling images"
-                      >
-                        Label 🏷️
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); navigate(`/events/${d.id}`) }}
-                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}
-                        title="Group observation events"
-                      >
-                        Events 📂
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); navigate(`/analysis/${d.id}`) }}
-                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}
-                        title="Analyse science data"
-                      >
-                        Analyse 📊
-                      </button>
-                      <button
-                        onClick={(e) => { e.stopPropagation(); navigate(`/reporting/${d.id}`) }}
-                        style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}
-                        title="Generate reports"
-                      >
-                        Report 📦
-                      </button>
-                    </div>
+                  <td style={tdStyle} onClick={e => e.stopPropagation()}>
+                    <DeploymentActionRow d={d} navigate={navigate} />
                   </td>
                 </tr>
               ))}

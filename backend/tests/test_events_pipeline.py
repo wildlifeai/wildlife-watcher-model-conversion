@@ -200,7 +200,7 @@ class TestPipelineSchemas:
         from app.schemas.pipeline import PipelineRunRequest, PipelineStepType
 
         req = PipelineRunRequest(deployment_id="abc-123")
-        assert req.steps == [PipelineStepType.MEGADETECTOR]
+        assert req.steps == [PipelineStepType.SPECIESNET]
         assert req.confidence_threshold == 0.2
         assert req.config == {}
 

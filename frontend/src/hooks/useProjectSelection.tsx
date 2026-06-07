@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useMemo, type ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, type ReactNode } from 'react'
 import { supabase } from '../config/supabase'
 import { useAuth } from './useAuth'
 
@@ -26,9 +26,11 @@ export const ProjectSelectionProvider = ({ children }: { children: ReactNode }) 
 
   useEffect(() => {
     if (!user) {
-      setProjects([])
-      setSelectedProjectIds([])
-      setIsLoading(false)
+      setTimeout(() => {
+        setProjects([])
+        setSelectedProjectIds([])
+        setIsLoading(false)
+      }, 0)
       return
     }
 
@@ -61,14 +63,14 @@ export const ProjectSelectionProvider = ({ children }: { children: ReactNode }) 
   const selectAll = () => setSelectedProjectIds(projects.map(p => p.id))
   const clearAll = () => setSelectedProjectIds([])
 
-  const value = useMemo(() => ({
+  const value = {
     projects,
     selectedProjectIds,
     isLoading,
     toggleProject,
     selectAll,
     clearAll,
-  }), [projects, selectedProjectIds, isLoading])
+  }
 
   return (
     <ProjectSelectionContext.Provider value={value}>
@@ -77,6 +79,7 @@ export const ProjectSelectionProvider = ({ children }: { children: ReactNode }) 
   )
 }
 
+// eslint-disable-next-line react-refresh/only-export-components
 export const useProjectSelection = () => {
   const context = useContext(ProjectSelectionContext)
   if (context === undefined) {

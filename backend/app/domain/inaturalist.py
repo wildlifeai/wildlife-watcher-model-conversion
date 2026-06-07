@@ -266,7 +266,7 @@ async def batch_poll_observations(
 
 async def search_and_fetch_inat_taxon(scientific_name: str) -> Optional[Dict[str, Any]]:
     """Search for a taxon by scientific name and fetch its complete lineage.
-    
+
     Returns a dictionary matching the `taxa` table schema, or None if not found
     or if the iNat API request fails.
     """
@@ -278,23 +278,23 @@ async def search_and_fetch_inat_taxon(scientific_name: str) -> Optional[Dict[str
         )
         if search_res.status_code != 200 or not search_res.json().get("results"):
             return None
-            
+
         taxon_id = search_res.json()["results"][0].get("id")
         if not taxon_id:
             return None
-            
+
         # Step 2: Fetch the full taxon details
         detail_res = await client.get(f"{INAT_API_BASE}/taxa/{taxon_id}")
         if detail_res.status_code != 200 or not detail_res.json().get("results"):
             return None
-            
+
         taxon = detail_res.json()["results"][0]
-        
+
     rank = taxon.get("rank")
     allowed_ranks = {'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'subspecies'}
     if rank not in allowed_ranks:
         return None
-        
+
     lineage = {
         "kingdom": None,
         "phylum": None,
@@ -304,7 +304,7 @@ async def search_and_fetch_inat_taxon(scientific_name: str) -> Optional[Dict[str
         "genus": None,
         "species": None
     }
-    
+
     for ancestor in taxon.get("ancestors", []):
         a_rank = ancestor.get("rank")
         a_name = ancestor.get("name")
@@ -320,7 +320,7 @@ async def search_and_fetch_inat_taxon(scientific_name: str) -> Optional[Dict[str
             lineage["family"] = a_name
         elif a_rank == "genus":
             lineage["genus"] = a_name
-            
+
     name = taxon.get("name")
     if rank == "kingdom":
         lineage["kingdom"] = name

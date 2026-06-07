@@ -794,6 +794,132 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         return
 
 
+async def backfill_thumbnails_job(job_id: str, deployment_id: str):
+    """Generate thumbnail/preview renditions for a deployment's media (Media Registry)."""
+    logger.info("job_start", job_type="backfill_thumbnails", job_id=job_id, deployment_id=deployment_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.1, message="Generating thumbnails…")
+    try:
+        from app.domain.media_registry import backfill_thumbnails
+
+        count = await backfill_thumbnails(deployment_id)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Generated {count} thumbnails")
+    except Exception as e:
+        logger.error("job_failed", job_type="backfill_thumbnails", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def embed_deployment_job(job_id: str, deployment_id: str, model_name: str | None = None):
+    """Embed + cluster a deployment's animal crops (Wildlife Brain / DINOv3)."""
+    logger.info("job_start", job_type="embed_deployment", job_id=job_id, deployment_id=deployment_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.05, message="Starting embedding…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.wildlife_brain import embed_and_cluster_deployment
+
+        result = await embed_and_cluster_deployment(deployment_id, model_name=model_name, progress=_progress)
+        await update_job(
+            job_id,
+            status=JobStatus.COMPLETED,
+            progress=1.0,
+            message=f"Embedded {result['image_count']} crops → {result['clusters']} clusters",
+        )
+    except Exception as e:
+        logger.error("job_failed", job_type="embed_deployment", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def reprocess_deployment_job(job_id: str, deployment_id: str, model_name: str | None = None):
+    """Supersede current runs and re-embed a deployment (Phase 5.5)."""
+    logger.info("job_start", job_type="reprocess_deployment", job_id=job_id, deployment_id=deployment_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.05, message="Reprocessing…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.embedding_lifecycle import reprocess_deployment
+
+        result = await reprocess_deployment(deployment_id, model_name=model_name, progress=_progress)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Reprocessed {result['image_count']} crops")
+    except Exception as e:
+        logger.error("job_failed", job_type="reprocess_deployment", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def reprocess_project_job(job_id: str, project_id: str, model_name: str | None = None):
+    """Reprocess every deployment in a project (Phase 5.5)."""
+    logger.info("job_start", job_type="reprocess_project", job_id=job_id, project_id=project_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.05, message="Reprocessing project…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.embedding_lifecycle import reprocess_project
+
+        result = await reprocess_project(project_id, model_name=model_name, progress=_progress)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Reprocessed {result['deployments']} deployments")
+    except Exception as e:
+        logger.error("job_failed", job_type="reprocess_project", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def reprocess_all_job(job_id: str, model_name: str | None = None):
+    """Platform-wide re-embed (Phase 5.5). Caller must have confirmed."""
+    logger.info("job_start", job_type="reprocess_all", job_id=job_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.02, message="Global re-embed…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.embedding_lifecycle import reprocess_all
+
+        result = await reprocess_all(model_name=model_name, dry_run=False, progress=_progress)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Reprocessed {result['deployments']} deployments")
+    except Exception as e:
+        logger.error("job_failed", job_type="reprocess_all", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def recompute_al_job(job_id: str, deployment_id: str):
+    """Recompute active-learning scores for a deployment (Phase 8)."""
+    logger.info("job_start", job_type="recompute_al", job_id=job_id, deployment_id=deployment_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.1, message="Scoring media…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.active_learning import recompute_scores
+
+        count = await recompute_scores(deployment_id, progress=_progress)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Scored {count} media")
+    except Exception as e:
+        logger.error("job_failed", job_type="recompute_al", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def qdrant_backup_job(job_id: str):
+    """Snapshot Qdrant and store it in the private backup bucket (Phase 5.5 DR)."""
+    logger.info("job_start", job_type="qdrant_backup", job_id=job_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.1, message="Creating Qdrant snapshot…")
+    try:
+        from app.domain.embedding_lifecycle import backup_qdrant_snapshot
+
+        path = await backup_qdrant_snapshot()
+        if path:
+            await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Backed up to {path}")
+        else:
+            await update_job(job_id, status=JobStatus.FAILED, error="Snapshot unavailable (Qdrant/Storage not configured)")
+    except Exception as e:
+        logger.error("job_failed", job_type="qdrant_backup", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
 JOBS = [
     convert_model_job,
     generate_manifest_job,
@@ -801,4 +927,11 @@ JOBS = [
     download_pretrained_job,
     download_github_pretrained_job,
     upload_drive_images_job,
+    backfill_thumbnails_job,
+    embed_deployment_job,
+    reprocess_deployment_job,
+    reprocess_project_job,
+    reprocess_all_job,
+    recompute_al_job,
+    qdrant_backup_job,
 ]

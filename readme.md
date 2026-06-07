@@ -204,9 +204,7 @@ ww-website/
 │   │   ├── routers/             # HTTP endpoints (thin validate + delegate)
 │   │   │   ├── camtrapdp.py     # POST /api/camtrapdp/import
 │   │   │   ├── clustering.py    # POST /api/clustering/run
-│   │   │   ├── cvat.py          # CVAT annotation tool integration
 │   │   │   ├── exif.py          # POST /api/exif/parse
-│   │   │   ├── fiftyone.py      # FiftyOne viewer integration
 │   │   │   ├── inaturalist.py   # iNaturalist OAuth endpoints
 │   │   │   ├── jobs.py          # GET  /api/jobs/{id}
 │   │   │   ├── lorawan.py       # POST /api/lorawan/webhook/*

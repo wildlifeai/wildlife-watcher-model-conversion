@@ -50,6 +50,13 @@ async function request(path: string, options: RequestInit = {}) {
     throw new ApiError(error.code || `HTTP_${response.status}`, message, error.retryable)
   }
 
+  // Honour the {data, error, meta} envelope: handlers that return an error
+  // envelope with HTTP 200 (e.g. FEATURE_DISABLED, NOT_IMPLEMENTED, NOT_FOUND)
+  // must still surface as a thrown ApiError, not a silent "success".
+  if (body && typeof body === 'object' && body.error) {
+    throw new ApiError(body.error.code || 'ERROR', body.error.message || 'Request failed', body.error.retryable)
+  }
+
   return body
 }
 

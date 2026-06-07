@@ -514,8 +514,7 @@ def import_package(
 
         # Compute duration in seconds (best-effort; 0 if same time)
         try:
-            from datetime import datetime, timezone
-            fmt = "%Y-%m-%dT%H:%M:%S%z"
+            from datetime import datetime
             # Try parsing with fractional seconds too
             def _parse_dt(s: str):
                 for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%d %H:%M:%S%z"):

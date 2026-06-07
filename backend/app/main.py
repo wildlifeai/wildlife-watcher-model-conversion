@@ -17,7 +17,23 @@ from app.config import settings
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import limiter
 from app.middleware.request_id import RequestIDMiddleware
-from app.routers import camtrapdp, clustering, cvat, deployments, exif, fiftyone, inaturalist, jobs, lorawan, manifest, media, models, pipeline, public_api
+from app.routers import (
+    brain,
+    camtrapdp,
+    clustering,
+    deployments,
+    exif,
+    inaturalist,
+    intelligence,
+    jobs,
+    lorawan,
+    manifest,
+    media,
+    models,
+    pipeline,
+    public_api,
+    qa,
+)
 
 logger = structlog.get_logger()
 
@@ -93,9 +109,12 @@ if settings.FF_CAMTRAPDP_IMPORT_ENABLED:
     app.include_router(camtrapdp.router)
 if settings.FF_PIPELINE_ENABLED:
     app.include_router(pipeline.router)
-if settings.FF_FIFTYONE_ENABLED:
-    app.include_router(fiftyone.router)
-    app.include_router(cvat.router)
+if settings.FF_WILDLIFE_BRAIN_ENABLED:
+    app.include_router(brain.router)
+if settings.FF_ACTIVE_LEARNING_ENABLED:
+    app.include_router(qa.router)
+if settings.FF_INTELLIGENCE_ENABLED:
+    app.include_router(intelligence.router)
 
 
 # ── Health check ─────────────────────────────────────────────────────

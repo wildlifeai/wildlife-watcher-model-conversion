@@ -1,6 +1,8 @@
+from typing import Any, Dict, List
+
 from fastapi import APIRouter, Depends
-from typing import List, Dict, Any
 from pydantic import BaseModel
+
 from app.dependencies import get_current_user, get_user_client
 from app.services.supabase_client import create_service_client
 
@@ -25,15 +27,15 @@ async def validate_deployments(
         return {}
 
     results = {dep_id: "not_found" for dep_id in request.deployment_ids}
-    
+
     admin_client = create_service_client()
-    
+
     full_uuids = [d for d in request.deployment_ids if len(d) > 8]
     prefixes = [d for d in request.deployment_ids if len(d) == 8]
-    
+
     user_found_ids = set()
     admin_found_ids = set()
-    
+
     # 1. Check full UUIDs
     if full_uuids:
         # Admin check
@@ -42,7 +44,7 @@ async def validate_deployments(
             admin_found_ids.update(r["id"].lower() for r in admin_res.data)
         except Exception:
             pass
-            
+
         # User check
         try:
             user_res = user_client.table("deployments").select("id").in_("id", full_uuids).execute()
@@ -60,7 +62,7 @@ async def validate_deployments(
                     admin_found_ids.add(prefix.lower())
             except Exception:
                 pass
-                
+
             # User check
             try:
                 user_res = user_client.table("deployments").select("id").ilike("id", f"{prefix}%").limit(1).execute()

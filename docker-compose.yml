@@ -1,15 +1,4 @@
-version: "3.9"
-
 services:
-  # --- FiftyOne MongoDB ---
-  mongodb:
-    image: mongo:6.0
-    ports:
-      - "27017:27017"
-    volumes:
-      - mongo_data:/data/db
-    restart: unless-stopped
-
   # --- API Server ---
   api:
     build:
@@ -17,7 +6,6 @@ services:
       target: base
     ports:
       - "8000:8000"
-      - "5151:5151"
     environment:
       # Supabase
       - SUPABASE_URL=${SUPABASE_URL}
@@ -40,8 +28,6 @@ services:
       - GOOGLE_DRIVE_MAX_FILE_SIZE_MB=${GOOGLE_DRIVE_MAX_FILE_SIZE_MB:-50}
       # Feature Flags
       - FF_INAT_ENABLED=${FF_INAT_ENABLED:-false}
-      - FF_FIFTYONE_ENABLED=true
-      - FIFTYONE_DATABASE_URI=mongodb://mongodb:27017/fiftyone
       - FF_ML_ENABLED=${FF_ML_ENABLED:-false}
       - FF_CLUSTERING_ENABLED=${FF_CLUSTERING_ENABLED:-false}
       - FF_LORAWAN_WEBHOOKS_ENABLED=${FF_LORAWAN_WEBHOOKS_ENABLED:-true}
@@ -53,12 +39,74 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       # Redis (future)
       - REDIS_URL=${REDIS_URL:-}
+      # Wildlife Brain / Qdrant / Media Registry
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - FF_WILDLIFE_BRAIN_ENABLED=${FF_WILDLIFE_BRAIN_ENABLED:-false}
+      - FF_SPECIESNET_ENABLED=${FF_SPECIESNET_ENABLED:-false}
+      - FF_MEDIA_REGISTRY_ENABLED=${FF_MEDIA_REGISTRY_ENABLED:-false}
+      - FF_LOCAL_EMBEDDING_ENABLED=${FF_LOCAL_EMBEDDING_ENABLED:-false}
+      - SUPABASE_MEDIA_BUCKET=${SUPABASE_MEDIA_BUCKET:-media-renditions}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - EMBEDDING_DEFAULT_MODEL=${EMBEDDING_DEFAULT_MODEL:-dinov3-vith}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cpu}
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
       interval: 30s
       timeout: 5s
       retries: 3
     restart: unless-stopped
+    depends_on:
+      - qdrant
+
+  # --- Qdrant vector store (DINOv3 embeddings) ---
+  qdrant:
+    image: qdrant/qdrant:latest
+    ports:
+      - "6333:6333"
+    volumes:
+      - qdrant_storage:/qdrant/storage
+    restart: unless-stopped
+
+  # --- Redis (queue for GPU offload; only the 'gpu' profile uses it) ---
+  redis:
+    image: redis:7-alpine
+    profiles: ["gpu"]
+    restart: unless-stopped
+
+  # --- Embedding worker (DINOv3 / SpeciesNet on GPU) ---
+  # Opt-in:  docker compose --profile gpu up
+  # The default stack runs jobs in-process in the API; activating this worker also
+  # requires REDIS_URL + switching enqueue to ARQ (see backend/app/jobs/worker.py).
+  embedding-worker:
+    build:
+      context: ./backend
+      target: worker
+    profiles: ["gpu"]
+    environment:
+      - SUPABASE_URL=${SUPABASE_URL}
+      - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
+      - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
+      - REDIS_URL=${REDIS_URL:-redis://redis:6379}
+      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
+      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      - SUPABASE_MEDIA_BUCKET=${SUPABASE_MEDIA_BUCKET:-media-renditions}
+      - HF_TOKEN=${HF_TOKEN:-}
+      - EMBEDDING_DEFAULT_MODEL=${EMBEDDING_DEFAULT_MODEL:-dinov3-vith}
+      - EMBEDDING_DEVICE=${EMBEDDING_DEVICE:-cuda}
+      - EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-32}
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+    depends_on:
+      - qdrant
+      - redis
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    restart: unless-stopped
 
 volumes:
-  mongo_data:
+  qdrant_storage:

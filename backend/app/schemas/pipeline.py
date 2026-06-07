@@ -20,8 +20,11 @@ from pydantic import BaseModel, Field
 class PipelineStepType(str, Enum):
     """Supported pipeline step types."""
 
-    MEGADETECTOR = "megadetector"
-    SPECIES_CLASSIFIER = "species_classifier"
+    MEDIA_PREP = "media_prep"  # thumbnails + previews → media_assets (run before SPECIESNET)
+    SPECIESNET = "speciesnet"  # detector + classifier ensemble (preferred)
+    ANIMAL_CROP = "animal_crop"  # crop best detection → animal_crop_url (run after SPECIESNET)
+    MEGADETECTOR = "megadetector"  # deprecated stub — use SPECIESNET
+    SPECIES_CLASSIFIER = "species_classifier"  # deprecated stub — folded into SPECIESNET
     EMPTY_FRAME = "empty_frame"
     CUSTOM = "custom"
 
@@ -31,7 +34,7 @@ class PipelineRunRequest(BaseModel):
 
     deployment_id: str = Field(..., description="UUID of the target deployment")
     steps: list[PipelineStepType] = Field(
-        default=[PipelineStepType.MEGADETECTOR],
+        default=[PipelineStepType.SPECIESNET],
         description="Ordered list of pipeline steps to execute",
     )
     confidence_threshold: float = Field(

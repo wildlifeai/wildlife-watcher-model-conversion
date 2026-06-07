@@ -506,11 +506,13 @@ export function AnalyseImages() {
   const folderDepCount = folderDepIds.length
   
   const notFoundDeployments = Object.entries(invalidDeployments)
-    .filter(([_, status]) => status === 'not_found')
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    .filter(([_unused, status]) => status === 'not_found')
     .map(([id]) => id)
     
   const noAccessDeployments = Object.entries(invalidDeployments)
-    .filter(([_, status]) => status === 'no_access')
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    .filter(([_unused, status]) => status === 'no_access')
     .map(([id]) => id)
     
   const hasInvalidDeployments = notFoundDeployments.length > 0 || noAccessDeployments.length > 0

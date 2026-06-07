@@ -22,15 +22,6 @@ interface ConfidenceBin {
   count: number
 }
 
-interface SimilarityPair {
-  id1: string
-  id2: string
-  similarity: number
-  img1: string
-  img2: string
-  reason: string
-}
-
 // NZ Priority Species Palette
 const SPECIES_DATA: SpeciesDistribution[] = [
   { name: 'Kiwi 🥝', events: 42, color: '#ff4c4c' },
@@ -47,25 +38,6 @@ const CONFIDENCE_BINS: ConfidenceBin[] = [
   { bin: '70-80%', count: 32 },
   { bin: '80-90%', count: 58 },
   { bin: '90-100%', count: 85 },
-]
-
-const SIMILARITY_PAIRS: SimilarityPair[] = [
-  {
-    id1: 'media-201',
-    id2: 'media-202',
-    similarity: 0.985,
-    img1: 'https://picsum.photos/400/300?random=51',
-    img2: 'https://picsum.photos/400/300?random=52',
-    reason: 'Camera shake due to NZ Southern Alps wind burst. False trigger candidate.'
-  },
-  {
-    id1: 'media-305',
-    id2: 'media-306',
-    similarity: 0.962,
-    img1: 'https://picsum.photos/400/300?random=61',
-    img2: 'https://picsum.photos/400/300?random=62',
-    reason: 'Weka pacing in front of lens within 2 seconds. Merged observations.'
-  }
 ]
 
 const DAYS = ['Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun']
@@ -304,10 +276,8 @@ export function AnalysisPage() {
         </div>
       </div>
 
-      {/* Leaflet Density and FiftyOne Similarity diagnostics row */}
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '1.5rem' }}>
-        {/* Left Card: Leaflet Trap Map */}
-        <div className="glass-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+      {/* Camera Deployment Site Density map */}
+      <div className="glass-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
           <h4 style={{ margin: 0 }}>Camera Deployment Site Density</h4>
           <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>Map overlay showing spatial deployment location and surrounding bird sightings</span>
 
@@ -341,52 +311,6 @@ export function AnalysisPage() {
             </MapContainer>
           </div>
         </div>
-
-        {/* Right Card: FiftyOne Brain Similarity Diagnostic Tool */}
-        <div className="glass-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-            <h4 style={{ margin: 0 }}>FiftyOne Brain Sequence Diagnostics</h4>
-            <span style={{ fontSize: '0.625rem', fontWeight: 'bold', padding: '0.125rem 0.375rem', borderRadius: '4px', backgroundColor: 'var(--primary)', color: '#fff' }}>
-              PROXIMITY ALGORITHMS
-            </span>
-          </div>
-          <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>Identified near-duplicate clusters to refine event temporal threshold limits</span>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-            {SIMILARITY_PAIRS.map((pair, idx) => (
-              <div
-                key={idx}
-                style={{
-                  display: 'flex',
-                  gap: '0.75rem',
-                  padding: '0.75rem',
-                  borderRadius: 'var(--radius)',
-                  border: '1px solid var(--border)',
-                  backgroundColor: 'rgba(255,255,255,0.01)',
-                  alignItems: 'center'
-                }}
-              >
-                {/* Images */}
-                <div style={{ display: 'flex', gap: '4px' }}>
-                  <img src={pair.img1} alt="Pair 1" style={{ width: '60px', height: '45px', objectFit: 'cover', borderRadius: '2px' }} />
-                  <img src={pair.img2} alt="Pair 2" style={{ width: '60px', height: '45px', objectFit: 'cover', borderRadius: '2px' }} />
-                </div>
-
-                {/* Details */}
-                <div style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: '0.25rem', minWidth: 0 }}>
-                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.75rem', fontWeight: 'bold' }}>
-                    <span style={{ color: 'var(--primary)' }}>Similarity: {Math.round(pair.similarity * 1000) / 10}%</span>
-                    <span style={{ opacity: 0.6, fontSize: '0.625rem' }}>IDs: {pair.id1} ⇄ {pair.id2}</span>
-                  </div>
-                  <span style={{ fontSize: '0.6875rem', opacity: 0.8, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-                    {pair.reason}
-                  </span>
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      </div>
     </div>
   )
 }

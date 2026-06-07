@@ -25,6 +25,7 @@ from app.schemas.pipeline import (
     PipelineStepResult,
     PipelineStepType,
 )
+from app.services.speciesnet_service import SPECIESNET_VERSION
 from app.services.supabase_client import create_service_client
 
 logger = structlog.get_logger()
@@ -63,7 +64,232 @@ class PipelineStep(ABC):
         ...
 
 
-# ── MegaDetector V6 Step (Stub) ──────────────────────────────────────
+# ── Media Preparation Step (thumbnails + previews) ───────────────────
+
+
+class MediaPreparationStep(PipelineStep):
+    """Generate thumbnail + preview renditions into media_assets (Azure CDN).
+
+    Runs before SpeciesNet so the UI grid and (later) crops have CDN URLs and
+    never hit Google Drive on the hot path. Creates no observations.
+    """
+
+    step_type = PipelineStepType.MEDIA_PREP
+    model_version = "media-prep-v1"
+
+    async def run(
+        self,
+        media: list[dict],
+        deployment_id: str,
+        config: dict[str, Any],
+    ) -> PipelineStepResult:
+        from app.domain.media_registry import prepare_media_assets
+
+        start = time.monotonic()
+        errors = 0
+        for m in media:
+            try:
+                await prepare_media_assets(m)
+            except Exception as exc:
+                logger.warning("media_prep_error", media_id=m.get("id"), error=str(exc))
+                errors += 1
+
+        return PipelineStepResult(
+            step=self.step_type,
+            media_processed=len(media),
+            errors=errors,
+            duration_seconds=round(time.monotonic() - start, 2),
+            model_version=self.model_version,
+        )
+
+
+# ── Animal Crop Step (DINOv3 input) ──────────────────────────────────
+
+
+class AnimalCropStep(PipelineStep):
+    """Crop each media's best AI animal detection into media_assets.animal_crop_url.
+
+    Runs after SpeciesNet (needs the detection bboxes it wrote). Creates no
+    observations; produces the crop DINOv3 consumes in Phase 5.
+    """
+
+    step_type = PipelineStepType.ANIMAL_CROP
+    model_version = "animal-crop-v1"
+
+    async def run(
+        self,
+        media: list[dict],
+        deployment_id: str,
+        config: dict[str, Any],
+    ) -> PipelineStepResult:
+        from app.domain.media_registry import generate_animal_crop
+
+        start = time.monotonic()
+        errors = 0
+        for m in media:
+            try:
+                await generate_animal_crop(m["id"])
+            except Exception as exc:
+                logger.warning("animal_crop_error", media_id=m.get("id"), error=str(exc))
+                errors += 1
+
+        return PipelineStepResult(
+            step=self.step_type,
+            media_processed=len(media),
+            errors=errors,
+            duration_seconds=round(time.monotonic() - start, 2),
+            model_version=self.model_version,
+        )
+
+
+# ── SpeciesNet Step (detector + classifier) ──────────────────────────
+
+
+def build_speciesnet_observations(
+    media: dict,
+    deployment_id: str,
+    prediction,  # services.speciesnet_service.ImagePrediction (duck-typed)
+    model_version: str,
+    timestamp: str,
+    confidence_threshold: float = 0.0,
+) -> list[dict]:
+    """Map a SpeciesNet ImagePrediction to CamtrapDP observation rows (pure).
+
+    Detections below ``confidence_threshold`` are dropped; an image with no kept
+    detections yields a single ``blank`` observation. Animal detections carry the
+    classifier's species name + probability. bbox fields are set as a complete
+    quad or omitted entirely (honours the observations chk_bbox_complete check).
+    """
+    base = {
+        "deployment_id": deployment_id,
+        "media_id": media["id"],
+        "observation_level": "media",
+        "source_type": "ai",
+        "source_model_version": model_version,
+        "review_status": "ai_reviewed",
+        "classification_method": "machine",
+        "classified_by": model_version,
+        "classification_timestamp": timestamp,
+    }
+
+    kept = [d for d in prediction.detections if d.confidence >= confidence_threshold]
+    if not kept:
+        return [{**base, "id": str(uuid.uuid4()), "observation_type": "blank"}]
+
+    rows: list[dict] = []
+    for det in kept:
+        row = {
+            **base,
+            "id": str(uuid.uuid4()),
+            "observation_type": det.observation_type,
+            "classifier_category": det.category,
+            "confidence": det.confidence,
+        }
+        if det.observation_type == "animal":
+            row["scientific_name"] = prediction.scientific_name
+            row["vernacular_name"] = prediction.common_name
+            row["classification_probability"] = prediction.classification_score
+        if det.bbox is not None:
+            x, y, w, h = det.bbox
+            row.update(bbox_x=x, bbox_y=y, bbox_w=w, bbox_h=h)
+        rows.append(row)
+    return rows
+
+
+class SpeciesNetStep(PipelineStep):
+    """SpeciesNet ensemble — detection + species classification in one pass.
+
+    Downloads each media item to a temp file (via the media resolver), runs the
+    SpeciesNet ensemble, and writes media-level observations with bounding boxes,
+    detection confidence, and a species guess. Replaces the MegaDetector and
+    SpeciesNet stub steps below.
+    """
+
+    step_type = PipelineStepType.SPECIESNET
+    model_version = SPECIESNET_VERSION
+
+    async def run(
+        self,
+        media: list[dict],
+        deployment_id: str,
+        config: dict[str, Any],
+    ) -> PipelineStepResult:
+        import os
+        import shutil
+        import tempfile
+
+        from app.domain.media_resolver import resolve_media
+        from app.services.speciesnet_service import get_speciesnet_service
+
+        start = time.monotonic()
+        threshold = config.get("confidence_threshold", 0.2)
+        svc = create_service_client()
+        errors = 0
+        observations_created = 0
+
+        tmpdir = tempfile.mkdtemp(prefix="speciesnet_")
+        path_to_media: dict[str, dict] = {}
+        try:
+            # Resolve each media item to a local temp file for the model.
+            for m in media:
+                try:
+                    resolved = await resolve_media(m["file_path"], size="full")
+                    if not resolved:
+                        errors += 1
+                        continue
+                    data, _content_type = resolved
+                    path = os.path.join(tmpdir, f"{m['id']}.jpg")
+                    with open(path, "wb") as fh:
+                        fh.write(data)
+                    path_to_media[path] = m
+                except Exception as exc:
+                    logger.warning("speciesnet_resolve_error", media_id=m.get("id"), error=str(exc))
+                    errors += 1
+
+            predictions = await get_speciesnet_service().predict(list(path_to_media.keys()))
+
+            timestamp = datetime.now(timezone.utc).isoformat()
+            obs_batch: list[dict] = []
+            for pred in predictions:
+                m = path_to_media.get(pred.filepath)
+                if not m:
+                    continue
+                obs_batch.extend(build_speciesnet_observations(m, deployment_id, pred, self.model_version, timestamp, threshold))
+
+            if obs_batch:
+
+                def _insert():
+                    inserted = 0
+                    for i in range(0, len(obs_batch), 50):
+                        batch = obs_batch[i : i + 50]
+                        svc.table("observations").insert(batch).execute()
+                        inserted += len(batch)
+                    return inserted
+
+                observations_created = await asyncio.to_thread(_insert)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        duration = time.monotonic() - start
+        logger.info(
+            "speciesnet_step_complete",
+            deployment_id=deployment_id,
+            media_processed=len(media),
+            observations_created=observations_created,
+            errors=errors,
+            duration_seconds=round(duration, 2),
+        )
+        return PipelineStepResult(
+            step=self.step_type,
+            observations_created=observations_created,
+            media_processed=len(media),
+            errors=errors,
+            duration_seconds=round(duration, 2),
+            model_version=self.model_version,
+        )
+
+
+# ── MegaDetector V6 Step (DEPRECATED stub — use SpeciesNetStep) ───────
 
 
 class MegaDetectorStep(PipelineStep):
@@ -154,10 +380,10 @@ class MegaDetectorStep(PipelineStep):
         )
 
 
-# ── SpeciesNet Classification Step (Stub) ────────────────────────────
+# ── SpeciesNet Classification Step (DEPRECATED stub — folded into SpeciesNetStep) ──
 
 
-class SpeciesNetStep(PipelineStep):
+class SpeciesNetClassifierStub(PipelineStep):
     """SpeciesNet species classification step.
 
     Classifies animal crops from MegaDetector detections using Google's
@@ -236,8 +462,11 @@ class EmptyFrameStep(PipelineStep):
 
 
 _STEP_REGISTRY: dict[PipelineStepType, type[PipelineStep]] = {
+    PipelineStepType.MEDIA_PREP: MediaPreparationStep,
+    PipelineStepType.SPECIESNET: SpeciesNetStep,
+    PipelineStepType.ANIMAL_CROP: AnimalCropStep,
     PipelineStepType.MEGADETECTOR: MegaDetectorStep,
-    PipelineStepType.SPECIES_CLASSIFIER: SpeciesNetStep,
+    PipelineStepType.SPECIES_CLASSIFIER: SpeciesNetClassifierStub,
     PipelineStepType.EMPTY_FRAME: EmptyFrameStep,
 }
 

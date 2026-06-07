@@ -16,10 +16,10 @@ Observations:
   POST /api/inat/observations/poll       → batch poll multiple observations
 """
 
-import secrets
-import httpx
 import asyncio
+import secrets
 
+import httpx
 import structlog
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
@@ -35,13 +35,14 @@ from app.domain.inaturalist import (
 )
 from app.schemas.common import ApiMeta, ApiResponse
 from app.schemas.inaturalist import (
+    INatAddTaxonBody,
     INatBatchPollRequest,
     INatConnectionStatus,
     INatCreateObservation,
     INatObservationStatus,
-    INatAddTaxonBody,
 )
 from app.services.inat_oauth import (
+    INAT_API_BASE,
     INatOAuthError,
     build_authorization_url,
     exchange_code_for_token,
@@ -268,16 +269,16 @@ async def search_inat_taxa(
     """Search for taxa on the public iNaturalist API."""
     if not settings.FF_INAT_ENABLED:
         raise HTTPException(404, detail="iNaturalist integration is not enabled")
-    
+
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.get(
             f"{INAT_API_BASE}/taxa/autocomplete",
             params={"q": q, "per_page": 10},
         )
-        
+
     if response.status_code != 200:
         raise HTTPException(400, detail="Failed to search iNaturalist taxa")
-        
+
     return ApiResponse(
         data=response.json().get("results", []),
         meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
@@ -293,29 +294,29 @@ async def add_inat_taxon(
     """Fetch complete taxonomic lineage from iNat and register in local taxa table."""
     if not settings.FF_INAT_ENABLED:
         raise HTTPException(404, detail="iNaturalist integration is not enabled")
-    
+
     taxon_id = body.taxon_id
-    
+
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.get(f"{INAT_API_BASE}/taxa/{taxon_id}")
-        
+
     if response.status_code != 200:
         raise HTTPException(400, detail=f"Failed to fetch taxon {taxon_id} from iNaturalist")
-        
+
     results = response.json().get("results", [])
     if not results:
         raise HTTPException(404, detail="Taxon not found on iNaturalist")
-        
+
     taxon = results[0]
     rank = taxon.get("rank")
-    
+
     allowed_ranks = {'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'subspecies'}
     if rank not in allowed_ranks:
         raise HTTPException(
-            400, 
+            400,
             detail=f"Taxon rank '{rank}' is not supported. Supported ranks are {allowed_ranks}"
         )
-        
+
     # Extract lineage
     lineage = {
         "kingdom": None,
@@ -326,7 +327,7 @@ async def add_inat_taxon(
         "genus": None,
         "species": None
     }
-    
+
     for ancestor in taxon.get("ancestors", []):
         a_rank = ancestor.get("rank")
         a_name = ancestor.get("name")
@@ -342,7 +343,7 @@ async def add_inat_taxon(
             lineage["family"] = a_name
         elif a_rank == "genus":
             lineage["genus"] = a_name
-            
+
     # Include current taxon rank info
     name = taxon.get("name")
     if rank == "kingdom":
@@ -369,20 +370,20 @@ async def add_inat_taxon(
         cs_list = taxon.get("conservation_statuses", [])
         if cs_list and isinstance(cs_list, list):
             conservation_status = cs_list[0].get("status")
-            
+
     # Check if already exists in DB to prevent conflicts
     db_client = create_service_client()
-    
+
     def check_existing():
         return db_client.table("taxa").select("*").eq("scientific_name", name).execute()
-        
+
     existing = await asyncio.to_thread(check_existing)
     if existing.data:
         return ApiResponse(
             data=existing.data[0],
             meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
         )
-        
+
     new_taxon = {
         "scientific_name": name,
         "common_name": taxon.get("preferred_common_name") or taxon.get("name"),
@@ -400,14 +401,14 @@ async def add_inat_taxon(
         "conservation_status": conservation_status,
         "invasive_status": False,
     }
-    
+
     def insert_taxon():
         return db_client.table("taxa").insert(new_taxon).execute()
-        
+
     insert_res = await asyncio.to_thread(insert_taxon)
     if not insert_res.data:
         raise HTTPException(500, detail="Failed to insert taxon into database")
-        
+
     return ApiResponse(
         data=insert_res.data[0],
         meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),

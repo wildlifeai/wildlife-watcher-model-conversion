@@ -11,6 +11,7 @@ os.environ.setdefault("INAT_CLIENT_ID", "test_client_id")
 os.environ.setdefault("INAT_CLIENT_SECRET", "test_client_secret_for_encryption_key_derivation")
 os.environ.setdefault("INAT_REDIRECT_URI", "http://localhost:8000/api/inat/callback")
 
+from app.config import settings
 from app.schemas.inaturalist import (
     INatBatchPollRequest,
     INatCallbackParams,
@@ -51,8 +52,6 @@ class TestPKCE:
         assert v1 != v2
         assert c1 != c2
 
-
-from app.config import settings
 
 class TestAuthorizationURL:
     def test_url_contains_client_id(self):

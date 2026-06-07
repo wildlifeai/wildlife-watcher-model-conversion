@@ -51,13 +51,26 @@ class Settings(BaseSettings):
     FF_PUBLIC_API_ENABLED: bool = Field(False)
     FF_CAMTRAPDP_IMPORT_ENABLED: bool = Field(True, description="Enable CamtrapDP package import endpoint")
     FF_PIPELINE_ENABLED: bool = Field(False, description="Enable AI pipeline inference endpoints")
-    FF_FIFTYONE_ENABLED: bool = Field(False, description="Enable FiftyOne visual review endpoints")
 
-    # ── CVAT Annotation Integration ───────────────────────────────────
-    CVAT_URL: str = Field("http://cvat_server:8080", description="Internal CVAT server URL (Docker network)")
-    CVAT_USERNAME: str = Field("ww-service", description="CVAT service account username")
-    CVAT_PASSWORD: str = Field("", description="CVAT service account password")
-    CVAT_WEBHOOK_SECRET: str = Field("", description="HMAC-SHA256 secret shared with CVAT for webhook verification")
+    # ── v4 Wildlife Brain feature flags ──────────────────────────────
+    FF_SPECIESNET_ENABLED: bool = Field(False, description="Use SpeciesNet (detector + classifier) as the pipeline step")
+    FF_WILDLIFE_BRAIN_ENABLED: bool = Field(False, description="Enable DINOv3 embedding / clustering / similarity endpoints")
+    FF_MEDIA_REGISTRY_ENABLED: bool = Field(False, description="Enable Media Registry thumbnails/crops + resolve endpoints")
+    FF_ACTIVE_LEARNING_ENABLED: bool = Field(False, description="Enable active-learning review queue scoring")
+    FF_INTELLIGENCE_ENABLED: bool = Field(False, description="Enable conservation intelligence endpoints (health, alerts, shift)")
+    FF_LOCAL_EMBEDDING_ENABLED: bool = Field(False, description="Accept client-computed (WebGPU) embedding vectors")
+
+    # ── Qdrant (vector store) ─────────────────────────────────────────
+    QDRANT_URL: str = Field("http://qdrant:6333", description="Qdrant service URL (Docker network)")
+    QDRANT_API_KEY: str = Field("", description="Qdrant API key (empty for local/self-hosted)")
+    QDRANT_COLLECTION: str = Field("media_embeddings", description="Qdrant collection name for DINOv3 vectors")
+
+    # ── DINOv3 embedding compute ──────────────────────────────────────
+    HF_TOKEN: str = Field("", description="HuggingFace token for gated DINOv3 model access")
+    EMBEDDING_DEFAULT_MODEL: str = Field("dinov3-vith", description="Default server embedding variant (see embedding_registry)")
+    EMBEDDING_DEVICE: str = Field("cpu", description="Torch device for server embedding ('cpu' or 'cuda')")
+    EMBEDDING_BATCH_SIZE: int = Field(32, description="Batch size for GPU/CPU embedding extraction")
+    EMBEDDING_CHECKPOINT_EVERY: int = Field(1000, description="Write Qdrant + Supabase every N images for restartable jobs")
 
     # ── General ──────────────────────────────────────────────────────
     GENERAL_ORG_ID: str = Field(
@@ -79,6 +92,16 @@ class Settings(BaseSettings):
     # ── Azure Storage (Temporary Image Buffer) ────────────────────────
     AZURE_STORAGE_CONNECTION_STRING: str = Field("", description="Azure Storage Account connection string for blob buffering")
     AZURE_STORAGE_CONTAINER_NAME: str = Field("wildlife-watcher-uploads", description="Default container name in Azure Blob Storage")
+
+    # ── Media Registry renditions (Supabase Storage public bucket; originals stay in Drive) ──
+    SUPABASE_MEDIA_BUCKET: str = Field(
+        "media-renditions",
+        description="Public Supabase Storage bucket for thumbnails/previews/animal crops",
+    )
+    SUPABASE_QDRANT_BACKUP_BUCKET: str = Field(
+        "qdrant-backups",
+        description="Private Supabase Storage bucket for Qdrant DR snapshots (Phase 5.5)",
+    )
 
     # ── iNaturalist (Phase 6) ────────────────────────────────────────
     INAT_CLIENT_ID: str = Field("")

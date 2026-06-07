@@ -91,8 +91,8 @@ async def import_camtrapdp(
 
     # ── Register missing taxa ──────────────────────────────────────────
     unique_names = {
-        obs.get("scientificName", "").strip() 
-        for obs in pkg.observations 
+        obs.get("scientificName", "").strip()
+        for obs in pkg.observations
         if obs.get("scientificName", "").strip()
     }
 

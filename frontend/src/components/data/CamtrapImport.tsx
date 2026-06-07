@@ -32,8 +32,10 @@ function useImportProgress(importing: boolean) {
 
   useEffect(() => {
     if (!importing) {
-      setStage(0)
-      setElapsed(0)
+      setTimeout(() => {
+        setStage(0)
+        setElapsed(0)
+      }, 0)
       return
     }
     startRef.current = Date.now()

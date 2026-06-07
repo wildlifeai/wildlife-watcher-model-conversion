@@ -20,6 +20,11 @@ import { LabelingPage } from './pages/LabelingPage'
 import { EventReviewPage } from './pages/EventReviewPage'
 import { AnalysisPage } from './pages/AnalysisPage'
 import { ReportingPage } from './pages/ReportingPage'
+import { ImageExplorerPage } from './pages/ImageExplorerPage'
+import { ClusterReviewPage } from './pages/ClusterReviewPage'
+import { UmapExplorerPage } from './pages/UmapExplorerPage'
+import { ReviewQueuePage } from './pages/ReviewQueuePage'
+import { DatasetHealthPage } from './pages/DatasetHealthPage'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from './lib/apiClient'
 import './styles/index.css'
@@ -146,6 +151,11 @@ export default function App() {
               <Route path="/upload-model" element={<RequireAuth><UploadModelPage /></RequireAuth>} />
               <Route path="/labeling" element={<RequireAuth><LabelingPage /></RequireAuth>} />
               <Route path="/labeling/:deployment_id" element={<RequireAuth><LabelingPage /></RequireAuth>} />
+              <Route path="/explore/:deployment_id" element={<RequireAuth><ImageExplorerPage /></RequireAuth>} />
+              <Route path="/clusters/:deployment_id" element={<RequireAuth><ClusterReviewPage /></RequireAuth>} />
+              <Route path="/umap/:deployment_id" element={<RequireAuth><UmapExplorerPage /></RequireAuth>} />
+              <Route path="/review/:deployment_id" element={<RequireAuth><ReviewQueuePage /></RequireAuth>} />
+              <Route path="/intelligence/:project_id" element={<RequireAuth><DatasetHealthPage /></RequireAuth>} />
               <Route path="/events/:deployment_id" element={<RequireAuth><EventReviewPage /></RequireAuth>} />
               <Route path="/analysis/:deployment_id" element={<RequireAuth><AnalysisPage /></RequireAuth>} />
               <Route path="/reporting/:deployment_id" element={<RequireAuth><ReportingPage /></RequireAuth>} />

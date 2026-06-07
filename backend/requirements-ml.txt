@@ -1,0 +1,12 @@
+# Heavy ML dependencies — installed only in the embedding-worker (and dev) images,
+# NOT in the lean production API image. Code that uses these imports them lazily
+# (services/dinov3.py, services/speciesnet_service.py, domain/wildlife_brain.py),
+# so the API boots without them.
+torch>=2.2                       # DINOv3 inference
+transformers>=4.40               # DINOv3 model loading
+huggingface_hub>=0.23            # Gated DINOv3 model download
+hdbscan>=0.8.33                  # Density clustering of embeddings
+scikit-learn>=1.4                # Clustering/reduction utilities
+umap-learn>=0.5                  # UMAP 2D/50D reduction (stable coords)
+speciesnet>=4.0.1                # Detector + species classifier ensemble
+# arq lives in requirements.txt (base) so both the API (enqueue) and worker (execute) have it.
