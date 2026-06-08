@@ -11,6 +11,7 @@ import { useAuth } from '../hooks/useAuth'
 import { useProjectSelection } from '../hooks/useProjectSelection'
 import { apiClient } from '../lib/apiClient'
 import { supabase } from '../config/supabase'
+import { INaturalistPanel } from '../components/toolkit/INaturalistPanel'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Section wrapper
@@ -128,6 +129,15 @@ export function OtherPage() {
       </p>
 
       <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem', maxWidth: '720px' }}>
+
+        {/* 0 — Connect iNaturalist (renders nothing when the feature is disabled) */}
+        <Section
+          icon="🕊"
+          title="Connect iNaturalist"
+          description="Link your personal iNaturalist account to publish reviewed camera-trap observations from the Annotations tab and sync community identifications back into Wildlife Watcher."
+        >
+          <INaturalistPanel />
+        </Section>
 
         {/* 1 — Export dataset (CamtrapDP) */}
         <Section

@@ -164,6 +164,7 @@ All documentation lives under [`documentation/`](./documentation), split into th
 
 Point-in-time design docs, roadmaps, research spikes and audits — e.g.
 [annotation-pipeline-review.md](./documentation/development%20reports/annotation-pipeline-review.md),
+[inaturalist-integration.md](./documentation/development%20reports/inaturalist-integration.md),
 [ui-redesign-roadmap.md](./documentation/development%20reports/ui-redesign-roadmap.md),
 [v4-implementation-plan.md](./documentation/development%20reports/v4-implementation-plan.md).
 These capture *why* decisions were made; they are not kept current with the code.

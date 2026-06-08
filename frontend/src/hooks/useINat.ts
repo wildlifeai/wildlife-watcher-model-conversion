@@ -1,0 +1,71 @@
+/* eslint-disable react-hooks/set-state-in-effect */
+import { useState, useEffect, useCallback } from 'react'
+import { apiClient } from '../lib/apiClient'
+
+/**
+ * useINat — iNaturalist connection status + publish action for the web app.
+ *
+ * - `connected` / `username`: from GET /api/inat/status
+ * - `enabled`: false when FF_INAT_ENABLED is off (endpoint 404s)
+ * - `connect()`: starts the OAuth flow (redirects to iNaturalist)
+ * - `publish(mediaIds, opts)`: POST /api/inat/publish (burst-consolidated upload)
+ */
+
+export interface INatPublishResult {
+  observations_created: number
+  photos_uploaded: number
+  skipped_bycatch: number
+  skipped_already_published: number
+  errors: number
+  observations: { inat_observation_id: number | null; uri: string | null; species_guess: string | null; media_count: number }[]
+}
+
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function unwrap(r: any) { return r?.data ?? r }
+
+export function useINat() {
+  const [connected, setConnected] = useState<boolean | null>(null)
+  const [username, setUsername] = useState<string | null>(null)
+  const [enabled, setEnabled] = useState(true)
+
+  const refresh = useCallback(async () => {
+    try {
+      const d = unwrap(await apiClient.get('/api/inat/status'))
+      setConnected(!!d.connected)
+      setUsername(d.inat_username ?? null)
+    } catch (e) {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const msg = String((e as any)?.message ?? '')
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      if (msg.includes('404') || (e as any)?.code === 'HTTP_404') setEnabled(false)
+      setConnected(false)
+    }
+  }, [])
+
+  useEffect(() => { refresh() }, [refresh])
+
+  const connect = useCallback(async () => {
+    const d = unwrap(await apiClient.get('/api/inat/auth'))
+    if (d.authorization_url) window.location.href = d.authorization_url
+  }, [])
+
+  const publish = useCallback(async (
+    mediaIds: string[],
+    opts?: { gap_seconds?: number; geoprivacy?: string },
+  ): Promise<INatPublishResult> => {
+    return unwrap(await apiClient.post('/api/inat/publish', {
+      media_ids: mediaIds,
+      gap_seconds: opts?.gap_seconds ?? 60,
+      geoprivacy: opts?.geoprivacy ?? 'obscured',
+    }))
+  }, [])
+
+  // Pull community identifications from iNat back into WW (updates badges).
+  const sync = useCallback(async (): Promise<{
+    checked: number; updated: number; research: number; disagreement: number; observations_written: number
+  }> => {
+    return unwrap(await apiClient.post('/api/inat/sync'))
+  }, [])
+
+  return { connected, username, enabled, connect, publish, sync, refresh }
+}

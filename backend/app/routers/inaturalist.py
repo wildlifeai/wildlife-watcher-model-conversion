@@ -33,6 +33,8 @@ from app.domain.inaturalist import (
     get_inat_user_profile,
     get_observation_status,
 )
+from app.domain.inaturalist_publish import publish_media_to_inat
+from app.domain.inaturalist_sync import sync_inat_identifications
 from app.schemas.common import ApiMeta, ApiResponse
 from app.schemas.inaturalist import (
     INatAddTaxonBody,
@@ -40,6 +42,7 @@ from app.schemas.inaturalist import (
     INatConnectionStatus,
     INatCreateObservation,
     INatObservationStatus,
+    INatPublishRequest,
 )
 from app.services.inat_oauth import (
     INAT_API_BASE,
@@ -213,6 +216,59 @@ async def create_inat_observation(
     except INatDomainError as e:
         raise HTTPException(400, detail=str(e))
 
+    return ApiResponse(
+        data=result,
+        meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
+    )
+
+
+@router.post("/publish")
+async def publish_to_inat(
+    body: INatPublishRequest,
+    request: Request,
+    user=Depends(get_current_user),
+):
+    """Publish selected Wildlife Watcher media to the user's iNaturalist account.
+
+    Consolidates the selection into temporal-burst observations (one iNat
+    observation per encounter), drops by-catch (human/vehicle/blank), uploads
+    each photo through the backend proxy (bypassing browser CORS), and records
+    the mapping in inat_observations / inat_observation_media for status tracking.
+    """
+    _check_enabled()
+
+    try:
+        result = await publish_media_to_inat(
+            user_id=user.id,
+            media_ids=body.media_ids,
+            gap_seconds=body.gap_seconds,
+            geoprivacy=body.geoprivacy,
+        )
+    except INatDomainError as e:
+        raise HTTPException(400, detail=str(e))
+
+    return ApiResponse(
+        data=result,
+        meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
+    )
+
+
+@router.post("/sync")
+async def sync_inat(
+    request: Request,
+    user=Depends(get_current_user),
+):
+    """Pull community identifications from iNaturalist back into Wildlife Watcher.
+
+    Polls the public iNat API for the taxon + quality_grade of this user's
+    published observations, updates the inat_observations sync state (drives the
+    thumbnail badge), and writes the community taxon back into WW observations as
+    source_type='consensus'. A scheduled job can call the same domain function
+    with no user filter to sync everyone.
+    """
+    _check_enabled()
+
+    result = await sync_inat_identifications(user_id=user.id)
     return ApiResponse(
         data=result,
         meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),

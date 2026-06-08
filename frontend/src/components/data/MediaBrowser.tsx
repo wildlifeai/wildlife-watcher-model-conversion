@@ -1,7 +1,9 @@
-/* eslint-disable react-hooks/set-state-in-effect */
-import { useState, useEffect, useMemo } from 'react'
+ 
+import { useState, useEffect, useMemo, useCallback } from 'react'
 import { supabase } from '../../config/supabase'
 import { useAuth } from '../../hooks/useAuth'
+import { useINat } from '../../hooks/useINat'
+import { INatBadge, type INatState } from './INatBadge'
 import { MediaDetail } from './MediaDetail'
 import { FilterSelect } from '../ui/ControlBar'
 import { Ribbon } from '../ui/Ribbon'
@@ -68,6 +70,13 @@ const THUMB = {
   large:  { minWidth: 200, height: 160 },
 } as const
 
+const INAT_BTN: React.CSSProperties = {
+  padding: '0.3rem 0.6rem', fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap',
+  border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+  backgroundColor: 'transparent', color: 'var(--text-color)',
+}
+const INAT_BTN_ACTIVE: React.CSSProperties = { ...INAT_BTN, backgroundColor: '#74ac00', color: '#fff', borderColor: '#74ac00' }
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -117,6 +126,38 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
   const PAGE_SIZE = 100
   const [page, setPage]           = useState(0)
   const [totalCount, setTotalCount] = useState<number | null>(null)
+
+  // ── Phase 3: iNaturalist publish + tracking ───────────────────────────────
+  const inat = useINat()
+  const [inatMode, setInatMode]         = useState(false)            // iNat selection mode
+  const [inatSelected, setInatSelected] = useState<Set<string>>(new Set())
+  const [inatStates, setInatStates]     = useState<Map<string, { state: INatState; uri: string | null }>>(new Map())
+  const [inatBusy, setInatBusy]         = useState(false)
+  const [inatMsg, setInatMsg]           = useState<string | null>(null)
+
+  const toggleInat = (id: string) => setInatSelected(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    return next
+  })
+
+  // Load iNat upload/sync state for a set of media (graceful if table absent).
+  const loadInatStates = useCallback(async (ids: string[]) => {
+    if (ids.length === 0) { setInatStates(new Map()); return }
+    const { data, error: err } = await supabase
+      .from('inat_observation_media')
+      .select('media_id, inat_observations(sync_status, inat_uri)')
+      .in('media_id', ids)
+    if (err || !data) return  // table not migrated yet / no access → no badges
+    const map = new Map<string, { state: INatState; uri: string | null }>()
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    for (const row of data as any[]) {
+      const io = Array.isArray(row.inat_observations) ? row.inat_observations[0] : row.inat_observations
+      if (io?.sync_status) map.set(row.media_id, { state: io.sync_status as INatState, uri: io.inat_uri ?? null })
+    }
+    setInatStates(map)
+  }, [])
 
   // WS5-T6: honour initialDeploymentId on mount / when it changes
   useEffect(() => {
@@ -171,6 +212,50 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
 
     return () => { cancelled = true }
   }, [user, deployments, filterDeployment, page])
+
+  // Refresh iNaturalist badges whenever the loaded media set changes.
+  useEffect(() => { loadInatStates(media.map(m => m.id)) }, [media, loadInatStates])
+
+  // Upload the iNat-selected media to iNaturalist (burst-consolidated).
+  const uploadToInat = async () => {
+    if (inatSelected.size === 0 || inatBusy) return
+    setInatBusy(true)
+    setInatMsg('⬆ Uploading to iNaturalist…')
+    try {
+      const r = await inat.publish([...inatSelected])
+      setInatMsg(
+        `✓ ${r.observations_created} observation(s), ${r.photos_uploaded} photo(s)` +
+        (r.skipped_bycatch ? ` · ${r.skipped_bycatch} by-catch skipped` : '') +
+        (r.skipped_already_published ? ` · ${r.skipped_already_published} already on iNat` : '') +
+        (r.errors ? ` · ${r.errors} error(s)` : ''),
+      )
+      setInatSelected(new Set())
+      await loadInatStates(media.map(m => m.id))
+    } catch (e) {
+      setInatMsg(`⚠ ${(e as Error)?.message ?? 'Upload failed'}`)
+    } finally {
+      setInatBusy(false)
+    }
+  }
+
+  // Pull community identifications from iNaturalist and refresh the badges.
+  const syncFromInat = async () => {
+    if (inatBusy) return
+    setInatBusy(true)
+    setInatMsg('↻ Syncing community IDs from iNaturalist…')
+    try {
+      const r = await inat.sync()
+      setInatMsg(
+        `✓ Synced ${r.updated}/${r.checked} · ${r.research} research-grade · ` +
+        `${r.disagreement} disagreement · ${r.observations_written} community ID(s) written`,
+      )
+      await loadInatStates(media.map(m => m.id))
+    } catch (e) {
+      setInatMsg(`⚠ ${(e as Error)?.message ?? 'Sync failed'}`)
+    } finally {
+      setInatBusy(false)
+    }
+  }
 
   // ── Derived filter options ────────────────────────────────────────────────
   const speciesList = useMemo(() => {
@@ -350,8 +435,75 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
               { id: 'thumbs', title: 'Thumbnail size', content: thumbToggle },
             ],
           },
+          ...(inat.enabled ? [{
+            id: 'inat', label: 'iNaturalist', icon: '🕊',
+            groups: [
+              {
+                id: 'inat-account', title: 'Account',
+                content: inat.connected
+                  ? <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 600 }}>✓ {inat.username || 'Connected'}</span>
+                  : <button onClick={() => inat.connect()} style={INAT_BTN}>🔗 Connect</button>,
+              },
+              {
+                id: 'inat-select', title: 'Selection',
+                content: (
+                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+                    <button
+                      onClick={() => { setInatMode(v => !v); setInatSelected(new Set()) }}
+                      style={inatMode ? INAT_BTN_ACTIVE : INAT_BTN}
+                      title="Toggle selecting photos to publish to iNaturalist"
+                    >
+                      {inatMode ? '☑ Selecting' : '☐ Select photos'}
+                    </button>
+                    {inatMode && <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{inatSelected.size} selected</span>}
+                  </div>
+                ),
+              },
+              {
+                id: 'inat-upload', title: 'Publish',
+                content: (
+                  <button
+                    onClick={uploadToInat}
+                    disabled={!inat.connected || inatSelected.size === 0 || inatBusy}
+                    style={(!inat.connected || inatSelected.size === 0 || inatBusy)
+                      ? { ...INAT_BTN, opacity: 0.45, cursor: 'not-allowed' }
+                      : INAT_BTN_ACTIVE}
+                    title={!inat.connected ? 'Connect your iNaturalist account first (Account group)' : undefined}
+                  >
+                    {inatBusy ? '⏳ Uploading…' : `⬆ Upload ${inatSelected.size} to iNat`}
+                  </button>
+                ),
+              },
+              {
+                id: 'inat-sync', title: 'Community IDs',
+                content: (
+                  <button
+                    onClick={syncFromInat}
+                    disabled={!inat.connected || inatBusy}
+                    style={(!inat.connected || inatBusy) ? { ...INAT_BTN, opacity: 0.45, cursor: 'not-allowed' } : INAT_BTN}
+                    title="Pull the latest community identifications from iNaturalist and update badges"
+                  >
+                    {inatBusy ? '⏳…' : '↻ Sync IDs'}
+                  </button>
+                ),
+              },
+            ],
+          }] : []),
         ]}
       />
+
+      {/* iNaturalist publish result banner */}
+      {inatMsg && (
+        <div style={{
+          margin: '0 0 1rem', padding: '0.5rem 0.75rem', fontSize: '0.8125rem',
+          border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+          backgroundColor: inatMsg.startsWith('⚠') ? 'rgba(239,68,68,0.08)' : 'rgba(116,172,0,0.1)',
+          display: 'flex', justifyContent: 'space-between', gap: '1rem', alignItems: 'center',
+        }}>
+          <span>{inatMsg}</span>
+          <button onClick={() => setInatMsg(null)} style={{ background: 'none', border: 'none', cursor: 'pointer', opacity: 0.6 }}>✕</button>
+        </div>
+      )}
 
       {/* ── KPI row ───────────────────────────────────────────────── */}
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', fontSize: '0.8125rem', flexWrap: 'wrap', alignItems: 'center' }}>
@@ -436,13 +588,15 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
               const label  = topObs?.scientific_name || null
               const conf   = topObs?.classification_probability ?? null
               const isSelected = selectedMediaId === m.id
+              const inatSt  = inatStates.get(m.id)            // iNat upload/sync state (if any)
+              const inatSel = inatMode && inatSelected.has(m.id)
 
               return (
                 <div
                   key={m.id}
-                  onClick={() => setSelectedMediaId(isSelected ? null : m.id)}
+                  onClick={() => (inatMode ? toggleInat(m.id) : setSelectedMediaId(isSelected ? null : m.id))}
                   style={{
-                    border: isSelected ? '2px solid var(--primary)' : '1px solid var(--border)',
+                    border: isSelected ? '2px solid var(--primary)' : inatSel ? '2px solid #74ac00' : '1px solid var(--border)',
                     borderRadius: 'var(--radius)',
                     overflow: 'hidden',
                     cursor: 'pointer',
@@ -484,6 +638,26 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
                         }
                       />
                     </span>
+
+                    {/* Phase 3: iNaturalist dove badge — top-right overlay */}
+                    {inatSt && (
+                      <span style={{ position: 'absolute', top: 4, right: 4 }}>
+                        <INatBadge state={inatSt.state} uri={inatSt.uri} />
+                      </span>
+                    )}
+
+                    {/* iNat selection checkbox — bottom-left, only in select mode */}
+                    {inatMode && (
+                      <span style={{
+                        position: 'absolute', bottom: 4, left: 4, width: 18, height: 18,
+                        borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                        fontSize: '0.7rem', fontWeight: 700,
+                        backgroundColor: inatSel ? '#74ac00' : 'rgba(0,0,0,0.45)',
+                        color: '#fff', boxShadow: '0 0 0 1.5px rgba(255,255,255,0.85)',
+                      }}>
+                        {inatSel ? '✓' : ''}
+                      </span>
+                    )}
                   </div>
 
                   {/* Label bar */}
