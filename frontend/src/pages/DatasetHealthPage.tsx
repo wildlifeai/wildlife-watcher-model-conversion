@@ -1,5 +1,5 @@
 import { useParams } from 'react-router-dom'
-import { useDatasetHealth, useAlerts } from '../hooks/useIntelligence'
+import { useDatasetHealth, useAlerts, useProjectQa } from '../hooks/useIntelligence'
 
 const SEVERITY_COLOR: Record<string, string> = { info: '#5b9cf6', warning: '#ff9800', critical: '#f44336' }
 
@@ -16,6 +16,7 @@ export function DatasetHealthPage() {
   const { project_id } = useParams<{ project_id: string }>()
   const { data: health, isLoading } = useDatasetHealth(project_id)
   const { data: alertsData } = useAlerts(project_id)
+  const { data: qa, isLoading: qaLoading } = useProjectQa(project_id)
 
   if (isLoading) return <div style={{ padding: '2rem' }}>Loading dataset health…</div>
   if (!health) return <div style={{ padding: '2rem' }}>No data.</div>
@@ -68,6 +69,46 @@ export function DatasetHealthPage() {
           ))}
           {Object.keys(health.review_funnel).length === 0 && <span style={{ fontSize: '0.8125rem', opacity: 0.6 }}>No observations yet.</span>}
         </div>
+      </div>
+
+      {/* AN-9: AI-vs-human agreement (QA) */}
+      <div className="glass-card" style={{ padding: '1.25rem' }}>
+        <h4 style={{ marginTop: 0 }}>AI vs Human Agreement</h4>
+        {qaLoading ? (
+          <span style={{ fontSize: '0.8125rem', opacity: 0.6 }}>Computing agreement…</span>
+        ) : !qa || !qa.enabled ? (
+          <span style={{ fontSize: '0.8125rem', opacity: 0.6 }}>
+            QA agreement is unavailable (the active-learning feature is disabled).
+          </span>
+        ) : qa.n_compared === 0 ? (
+          <span style={{ fontSize: '0.8125rem', opacity: 0.6 }}>
+            No overlapping AI + human labels yet — confirm or correct some AI labels to measure precision.
+          </span>
+        ) : (
+          <>
+            <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '0.75rem' }}>
+              <Stat label="Agreement" value={qa.precision != null ? `${Math.round(qa.precision * 100)}%` : '—'} />
+              <Stat label="Images compared" value={qa.n_compared} />
+              <Stat label="Matches" value={qa.matches} />
+            </div>
+            <p style={{ fontSize: '0.7rem', opacity: 0.55, margin: '0 0 0.75rem' }}>
+              Precision proxy: share of images where the human label matched the AI's, over images carrying both.
+            </p>
+            {qa.perDeployment.length > 1 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 4, maxHeight: 220, overflowY: 'auto' }}>
+                {qa.perDeployment.map(p => (
+                  <div key={p.deployment_id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', fontSize: '0.8125rem', padding: '0.25rem 0', borderBottom: '1px solid var(--border)' }}>
+                    <span style={{ opacity: 0.85 }}>{p.location_name || p.deployment_id.slice(0, 8)}</span>
+                    <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                      <span style={{ opacity: 0.55, fontSize: '0.7rem' }}>{p.matches}/{p.n_compared}</span>
+                      <strong>{p.precision != null ? `${Math.round(p.precision * 100)}%` : '—'}</strong>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+          </>
+        )}
       </div>
 
       {/* Species coverage */}

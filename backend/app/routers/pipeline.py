@@ -37,7 +37,7 @@ async def run_inference_pipeline(
 ):
     """Run an AI inference pipeline on a deployment.
 
-    Executes the specified pipeline steps (e.g. MegaDetector, SpeciesNet)
+    Executes the specified pipeline steps (e.g. media prep, SpeciesNet)
     on all media in the target deployment. Results are written to the
     observations table with source_type='ai'.
 

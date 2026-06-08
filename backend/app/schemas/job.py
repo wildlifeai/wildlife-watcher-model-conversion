@@ -34,6 +34,7 @@ class ProgressPhase(str, Enum):
     DOWNLOAD = "download"
     DRIVE_UPLOAD = "drive_upload"
     CLEANUP = "cleanup"
+    AI_PIPELINE = "ai_pipeline"
 
 
 class EventType(str, Enum):

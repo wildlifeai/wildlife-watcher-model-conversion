@@ -2,9 +2,10 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Pluggable AI inference pipeline framework — pure domain logic.
 
-Defines the PipelineStep abstract base class and concrete implementations
-for MegaDetector V6 (detection), SpeciesNet (classification), and
-empty-frame suppression. Steps are composable and run sequentially.
+Defines the PipelineStep abstract base class and the concrete steps that run in
+production: media preparation (thumbnails/previews), the SpeciesNet ensemble
+(detection + species classification, including blank-frame handling), and animal
+cropping for DINOv3. Steps are composable and run sequentially.
 
 No HTTP or FastAPI imports — this module runs in the domain layer.
 """
@@ -201,8 +202,8 @@ class SpeciesNetStep(PipelineStep):
 
     Downloads each media item to a temp file (via the media resolver), runs the
     SpeciesNet ensemble, and writes media-level observations with bounding boxes,
-    detection confidence, and a species guess. Replaces the MegaDetector and
-    SpeciesNet stub steps below.
+    detection confidence, and a species guess. Images with no kept detection yield
+    a single ``blank`` observation.
     """
 
     step_type = PipelineStepType.SPECIESNET
@@ -289,175 +290,6 @@ class SpeciesNetStep(PipelineStep):
         )
 
 
-# ── MegaDetector V6 Step (DEPRECATED stub — use SpeciesNetStep) ───────
-
-
-class MegaDetectorStep(PipelineStep):
-    """MegaDetector V6 object detection step.
-
-    In production, this runs PyTorchWildlife (MegaDetector V6) to detect
-    animals, persons, and vehicles in camera trap images. The current
-    implementation is a stub that creates placeholder observations.
-
-    When GPU infrastructure is available, this step will:
-    1. Download images from Supabase Storage → local temp dir
-    2. Run MegaDetector V6 via PyTorchWildlife batch inference
-    3. Parse bounding box results into observation rows
-    4. Insert observations with source_type='ai' and link to ai_model
-    """
-
-    step_type = PipelineStepType.MEGADETECTOR
-    model_version = "MDv6-stub"
-
-    async def run(
-        self,
-        media: list[dict],
-        deployment_id: str,
-        config: dict[str, Any],
-    ) -> PipelineStepResult:
-        start = time.monotonic()
-        _confidence_threshold = config.get("confidence_threshold", 0.2)  # Used in production
-        svc = create_service_client()
-        observations_created = 0
-        errors = 0
-
-        # Stub: For each media item, create a placeholder 'unreviewed' observation.
-        # In production, this would run the actual model inference.
-        obs_batch: list[dict] = []
-        for m in media:
-            try:
-                obs_row = {
-                    "id": str(uuid.uuid4()),
-                    "deployment_id": deployment_id,
-                    "media_id": m["id"],
-                    "observation_level": "media",
-                    "observation_type": "unknown",
-                    "source_type": "ai",
-                    "source_model_version": self.model_version,
-                    "review_status": "ai_reviewed",
-                    "confidence": 0.0,  # Stub: no real confidence
-                    "classification_method": "machine",
-                }
-                obs_batch.append(obs_row)
-            except Exception as exc:
-                logger.warning(
-                    "megadetector_media_error",
-                    media_id=m.get("id"),
-                    error=str(exc),
-                )
-                errors += 1
-
-        # Bulk insert observations
-        if obs_batch:
-
-            def _insert():
-                chunk_size = 50
-                inserted = 0
-                for i in range(0, len(obs_batch), chunk_size):
-                    batch = obs_batch[i : i + chunk_size]
-                    svc.table("observations").insert(batch).execute()
-                    inserted += len(batch)
-                return inserted
-
-            observations_created = await asyncio.to_thread(_insert)
-
-        duration = time.monotonic() - start
-        logger.info(
-            "megadetector_step_complete",
-            deployment_id=deployment_id,
-            media_processed=len(media),
-            observations_created=observations_created,
-            duration_seconds=round(duration, 2),
-        )
-
-        return PipelineStepResult(
-            step=self.step_type,
-            observations_created=observations_created,
-            media_processed=len(media),
-            errors=errors,
-            duration_seconds=round(duration, 2),
-            model_version=self.model_version,
-        )
-
-
-# ── SpeciesNet Classification Step (DEPRECATED stub — folded into SpeciesNetStep) ──
-
-
-class SpeciesNetClassifierStub(PipelineStep):
-    """SpeciesNet species classification step.
-
-    Classifies animal crops from MegaDetector detections using Google's
-    SpeciesNet model. Currently a stub — production version will:
-    1. Crop detected animals using bounding boxes
-    2. Run SpeciesNet inference on each crop
-    3. Update observations with taxon_id and classification_probability
-    """
-
-    step_type = PipelineStepType.SPECIES_CLASSIFIER
-    model_version = "SpeciesNet-stub"
-
-    async def run(
-        self,
-        media: list[dict],
-        deployment_id: str,
-        config: dict[str, Any],
-    ) -> PipelineStepResult:
-        start = time.monotonic()
-
-        # Stub: No-op. In production, this would classify animal crops.
-        logger.info(
-            "speciesnet_step_stub",
-            deployment_id=deployment_id,
-            media_count=len(media),
-        )
-
-        return PipelineStepResult(
-            step=self.step_type,
-            media_processed=len(media),
-            duration_seconds=round(time.monotonic() - start, 2),
-            model_version=self.model_version,
-        )
-
-
-# ── Empty Frame Suppression Step ─────────────────────────────────────
-
-
-class EmptyFrameStep(PipelineStep):
-    """Empty frame detection and suppression step.
-
-    Identifies media frames that contain no animals (blank triggers)
-    and creates observations with observation_type='blank' and a
-    confidence score for the emptiness assessment.
-
-    Currently a stub — production version will use a lightweight
-    classifier or MegaDetector's empty-frame confidence.
-    """
-
-    step_type = PipelineStepType.EMPTY_FRAME
-    model_version = "EmptyFrame-stub"
-
-    async def run(
-        self,
-        media: list[dict],
-        deployment_id: str,
-        config: dict[str, Any],
-    ) -> PipelineStepResult:
-        start = time.monotonic()
-
-        logger.info(
-            "empty_frame_step_stub",
-            deployment_id=deployment_id,
-            media_count=len(media),
-        )
-
-        return PipelineStepResult(
-            step=self.step_type,
-            media_processed=len(media),
-            duration_seconds=round(time.monotonic() - start, 2),
-            model_version=self.model_version,
-        )
-
-
 # ── Step Registry ────────────────────────────────────────────────────
 
 
@@ -465,9 +297,6 @@ _STEP_REGISTRY: dict[PipelineStepType, type[PipelineStep]] = {
     PipelineStepType.MEDIA_PREP: MediaPreparationStep,
     PipelineStepType.SPECIESNET: SpeciesNetStep,
     PipelineStepType.ANIMAL_CROP: AnimalCropStep,
-    PipelineStepType.MEGADETECTOR: MegaDetectorStep,
-    PipelineStepType.SPECIES_CLASSIFIER: SpeciesNetClassifierStub,
-    PipelineStepType.EMPTY_FRAME: EmptyFrameStep,
 }
 
 

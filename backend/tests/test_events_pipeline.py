@@ -222,9 +222,9 @@ class TestPipelineSchemas:
     def test_pipeline_step_type_enum(self):
         from app.schemas.pipeline import PipelineStepType
 
-        assert PipelineStepType.MEGADETECTOR.value == "megadetector"
-        assert PipelineStepType.SPECIES_CLASSIFIER.value == "species_classifier"
-        assert PipelineStepType.EMPTY_FRAME.value == "empty_frame"
+        assert PipelineStepType.MEDIA_PREP.value == "media_prep"
+        assert PipelineStepType.SPECIESNET.value == "speciesnet"
+        assert PipelineStepType.ANIMAL_CROP.value == "animal_crop"
 
 
 # ── Pipeline step registry tests ─────────────────────────────────────
@@ -235,14 +235,14 @@ class TestPipelineStepRegistry:
         from app.domain.pipeline import get_step
         from app.schemas.pipeline import PipelineStepType
 
-        step = get_step(PipelineStepType.MEGADETECTOR)
-        assert step.step_type == PipelineStepType.MEGADETECTOR
+        step = get_step(PipelineStepType.MEDIA_PREP)
+        assert step.step_type == PipelineStepType.MEDIA_PREP
 
-        step = get_step(PipelineStepType.SPECIES_CLASSIFIER)
-        assert step.step_type == PipelineStepType.SPECIES_CLASSIFIER
+        step = get_step(PipelineStepType.SPECIESNET)
+        assert step.step_type == PipelineStepType.SPECIESNET
 
-        step = get_step(PipelineStepType.EMPTY_FRAME)
-        assert step.step_type == PipelineStepType.EMPTY_FRAME
+        step = get_step(PipelineStepType.ANIMAL_CROP)
+        assert step.step_type == PipelineStepType.ANIMAL_CROP
 
     def test_unknown_step_raises(self):
         from app.domain.pipeline import get_step

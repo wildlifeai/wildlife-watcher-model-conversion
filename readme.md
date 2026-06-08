@@ -4,824 +4,185 @@
   </a>
 </p>
 
-<h1 align="center">
-Wildlife Watcher Web
-</h1>
+<h1 align="center">Wildlife Watcher Web</h1>
 
 <p align="center">
-  <strong>Complete toolkit for configuring and analyzing data from Wildlife Watcher devices.</strong>
+  <strong>The web platform for uploading, AI-labelling, reviewing and analysing camera-trap data from Wildlife Watcher devices.</strong>
 </p>
 
----
+Welcome to the development repository of the Wildlife Watcher web app. This README covers
+local setup and day-to-day commands; everything deeper lives under [`documentation/`](#documentation).
 
-## Table of Contents
+The app is a two-service stack: a **React + Vite** frontend and a **FastAPI** backend, both
+talking to **Supabase** (PostgreSQL, Auth, Storage). Conservation teams use it to upload SD-card
+images to Google Drive, run the **SpeciesNet** AI pipeline, review/label observations, and export
+CamtrapDP / Darwin Core datasets.
 
-- [Overview](#overview)
-- [System Architecture](#system-architecture)
-- [Repository Structure](#repository-structure)
-- [Prerequisites](#prerequisites)
-- [Local Development](#local-development)
-  - [1. Clone and Configure Environment](#1-clone-and-configure-environment)
-  - [2. Backend Setup (FastAPI)](#2-backend-setup-fastapi)
-  - [3. Frontend Setup (React/Vite)](#3-frontend-setup-reactvite)
-  - [4. Verify Everything Works](#4-verify-everything-works)
-- [Environment Variables Reference](#environment-variables-reference)
-- [Feature Flags](#feature-flags)
-- [Frontend Pages and Routes](#frontend-pages-and-routes)
-- [Backend API Endpoints](#backend-api-endpoints)
-- [Async Job System](#async-job-system)
-- [Image Analysis → Google Drive Pipeline](#image-analysis--google-drive-pipeline)
-- [LoRaWAN Integration](#lorawan-integration)
-- [Deployment to Production](#deployment-to-production)
-  - [Frontend Deployment (Static Hosting)](#frontend-deployment-static-hosting)
-  - [Backend Deployment (Container/PaaS)](#backend-deployment-containerpaas)
-  - [Production Security Checklist](#production-security-checklist)
-- [Supabase Setup](#supabase-setup)
-- [Testing](#testing)
-- [Contributing](#contributing)
-- [License](#license)
+## Tech Stack
 
----
+- **Frontend**: React 19 + TypeScript + Vite 8, React Router 7, TanStack Query 5
+- **Backend**: FastAPI (Python 3.11+), async in-process job runner (ARQ-ready)
+- **Database / Auth / Storage**: Supabase (PostgreSQL + RLS, Auth, Storage)
+- **AI**: SpeciesNet ensemble (detector + species classifier); DINOv3 "Wildlife Brain" embeddings → HDBSCAN clustering → active-learning review
+- **Charts / Maps**: Vega-Lite (`vega-embed`), Leaflet (`react-leaflet`)
+- **External services**: Google Drive (image archive), Azure Blob (temp buffer), iNaturalist, Sentry
+- **Schema owner**: the database schema is owned by the [`ww-backend`](https://github.com/wildlifeai/wildlife-watcher-backend) repo (see [Database Migrations](#database-migrations))
 
-## Overview
-
-The Wildlife Watcher Website is a multi-service platform that lets conservation teams:
-
-1. **Analyse camera-trap images** — drag-and-drop SD card folders to extract EXIF metadata, match deployments, and route images to Google Drive.
-2. **Convert AI models** — upload Edge Impulse ZIPs, run Vela optimisation, and register models in Supabase.
-3. **Generate firmware manifests** — wrap camera configs and model binaries into `MANIFEST.zip` packages for SD card deployment.
-4. **Ingest LoRaWAN telemetry** — receive real-time device data via TTN and Chirpstack webhooks.
-5. **Browse project data** — view projects, deployments, GPS coordinates and export CSV.
-6. **Label and Triage Media** — interactive single-photo bounding box editor, slider-controlled multi-photo thumbnail grid, bulk operations (apply labels, clear observations, soft-delete), temporal event review, diel activity dashboards, and Darwin Core / CamtrapDP reporting.
-
----
-
-## System Architecture
-
-### High-Level Overview
-
-```mermaid
-graph TB
-    subgraph Clients
-        Browser["🌐 Web Browser<br/>(React + Vite)"]
-        Mobile["📱 Mobile App<br/>(React Native)"]
-        LoRa["📡 LoRaWAN<br/>Network Server"]
-    end
-
-    subgraph "Backend (FastAPI)"
-        API["FastAPI<br/>API Server :8000"]
-        Jobs["Async Job Runner<br/>(asyncio tasks)"]
-    end
-
-    subgraph "External Services"
-        Supa["Supabase<br/>(PostgreSQL + Auth<br/>+ Storage + Realtime)"]
-        Azure["Azure Blob Storage<br/>(Temp image buffer)"]
-        GDrive["Google Drive<br/>(Permanent archive)"]
-        Sentry["Sentry<br/>(Error tracking)"]
-    end
-
-    Browser -- "REST API<br/>+ Supabase Auth JWT" --> API
-    Mobile -- "Supabase Realtime" --> Supa
-    LoRa -- "Webhooks<br/>(TTN / Chirpstack)" --> API
-
-    API -- "Read/Write" --> Supa
-    API -- "Buffer images" --> Azure
-    API --> Jobs
-    Jobs -- "Upload images" --> GDrive
-    Jobs -- "Download buffered images" --> Azure
-    Jobs -- "Update job status" --> Supa
-    API -. "Errors" .-> Sentry
-```
-
-### Backend Layered Architecture
-
-```mermaid
-graph LR
-    subgraph "HTTP Layer"
-        R["Routers<br/>(thin controllers)"]
-    end
-
-    subgraph "Business Logic"
-        D["Domain<br/>(pure logic, no HTTP)"]
-    end
-
-    subgraph "Infrastructure"
-        S["Services<br/>(external adapters)"]
-    end
-
-    subgraph "Cross-Cutting"
-        M["Middleware<br/>(RequestID, Logging,<br/>CORS, Rate Limit)"]
-        DI["Dependencies<br/>(Auth, DI)"]
-    end
-
-    R --> D
-    D --> S
-    M --> R
-    DI --> R
-    S --> Supa2["Supabase"]
-    S --> Az2["Azure"]
-    S --> GD2["Google Drive"]
-    S --> Vela["Vela CLI"]
-```
-
-### Image Upload Pipeline (Detailed)
-
-```mermaid
-sequenceDiagram
-    participant User as 🧑 User
-    participant FE as React Frontend
-    participant API as FastAPI Backend
-    participant Azure as Azure Blob Storage
-    participant Job as Async Job Runner
-    participant GDrive as Google Drive
-
-    User->>FE: Drop SD card folder
-    FE->>FE: Filter JPEG files, extract paths
-    FE->>API: POST /api/exif/parse (batch of 10)
-    API->>API: Parse EXIF from each file
-    API->>API: Extract deployment IDs from folder paths
-    API->>Azure: Buffer images as blobs
-    API->>API: Create job (store.create_job)
-    API->>Job: Enqueue upload_drive_images_job
-    API-->>FE: {images: [...], drive_upload: {job_id, status: "queued"}}
-    
-    loop Every 2 seconds
-        FE->>API: GET /api/jobs/{job_id}
-        API-->>FE: {status, progress, events[]}
-        FE->>FE: Update pipeline status UI
-    end
-
-    Job->>Azure: Download buffered images
-    Job->>GDrive: Ensure project folder
-    Job->>GDrive: Ensure deployment folder
-    Job->>GDrive: Upload (with SHA-256 dedup)
-    Job->>Azure: Delete temp blobs
-    Job->>API: Update job status → completed
-```
-
----
-
-## Repository Structure
-
-```
-ww-website/
-├── .env.example                 # Template — copy to .env
-├── .gitignore
-├── docker-compose.yml           # Production Docker compose
-├── docker-compose.dev.yml       # Dev overrides (hot-reload)
-├── readme.md                    # ← You are here
-│
-├── backend/                     # FastAPI application
-│   ├── app/
-│   │   ├── main.py              # Entry point — CORS, lifespan, middleware
-│   │   ├── config.py            # Pydantic BaseSettings — env validation
-│   │   ├── dependencies.py      # Auth DI — JWT validation, Supabase clients
-│   │   ├── domain/              # Pure business logic (no HTTP imports)
-│   │   │   ├── camtrapdp.py     # Camtrap DP import/export logic
-│   │   │   ├── clustering.py    # Temporal and perceptual hashing clustering
-│   │   │   ├── events.py        # Event creation logic
-│   │   │   ├── exif.py          # JPEG EXIF parsing + deployment matching
-│   │   │   ├── inaturalist.py   # iNaturalist integration
-│   │   │   ├── lorawan.py       # LoRaWAN uplink processing
-│   │   │   ├── manifest.py      # MANIFEST.zip assembly
-│   │   │   ├── media_resolver.py# Resolves media from different storages
-│   │   │   ├── model.py         # Vela conversion + upload/register
-│   │   │   ├── photo_preprocessing.py  # GPS→local time, filename/folder naming
-│   │   │   ├── pipeline.py      # End-to-end processing pipeline
-│   │   │   └── public_api.py    # Public API domain logic
-│   │   ├── jobs/                # Async job system
-│   │   │   ├── definitions.py   # Job functions (Drive upload, model convert)
-│   │   │   ├── runner.py        # Local asyncio task runner
-│   │   │   ├── store.py         # In-memory + Supabase job persistence
-│   │   │   └── worker.py        # ARQ WorkerSettings (for container deploys)
-│   │   ├── middleware/          # Request processing pipeline
-│   │   │   ├── logging.py       # Structured JSON request logging
-│   │   │   ├── rate_limit.py    # slowapi per-IP limits
-│   │   │   └── request_id.py    # X-Request-ID propagation
-│   │   ├── registries/          # Static configuration data
-│   │   │   ├── camera_configs.py
-│   │   │   └── model_registry.py
-│   │   ├── routers/             # HTTP endpoints (thin validate + delegate)
-│   │   │   ├── camtrapdp.py     # POST /api/camtrapdp/import
-│   │   │   ├── clustering.py    # POST /api/clustering/run
-│   │   │   ├── exif.py          # POST /api/exif/parse
-│   │   │   ├── inaturalist.py   # iNaturalist OAuth endpoints
-│   │   │   ├── jobs.py          # GET  /api/jobs/{id}
-│   │   │   ├── lorawan.py       # POST /api/lorawan/webhook/*
-│   │   │   ├── manifest.py      # POST /api/manifest/generate
-│   │   │   ├── media.py         # Media endpoints
-│   │   │   ├── models.py        # POST /api/models/convert
-│   │   │   ├── pipeline.py      # Trigger end-to-end pipelines
-│   │   │   └── public_api.py    # Public data endpoints
-│   │   ├── schemas/             # Pydantic request/response models
-│   │   │   ├── common.py        # ApiResponse, ApiError, ApiMeta
-│   │   │   ├── job.py           # JobStatus, JobInfo, ProgressEvent
-│   │   │   ├── lorawan.py       # TTNUplink, ChirpstackUplink
-│   │   │   ├── manifest.py      # ManifestRequest
-│   │   │   └── model.py         # ModelUpload, ModelConvert
-│   │   └── services/            # Infrastructure adapters
-│   │       ├── azure_storage.py # Azure Blob Storage (temp buffer)
-│   │       ├── google_drive.py  # Google Drive upload + dedup
-│   │       ├── supabase_client.py
-│   │       ├── storage.py       # Supabase Storage upload/download
-│   │       ├── http_client.py   # httpx + tenacity retry
-│   │       ├── vela.py          # Ethos-U Vela CLI wrapper
-│   │       ├── cache.py         # Thread-safe dict cache
-│   │       ├── blob_store.py    # Legacy local temp store
-│   │       ├── api_key.py       # API key management
-│   │       ├── inat_oauth.py    # iNaturalist OAuth
-│   │       ├── sscma.py         # SSCMA catalog
-│   │       └── db_utils.py      # Paginated Supabase queries
-│   ├── tests/                   # pytest test suite (51 tests)
-│   ├── Dockerfile               # Multi-stage (base / dev)
-│   ├── requirements.txt         # Production dependencies
-│   ├── requirements-dev.txt     # Test/dev dependencies
-│   └── pyproject.toml           # ruff + pytest config
-│
-├── frontend/                    # React + TypeScript + Vite
-│   ├── src/
-│   │   ├── App.tsx              # Router + Layout + Auth guard
-│   │   ├── main.tsx             # React entry point
-│   │   ├── pages/               # Route-level components
-│   │   │   ├── AnalysisPage.tsx # Trap nights, diel activity abundance grids, confidence histograms
-│   │   │   ├── EventReviewPage.tsx # Temporal cluster review & aggregation job launcher
-│   │   │   ├── HomePage.tsx     # Landing page + image analysis
-│   │   │   ├── LabelingPage.tsx # Multi-scope annotation workspace
-│   │   │   ├── LoginPage.tsx    # Supabase Auth UI
-│   │   │   ├── ManifestPage.tsx # Firmware manifest builder
-│   │   │   ├── MyDataPage.tsx   # Projects + Deployments browser
-│   │   │   ├── PrivacyPolicyPage.tsx # Privacy Policy
-│   │   │   ├── ReportingPage.tsx # camtrapDP, Darwin Core occurrence exports, repeatability logs
-│   │   │   ├── ResetPasswordPage.tsx # Reset Password
-│   │   │   ├── ResourcesPage.tsx # User resources and documentation
-│   │   │   ├── SupportPage.tsx  # Support / Contact Us
-│   │   │   ├── TermsOfServicePage.tsx # Terms of Service
-│   │   │   ├── UploadDataPage.tsx # Upload Images
-│   │   │   └── UploadModelPage.tsx
-│   │   ├── components/
-│   │   │   ├── toolkit/         # Core feature components
-│   │   │   │   ├── AnalyseImages.tsx
-│   │   │   │   ├── GenerateManifest.tsx
-│   │   │   │   ├── UploadModel.tsx
-│   │   │   │   └── PipelineStatusBox.tsx
-│   │   │   ├── auth/
-│   │   │   └── common/
-│   │   ├── config/
-│   │   │   └── supabase.ts      # Supabase client init
-│   │   ├── hooks/
-│   │   │   ├── useAuth.ts       # Auth state management
-│   │   │   ├── useDragAndDrop.ts
-│   │   │   └── useJob.ts        # Job polling hook
-│   │   ├── lib/
-│   │   │   ├── apiClient.ts     # Fetch wrapper with Supabase JWT
-│   │   │   └── queryClient.ts   # TanStack Query client
-│   │   ├── types/
-│   │   │   └── job.ts           # Job type definitions
-│   │   └── styles/
-│   │       └── index.css        # Global CSS variables + base styles
-│   ├── vite.config.ts           # Reads .env from parent dir
-│   └── package.json
-│
-├── docs/                        # Extended documentation
-│   ├── api-reference.md
-│   ├── deployment-guide.md
-│   ├── lorawan-webhook-setup.md
-│   └── v2-architecture-plan.md
-│
-└── scripts/                     # Utility scripts
-```
-
----
+> For the complete dependency reference with versions and rationale, see the
+> [Technology Stack Guide](./documentation/onboarding/01-TECHNOLOGY-STACK.md).
 
 ## Prerequisites
 
 | Tool | Version | Purpose |
 |------|---------|---------|
-| **Node.js** | 18+ | Frontend dev server and build |
-| **npm** | 9+ | (Bundled with Node.js) |
+| **Node.js** | 20 (LTS)+ | Frontend dev server and build |
 | **Python** | 3.11+ | Backend runtime |
-| **pip** | Latest | Python package manager |
 | **Git** | Any | Version control |
+| **Docker** + Compose | _(optional)_ | Containerised full-stack run / deploy |
 
-**Optional (for production):**
+A **Supabase** project with the Wildlife Watcher schema (from `ww-backend`) is required.
 
-| Tool | Purpose |
-|------|---------|
-| **Docker** + **Docker Compose** | Containerised deployment |
-| **Vela CLI** (`ethos-u-vela`) | AI model conversion (installed via pip) |
+## Getting Started
 
----
+The frontend and backend share a **single `.env` at the repository root** (`vite.config.ts` loads
+it from `../`, and the backend reads `../.env` first).
 
-## Local Development
+1. **Clone and configure environment**
+   ```bash
+   git clone https://github.com/wildlifeai/ww-website.git
+   cd ww-website
+   cp .env.example .env       # then fill in the Supabase keys below
+   ```
+   ```env
+   SUPABASE_URL=https://your-project.supabase.co/
+   SUPABASE_ANON_KEY=eyJ...
+   SUPABASE_SERVICE_ROLE_KEY=eyJ...   # bypasses RLS — keep secret
+   ```
 
-### 1. Clone and Configure Environment
+2. **Backend (FastAPI)**
+   ```bash
+   cd backend
+   python -m venv venv && source venv/bin/activate   # Windows: venv\Scripts\activate
+   pip install -r requirements.txt
+   uvicorn app.main:app --reload --port 8000
+   ```
+   Verify: <http://localhost:8000/health> → `{"status":"ok"}` · Swagger at `/docs`.
 
-```bash
-git clone https://github.com/wildlifeai/ww-website.git
-cd ww-website
+3. **Frontend (React/Vite)** — in a second terminal
+   ```bash
+   cd frontend
+   npm install
+   npm run dev
+   ```
+   Opens at <http://localhost:5173> with hot-reload.
 
-# Create your local environment file
-cp .env.example .env
-```
+> Full step-by-step setup, the env-var reference, and a verification checklist are in
+> [00-GETTING-STARTED.md](./documentation/onboarding/00-GETTING-STARTED.md).
 
-Edit `.env` and fill in **at minimum** the three required Supabase variables:
-
-```env
-SUPABASE_URL=https://your-project.supabase.co/
-SUPABASE_ANON_KEY=eyJ...
-SUPABASE_SERVICE_ROLE_KEY=eyJ...
-```
-
-> **Important:** The `.env` file lives at the **repository root** (`ww-website/.env`). Both the backend and frontend read from this single file. The Vite config (`frontend/vite.config.ts`) is configured to load env from `../` (the parent directory).
-
-### 2. Backend Setup (FastAPI)
-
-```bash
-cd backend
-
-# Create and activate a virtual environment
-python -m venv venv
-# Windows:
-venv\Scripts\activate
-# macOS/Linux:
-source venv/bin/activate
-
-# Install dependencies
-pip install -r requirements.txt
-pip install -r requirements-dev.txt   # (optional — for tests and linting)
-
-# Start the API server with hot-reload
-uvicorn app.main:app --reload --port 8000
-```
-
-The backend reads `.env` from **two locations** (in priority order):
-1. `../.env` (repository root — preferred for local dev)
-2. `.env` (backend directory)
-
-Once running, verify at:
-- **Swagger UI**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health → `{"status": "ok"}`
-
-### 3. Frontend Setup (React/Vite)
-
-Open a **second terminal**:
+## Building & Deployment
 
 ```bash
-cd frontend
+# Frontend → static bundle (tsc -b + vite build → frontend/dist/)
+cd frontend && npm run build
 
-# Install dependencies
-npm install
-
-# Start the dev server
-npm run dev
+# Full stack via Docker
+cp .env.example .env && docker compose up -d --build
 ```
 
-The site will be available at **http://localhost:5173**. Hot-reload is enabled.
-
-> **Note on environment variables:** The Vite config (`vite.config.ts`) maps root `.env` variables into the frontend:
->
-> | Root `.env` Variable | Frontend `import.meta.env` |
-> |---------------------|--------------------------|
-> | `SUPABASE_URL` | `VITE_SUPABASE_URL` |
-> | `SUPABASE_ANON_KEY` | `VITE_SUPABASE_ANON_KEY` |
-> | `VITE_API_BASE_URL` | `VITE_API_BASE_URL` |
->
-> You do **not** need a separate `frontend/.env.local` file during local development.
-
-### 4. Verify Everything Works
-
-| Check | How | Expected |
-|-------|-----|----------|
-| Backend running | `curl http://localhost:8000/health` | `{"status": "ok"}` |
-| Frontend running | Open http://localhost:5173 | Landing page loads |
-| Auth working | Click "Login" | Supabase Auth UI appears |
-| API connected | Upload test images on homepage | EXIF results appear |
-| Swagger docs | Open http://localhost:8000/docs | Interactive API docs |
-
----
-
-## Environment Variables Reference
-
-All variables are defined in [`backend/app/config.py`](backend/app/config.py) and validated at startup via Pydantic. Missing **required** variables → the app refuses to start.
-
-### Required
-
-| Variable | Description |
-|----------|-------------|
-| `SUPABASE_URL` | Supabase project URL (e.g. `https://xxx.supabase.co/`) |
-| `SUPABASE_ANON_KEY` | Supabase anonymous/public API key |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service-role key (bypasses RLS — keep secret!) |
-
-### Security
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ALLOWED_ORIGINS` | `https://wildlifewatcher.ai,http://localhost:5173` | CORS origins (comma-separated) |
-| `RATE_LIMIT_PER_MINUTE` | `60` | Per-IP API rate limit |
-
-### Google Drive Integration
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GOOGLE_DRIVE_ENABLED` | `false` | Enable async uploads of analysed images to Google Drive |
-| `GOOGLE_DRIVE_FOLDER_ID` | `1jIWV3...` | Root Google Drive folder ID for uploads |
-| `GOOGLE_SERVICE_ACCOUNT_JSON` | _(empty)_ | Path to service account JSON file **or** inline JSON string |
-| `GOOGLE_DRIVE_MAX_FILE_SIZE_MB` | `50` | Max file size accepted for Drive upload |
-
-### Azure Storage (Temporary Image Buffer)
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `AZURE_STORAGE_CONNECTION_STRING` | _(empty)_ | Azure Storage connection string — required when Drive upload is enabled |
-| `AZURE_STORAGE_CONTAINER_NAME` | `wildlife-watcher-uploads` | Container name in Azure Blob Storage |
-
-### LoRaWAN Webhooks
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `LORAWAN_WEBHOOK_SECRET` | _(empty)_ | Fallback webhook secret |
-| `LORAWAN_TTN_WEBHOOK_SECRET` | _(empty)_ | TTN-specific secret (takes priority) |
-| `LORAWAN_CHIRPSTACK_WEBHOOK_SECRET` | _(empty)_ | Chirpstack-specific secret |
-
-> **⚠ Security:** Empty secrets = all requests accepted. **Always** set secrets in production.
-
-### Observability
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `SENTRY_DSN` | _(none)_ | Sentry error tracking DSN |
-| `LOG_LEVEL` | `info` | Logging level (`debug`, `info`, `warning`, `error`) |
-
-### Frontend
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VITE_API_BASE_URL` | `http://localhost:8000` | Backend API URL used by the frontend |
-
-### General
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `GENERAL_ORG_ID` | `b0000000-0000-0000-0000-000000000001` | Default organisation UUID |
-
----
-
-## Feature Flags
-
-Toggle functionality without code changes:
-
-| Flag | Default | Controls |
-|------|---------|----------|
-| `FF_INAT_ENABLED` | `false` | iNaturalist integration endpoints |
-| `FF_ML_ENABLED` | `false` | ML-assisted classification |
-| `FF_CLUSTERING_ENABLED` | `false` | ML clustering |
-| `FF_LORAWAN_WEBHOOKS_ENABLED` | `true` | LoRaWAN webhook ingestion |
-| `FF_PUBLIC_API_ENABLED` | `false` | Public data API (`/api/v1/*`) |
-
----
-
-## Frontend Pages and Routes
-
-```mermaid
-graph LR
-    subgraph "Public"
-        Home["/ — HomePage<br/>(Image Analysis)"]
-        Login["/login — LoginPage<br/>(Supabase Auth UI)"]
-    end
-
-    subgraph "Protected (RequireAuth)"
-        Data["/my-data — MyDataPage<br/>(Projects + Deployments)"]
-        Manifest["/manifest — ManifestPage<br/>(Firmware Builder)"]
-        Upload["/upload-model — UploadModelPage<br/>(AI Model Upload)"]
-    end
-
-    Home --> Login
-    Login -- "Auth success" --> Home
-    Home --> Data
-    Home --> Manifest
-    Home --> Upload
-```
-
-| Route | Component | Auth | Description |
-|-------|-----------|------|-------------|
-| `/` | `HomePage` | No | Landing page with drag-and-drop image analysis |
-| `/login` | `LoginPage` | No | Supabase Auth UI (GitHub + Google OAuth) + Forgot Password |
-| `/reset-password` | `ResetPasswordPage` | No | Password reset landing page (from email link) |
-| `/my-data` | `MyDataPage` | Yes | Browse projects, deployments with sorting, search, CSV export |
-| `/manifest` | `ManifestPage` | Yes | Configure and generate firmware MANIFEST.zip |
-| `/upload-model` | `UploadModelPage` | Yes | Upload Edge Impulse ZIPs for Vela conversion |
-| `/labeling` | `LabelingPage` | Yes | Multi-scope annotation workspace (deployment, species, unreviewed) supporting single/grid views, bulk actions, and iNat autocomplete registration |
-| `/events/:deployment_id` | `EventReviewPage` | Yes | Temporal event aggregation dashboard with trigger diagnostics, mismatch checks, and job runner |
-| `/analysis/:deployment_id` | `AnalysisPage` | Yes | Trap nights analytics, diel activity density, Leaflet trap density maps, and model similarity pairs |
-| `/reporting/:deployment_id` | `ReportingPage` | Yes | High-fidelity scientific download center for CamtrapDP, Darwin Core, summary PDFs, and repeatability run logs |
-
----
-
-## Backend API Endpoints
-
-| Method | Path | Auth | Description |
-|--------|------|------|-------------|
-| `GET` | `/health` | No | Health probe for Docker/load balancer |
-| `POST` | `/api/exif/parse` | No | Parse EXIF, optionally enqueue Drive upload |
-| `GET` | `/api/jobs/{id}` | No | Poll async job status + progress events |
-| `POST` | `/api/manifest/generate` | Yes | Generate MANIFEST.zip for SD card |
-| `POST` | `/api/models/convert` | Yes | Convert Edge Impulse model via Vela |
-| `POST` | `/api/lorawan/webhook/ttn` | Secret | TTN v3 uplink webhook |
-| `POST` | `/api/lorawan/webhook/chirpstack` | Secret | Chirpstack v4 uplink webhook |
-| `POST` | `/api/clustering/*` | No | Image clustering and representative selection |
-| `*` | `/api/v1/*` | API Key | Public API (when `FF_PUBLIC_API_ENABLED=true`) |
-| `*` | `/api/inat/*` | Yes | iNaturalist OAuth flow (when `FF_INAT_ENABLED=true`) |
-| `GET` | `/api/inat/taxa/search` | Yes | Search public iNaturalist taxa autocomplete (no OAuth required) |
-| `POST` | `/api/inat/taxa` | Yes | Fetch complete scientific lineage from iNat and register in DB |
-
-Full API docs are auto-generated at http://localhost:8000/docs (Swagger) and http://localhost:8000/redoc (ReDoc).
-
-See also: [`docs/api-reference.md`](docs/api-reference.md).
-
----
-
-## Async Job System
-
-The backend runs heavy tasks (model conversion, Drive uploads) as **in-process asyncio background tasks**. No Redis or separate worker container is required for local development.
-
-```mermaid
-stateDiagram-v2
-    [*] --> queued : create_job()
-    queued --> processing : Job runner picks up
-    processing --> completed : Success
-    processing --> failed : Error
-    completed --> [*]
-    failed --> [*]
-```
-
-### Job Lifecycle
-
-| Status | Description |
-|--------|-------------|
-| `queued` | Created, waiting for runner |
-| `processing` | Actively executing |
-| `completed` | Success — result available |
-| `completed_with_errors` | Partial success (some files failed) |
-| `failed` | Error — details in `error` field |
-
-### Persistence
-
-- **Fast path:** In-memory dict (`_memory_store` in `jobs/store.py`)
-- **Durable path:** Async sync to Supabase `api_jobs` table
-- **Startup recovery:** On boot, any `processing` jobs in Supabase are marked `failed` (server crash recovery)
-
-### Frontend Polling
-
-The frontend polls `GET /api/jobs/{id}` every 2 seconds. The response includes structured `events[]` with monotonic sequence numbers for reliable incremental consumption.
-
----
-
-## Image Analysis → Google Drive Pipeline
-
-This is the core workflow for processing SD card images:
-
-### Google Drive Folder Structure
-
-Images are preprocessed before upload — filenames are converted to **local time** (derived from GPS coordinates) and deployment folders use a **human-readable naming convention**:
-
-```
-📁 <Root Drive Folder>
-├── 📂 {project-slug}_{project_id[:8]}
-│   └── 📂 {YYYYMMDD}_{duration}_{location}
-│       ├── 📸 20260113233000_01.jpg    ← local time, sequence 01
-│       └── 📸 20260113233000_02.jpg    ← same second, sequence 02
-└── 📂 monitoring-weta_b1234567
-    └── 📂 20260113_2d21h41m22s_highhill
-        └── 📸 ...
-```
-
-**Folder naming:**
-- `YYYYMMDD` — start date of the deployment
-- Duration — e.g. `2d21h41m22s` (days, hours, minutes, seconds), or `ongoing` if not ended
-- Location — deployment location name, lowercase, no spaces
-
-**Filename naming:**
-- `YYYYMMDDHHMMSS` — photo timestamp in **local time** (UTC adjusted by GPS timezone)
-- `_XX` — sequence number for multiple photos in the same second (burst mode)
-
-### Deduplication
-
-Files are deduplicated using SHA-256 hashes stored as Google Drive `appProperties`. The hash combines file content + deployment ID, so identical images in different deployments are stored separately.
-
-### SD Card Folder Convention
-
-The firmware writes images to SD card with this structure:
-
-```
-MEDIA/
-└── 655BC4E5/            ← 8-char deployment ID prefix (hex)
-    └── IMAGES.000/
-        ├── 9DB650A0.JPG  ← Hex-encoded timestamp filename
-        └── 9DB650B0.JPG
-```
-
-The backend extracts deployment IDs from these folder paths and resolves the 8-char prefix to a full UUID via Supabase lookup.
-
----
-
-## LoRaWAN Integration
-
-```mermaid
-graph LR
-    Camera["📷 Camera"] --> LoRa["📡 LoRa Radio"]
-    LoRa --> GW["🗼 Gateway"]
-    GW --> NS["Network Server<br/>(TTN / Chirpstack)"]
-    NS -- "HTTP Webhook" --> API["FastAPI<br/>/api/lorawan/webhook/*"]
-    API --> Parse["Parse binary payload"]
-    Parse --> Match["Match device by EUI"]
-    Match --> Deploy["Find active deployment"]
-    Deploy --> Store["Insert into Supabase<br/>(lorawan_messages +<br/>lorawan_parsed_messages)"]
-    Store --> RT["Supabase Realtime<br/>(auto-broadcast<br/>to mobile app)"]
-```
-
-### Binary Payload Format
-
-| Byte | Field | Range | Description |
-|------|-------|-------|-------------|
-| 0 | Battery Level | 0–100 | Battery percentage |
-| 1 | SD Card Usage | 0–100 | SD card capacity used % |
-| 2+ | Model Output | variable | AI inference results |
-
-See: [`docs/lorawan-webhook-setup.md`](docs/lorawan-webhook-setup.md)
-
----
-
-## Deployment to Production
-
-### Frontend Deployment (Static Hosting)
-
-The frontend builds to static files — deploy to any CDN/static host:
-
-```bash
-cd frontend
-npm run build   # TypeScript check + Vite build → dist/
-```
-
-**Recommended hosts:**
-
-| Host | How |
-|------|-----|
-| **Cloudflare Pages** | Connect repo → set build command `npm run build`, output dir `frontend/dist` |
-| **Vercel** | `vercel --cwd frontend` |
-| **Nginx** | Copy `dist/` to web root, configure SPA fallback |
-
-> **Critical:** Set the `VITE_API_BASE_URL` build variable to your production backend URL (e.g. `https://api.wildlifewatcher.ai`).
-
-### Backend Deployment (Container/PaaS)
-
-#### Option A: Docker Compose (Full Stack)
-
-```bash
-cp .env.example .env
-# Edit .env with production values
-
-docker compose up -d --build
-
-# Verify
-curl http://localhost:8000/health
-```
-
-#### Option B: Render Blueprint (Recommended for PaaS)
-
-See [`docs/deployment-guide.md`](docs/deployment-guide.md) for step-by-step Render, VPS, and manual deployment instructions.
-
-#### Option C: Direct (no Docker)
-
-```bash
-cd backend
-pip install -r requirements.txt
-uvicorn app.main:app --host 0.0.0.0 --port 8000 --workers 2
-```
-
-### Production Security Checklist
-
-> **⚠ Do NOT deploy without verifying these items.**
-
-- [ ] `.env` file is **not** committed to Git (verify `.gitignore`)
-- [ ] `SUPABASE_SERVICE_ROLE_KEY` is kept secret (never exposed to frontend)
-- [ ] `ALLOWED_ORIGINS` is set to your **exact** production frontend domain(s)
-- [ ] `LORAWAN_WEBHOOK_SECRET` / per-server secrets are **non-empty**
-- [ ] `LOG_LEVEL` is set to `info` (not `debug` — debug can log sensitive data)
-- [ ] `SENTRY_DSN` is configured for error tracking
-- [ ] `GOOGLE_SERVICE_ACCOUNT_JSON` is excluded from Git (see `.gitignore`)
-- [ ] `AZURE_STORAGE_CONNECTION_STRING` is set if Drive uploads are enabled
-- [ ] Backend is behind HTTPS (reverse proxy or PaaS handles TLS)
-- [ ] `RATE_LIMIT_PER_MINUTE` is tuned for expected traffic
-- [ ] Supabase RLS policies are reviewed and enabled on all tables
-- [ ] `backend/service-account.json` is **not** committed (listed in `.gitignore`)
-
----
-
-## Supabase Setup
-
-The backend expects these Supabase resources:
-
-### Storage Buckets
-
-| Bucket | Purpose | Public |
-|--------|---------|--------|
-| `firmware` | Config firmware, manifest results | No |
-| `ai-models` | AI model ZIPs | No |
-
-### Database Tables
-
-| Table | Used By | Access |
-|-------|---------|--------|
-| `projects` | Frontend, EXIF matching | RLS |
-| `deployments` | EXIF matching, Drive folder org | RLS + service-role |
-| `devices` | LoRaWAN (device lookup by EUI) | RLS + service-role |
-| `ai_models` | Model domain (register/update) | RLS + service-role |
-| `firmware` | Manifest domain | RLS + service-role |
-| `lorawan_messages` | LoRaWAN raw store | service-role only |
-| `lorawan_parsed_messages` | LoRaWAN parsed data | service-role only |
-| `api_jobs` | Job persistence + recovery | service-role only |
-
-### Auth Providers
-
-Configure in Supabase Dashboard → Authentication → Providers:
-- **GitHub** OAuth
-- **Google** OAuth
-
-### Realtime
-
-Enable Realtime on `lorawan_parsed_messages` for live mobile app updates:
-1. Supabase Dashboard → Database → Replication
-2. Toggle on `lorawan_parsed_messages`
-
----
+Set `VITE_API_BASE_URL` to your production backend URL at build time. Full hosting options
+(Cloudflare Pages, Vercel, Render, VPS) and the production security checklist are in the
+[Deployment Guide](./documentation/resources/deployment-guide.md).
+
+## Troubleshooting
+
+| Issue | Fix |
+|-------|-----|
+| Backend refuses to start | A required env var is missing — `config.py` validates them at boot. Check `SUPABASE_*`. |
+| Frontend can't reach API | Set `VITE_API_BASE_URL` (defaults to `http://localhost:8000`); confirm backend is running. |
+| `permission denied for table observations` | The `authenticated` role lacks write GRANTs — apply the `ww-backend` migration. See [03-DATA-AND-SYNC.md](./documentation/onboarding/03-DATA-AND-SYNC.md). |
+| iNaturalist / pipeline endpoints 404 | They are feature-flagged off by default — see [Feature Flags](#feature-flags). |
+| Vite env vars undefined | Root `.env` only; `vite.config.ts` maps `SUPABASE_URL`→`VITE_SUPABASE_URL`, etc. No `frontend/.env` needed. |
+
+## Database Migrations
+
+> [!CAUTION]
+> **Never make database schema changes from this repository.** All schema, RLS policies, and
+> table GRANTs are owned by the [`ww-backend`](https://github.com/wildlifeai/wildlife-watcher-backend)
+> repo. The web app only consumes the schema (and, for the `authenticated` role, whatever
+> table privileges `ww-backend` grants). When a write fails with `permission denied for table …`,
+> the fix is a `ww-backend` migration — see [03-DATA-AND-SYNC.md](./documentation/onboarding/03-DATA-AND-SYNC.md).
 
 ## Testing
 
 ```bash
-cd backend
-
-# Run all tests
-python -m pytest tests/ -v
-
-# Run a specific test file
-python -m pytest tests/test_exif_domain.py -v
-
-# Run with coverage
-python -m pytest tests/ --cov=app --cov-report=term-missing
+cd backend && python -m pytest tests/ -v          # backend unit/domain tests
+cd frontend && npm run lint && npx tsc --noEmit    # frontend lint + type check
 ```
 
-| Test File | Tests | Coverage |
-|-----------|-------|----------|
-| `test_exif_domain.py` | 14 | JPEG parsing, deployment ID extraction, GPS matching |
-| `test_lorawan_domain.py` | 16 | Payload parsing, schema validation, webhook secrets |
-| `test_manifest_domain.py` | 7 | C hex array parsing, directory flattening |
-| `test_model_domain.py` | 9 | ZIP name parsing, label extraction, 8.3 filenames |
-| `test_routers.py` | 5 | Health check, OpenAPI schema, smoke tests |
+See the [Testing Guide](./documentation/resources/testing-with-seed-users.md) for seed users and role-based validation.
 
----
+## Additional Commands
+
+| Command | Purpose |
+|---------|---------|
+| `npm run dev` (frontend) | Vite dev server with hot-reload |
+| `npm run build` (frontend) | `tsc -b` type-check + production bundle |
+| `npm run lint` (frontend) | ESLint |
+| `uvicorn app.main:app --reload` (backend) | Dev API server |
+| `ruff check app/ && ruff format app/` (backend) | Lint + format Python |
+| `python -m pytest tests/ -v` (backend) | Run the test suite |
+| `docker compose up -d --build` | Full-stack container run |
+
+## Documentation
+
+All documentation lives under [`documentation/`](./documentation), split into three folders.
+
+### Onboarding (Start Here)
+
+| Guide | What It Covers |
+|-------|----------------|
+| [00-GETTING-STARTED.md](./documentation/onboarding/00-GETTING-STARTED.md) | Setup, env reference, run both services, verification checklist |
+| [01-TECHNOLOGY-STACK.md](./documentation/onboarding/01-TECHNOLOGY-STACK.md) | Every dependency, version, and integration |
+| [02-CODEBASE-GUIDE.md](./documentation/onboarding/02-CODEBASE-GUIDE.md) | Repo layout, frontend pages/nav/routes, backend layered architecture |
+| [03-DATA-AND-SYNC.md](./documentation/onboarding/03-DATA-AND-SYNC.md) | Supabase, RLS + GRANT model, the async job system |
+| [04-AI-PIPELINE.md](./documentation/onboarding/04-AI-PIPELINE.md) | SpeciesNet pipeline, blank handling, the DINOv3 Wildlife Brain & active learning |
+| [05-ANNOTATION-WORKFLOW.md](./documentation/onboarding/05-ANNOTATION-WORKFLOW.md) | Annotations tab, ribbon, full-screen labeling modal, review provenance |
+
+### Reference Guides (`documentation/resources/`)
+
+| Guide | What It Covers |
+|-------|----------------|
+| [API Reference](./documentation/resources/api-reference.md) | Backend endpoint reference |
+| [Deployment Guide](./documentation/resources/deployment-guide.md) | Render / VPS / Docker deployment + security checklist |
+| [LoRaWAN Webhook Setup](./documentation/resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server configuration |
+| [CamtrapDP Import](./documentation/resources/camtrapdp-import.md) | Importing CamtrapDP packages |
+| [AI Model Pipeline](./documentation/resources/ai-model-pipeline.md) | Edge Impulse → Vela model conversion |
+| [UI Components](./documentation/resources/ui-components.md) | Shared frontend design-system primitives |
+| [Testing with Seed Users](./documentation/resources/testing-with-seed-users.md) | Role-based test users and validation |
+
+### Development Reports (`documentation/development reports/`)
+
+Point-in-time design docs, roadmaps, research spikes and audits — e.g.
+[annotation-pipeline-review.md](./documentation/development%20reports/annotation-pipeline-review.md),
+[ui-redesign-roadmap.md](./documentation/development%20reports/ui-redesign-roadmap.md),
+[v4-implementation-plan.md](./documentation/development%20reports/v4-implementation-plan.md).
+These capture *why* decisions were made; they are not kept current with the code.
 
 ## Contributing
 
-### Code Style
+Submit a [pull request](https://github.com/wildlifeai/ww-website/pulls). Use
+[Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, …).
+Backend changes follow the **router → domain → service** layering (see
+[02-CODEBASE-GUIDE.md](./documentation/onboarding/02-CODEBASE-GUIDE.md)); frontend changes must pass
+`npm run lint` and `tsc --noEmit`.
 
-| Area | Tool | Config |
-|------|------|--------|
-| Python formatting | [ruff](https://docs.astral.sh/ruff/) | `pyproject.toml` (line length 100) |
-| Python type hints | Required on all public functions | — |
-| Frontend linting | ESLint | `eslint.config.js` |
-| Frontend types | TypeScript strict | `tsconfig.app.json` |
-
-```bash
-# Backend
-cd backend
-ruff check app/
-ruff format app/
-
-# Frontend
-cd frontend
-npm run lint
-```
-
-### Adding a New Feature
-
-1. **Schema** → Define Pydantic models in `backend/app/schemas/`
-2. **Domain** → Implement business logic in `backend/app/domain/` (no HTTP!)
-3. **Router** → Create thin endpoint in `backend/app/routers/` (validate → delegate)
-4. **Register** → Import and include the router in `backend/app/main.py`
-5. **Test** → Add tests in `backend/tests/`
-6. **Frontend** → Add component in `frontend/src/components/toolkit/`, wire into a page
-
-### Commit Convention
-
-Use [Conventional Commits](https://www.conventionalcommits.org/): `feat:`, `fix:`, `docs:`, `refactor:`, `test:`, `chore:`.
-
----
-
-## 👥 Contributors
+## Maintainers
 
 - Tobyn Packer
 - Victor Anton
 
-## 📜 License
+If you find this project helpful, consider [donating to Wildlife.ai](https://givealittle.co.nz/donate/org/wildlifeai).
 
-This project is licensed under the **GPL-3.0 License** — see the [`LICENSE`](LICENSE) file for details.
+## License
+
+Licensed under the **GPL-3.0 License** — see [`LICENSE`](LICENSE).

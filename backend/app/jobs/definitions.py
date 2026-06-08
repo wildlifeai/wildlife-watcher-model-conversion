@@ -749,19 +749,97 @@ async def upload_drive_images_job(job_id: str, payload: dict):
 
         await complete_phase(job_id, ProgressPhase.CLEANUP)
 
-        # ── Final status (cleanup is done) ───────────────────
+        # ── Phase 4: AI PIPELINE (auto-run per deployment after Drive sync) ─
+        # Imports deferred to keep the top-level module lightweight.
+        from app.domain.pipeline import run_pipeline  # noqa: PLC0415
+        from app.schemas.pipeline import PipelineStepType  # noqa: PLC0415
+
+        _user_id = payload.get("user_id")
+        # Unique deployment IDs present in this upload batch
+        _dep_ids: list[str] = list({
+            entry.get("deployment", {}).get("id")
+            for entry in file_entries
+            if entry.get("deployment") and entry.get("deployment", {}).get("id")
+        })
+
+        pipeline_errors = 0
+        if _dep_ids:
+            await start_phase(job_id, ProgressPhase.AI_PIPELINE)
+            _default_steps = [
+                PipelineStepType.MEDIA_PREP,
+                PipelineStepType.SPECIESNET,
+                PipelineStepType.ANIMAL_CROP,
+            ]
+            for _dep_id in _dep_ids:
+                await emit_event(
+                    job_id,
+                    ProgressEvent(
+                        type=EventType.PROGRESS,
+                        phase=ProgressPhase.AI_PIPELINE,
+                        message=f"🤖 Running AI analysis for deployment {_dep_id[:8]}…",
+                    ),
+                )
+                try:
+                    _result = await run_pipeline(
+                        deployment_id=_dep_id,
+                        steps=_default_steps,
+                        confidence_threshold=0.2,
+                        user_id=_user_id,
+                    )
+                    await emit_event(
+                        job_id,
+                        ProgressEvent(
+                            type=EventType.FILE_SUCCESS,
+                            phase=ProgressPhase.AI_PIPELINE,
+                            message=(
+                                f"✅ AI analysis complete — deployment {_dep_id[:8]}: "
+                                f"{_result.total_observations} observation(s) created"
+                            ),
+                        ),
+                    )
+                except Exception as _pipeline_err:
+                    pipeline_errors += 1
+                    logger.warning(
+                        "auto_pipeline_failed",
+                        deployment_id=_dep_id,
+                        error=str(_pipeline_err),
+                        job_id=job_id,
+                    )
+                    await emit_event(
+                        job_id,
+                        ProgressEvent(
+                            type=EventType.FILE_FAILURE,
+                            phase=ProgressPhase.AI_PIPELINE,
+                            message=f"⚠️ AI analysis failed for deployment {_dep_id[:8]}: {_pipeline_err}",
+                        ),
+                    )
+            await complete_phase(job_id, ProgressPhase.AI_PIPELINE)
+
+        # ── Final status (Drive sync + AI pipeline done) ──────────────────
         job_data = await get_job(job_id)
         summary = job_data.summary if job_data else None
         failed_count = summary.failed if summary else 0
         uploaded_count = summary.uploaded if summary else 0
         skipped_count = summary.skipped if summary else 0
 
-        final_status = JobStatus.COMPLETED_WITH_ERRORS if failed_count > 0 else JobStatus.COMPLETED
+        final_status = (
+            JobStatus.COMPLETED_WITH_ERRORS
+            if (failed_count > 0 or pipeline_errors > 0)
+            else JobStatus.COMPLETED
+        )
 
         if final_status == JobStatus.COMPLETED_WITH_ERRORS:
-            final_msg = f"⚠️ Completed with issues — {uploaded_count} uploaded, {skipped_count} skipped, {failed_count} failed"
+            issue_parts = []
+            if failed_count > 0:
+                issue_parts.append(f"{failed_count} Drive error(s)")
+            if pipeline_errors > 0:
+                issue_parts.append(f"{pipeline_errors} AI error(s)")
+            final_msg = (
+                f"⚠️ Done with issues — {uploaded_count} uploaded, "
+                f"{skipped_count} skipped, {', '.join(issue_parts)}"
+            )
         else:
-            final_msg = f"✅ Done — {drive_total} images synced to Google Drive"
+            final_msg = f"✅ Done — {drive_total} images synced to Drive, AI analysis complete"
 
         await update_job(
             job_id,

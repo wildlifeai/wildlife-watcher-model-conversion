@@ -141,7 +141,6 @@ function DeploymentActionRow({ d, navigate }: { d: Deployment; navigate: ReturnT
 
       {/* Secondary actions in overflow */}
       <OverflowMenu items={[
-        { label: '🏷️ Label', title: 'Start labeling images', onClick: () => navigate(`/labeling/${d.id}`) },
         { label: '📂 Events', title: 'Group observation events', onClick: () => navigate(`/events/${d.id}`) },
         { label: '📊 Analyse', title: 'Analyse science data', onClick: () => navigate(`/analysis/${d.id}`) },
         { label: '📦 Report', title: 'Generate reports', onClick: () => navigate(`/reporting/${d.id}`) },

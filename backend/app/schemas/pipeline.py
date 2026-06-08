@@ -23,9 +23,6 @@ class PipelineStepType(str, Enum):
     MEDIA_PREP = "media_prep"  # thumbnails + previews → media_assets (run before SPECIESNET)
     SPECIESNET = "speciesnet"  # detector + classifier ensemble (preferred)
     ANIMAL_CROP = "animal_crop"  # crop best detection → animal_crop_url (run after SPECIESNET)
-    MEGADETECTOR = "megadetector"  # deprecated stub — use SPECIESNET
-    SPECIES_CLASSIFIER = "species_classifier"  # deprecated stub — folded into SPECIESNET
-    EMPTY_FRAME = "empty_frame"
     CUSTOM = "custom"
 
 

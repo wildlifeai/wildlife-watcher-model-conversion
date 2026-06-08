@@ -1,9 +1,6 @@
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { useParams, useNavigate, Link } from 'react-router-dom'
-import {
-  ResponsiveContainer, BarChart, Bar, LineChart, Line,
-  XAxis, YAxis, CartesianGrid, Tooltip, Legend,
-} from 'recharts'
+import { VegaChart, VEGA_CONFIG } from '../components/ui/VegaChart'
 import { supabase } from '../config/supabase'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -16,11 +13,6 @@ interface ObsRow {
   observation_type: string | null
 }
 
-interface DailyPoint {
-  date: string
-  [species: string]: number | string  // date + one key per species
-}
-
 type ChartType = 'bar' | 'line'
 type PageTab = 'charts' | 'exports'
 
@@ -30,30 +22,74 @@ type PageTab = 'charts' | 'exports'
 
 function toIso(d: Date) { return d.toISOString().slice(0, 10) }
 
-/** Pivot obs rows into [{date, species1: N, species2: N, …}] */
-function pivotByDay(rows: ObsRow[], species: string[]): DailyPoint[] {
+const COLORS = ['#4caf50', '#2196f3', '#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#ff5722', '#8bc34a']
+
+/** Build a Vega-Lite spec for the multi-species temporal chart. */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function buildObsSpec(filteredRows: ObsRow[], activeSpecies: string[], chartType: ChartType): Record<string, any> {
+  const isBar = chartType === 'bar'
+  return {
+    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+    width: 'container',
+    height: 320,
+    data: { values: filteredRows },
+    mark: isBar
+      ? { type: 'bar', cornerRadiusTopLeft: 2, cornerRadiusTopRight: 2 }
+      : { type: 'line', point: false, strokeWidth: 2 },
+    encoding: {
+      x: {
+        field: 'created_at',
+        type: 'temporal',
+        timeUnit: 'yearmonthdate',
+        title: 'Date',
+        axis: { labelAngle: -35, format: '%b %d' },
+      },
+      y: {
+        aggregate: 'count',
+        type: 'quantitative',
+        title: 'Observations',
+      },
+      color: {
+        field: 'scientific_name',
+        type: 'nominal',
+        scale: {
+          domain: activeSpecies,
+          range: activeSpecies.map((_, i) => COLORS[i % COLORS.length]),
+        },
+        legend: {
+          title: null,
+          labelFontStyle: 'italic',
+          labelFontSize: 11,
+          labelColor: '#555',
+        },
+      },
+      tooltip: [
+        { field: 'created_at', type: 'temporal', timeUnit: 'yearmonthdate', title: 'Date' },
+        { field: 'scientific_name', type: 'nominal', title: 'Species' },
+        { aggregate: 'count', title: 'Count' },
+      ],
+    },
+    config: VEGA_CONFIG,
+  }
+}
+
+/** CSV from raw rows (pivoted into wide format for compatibility). */
+function csvFromRows(rows: ObsRow[], activeSpecies: string[]): string {
+  // Aggregate by day × species
   const map: Record<string, Record<string, number>> = {}
   for (const r of rows) {
     const day = r.created_at.slice(0, 10)
-    const sp = r.scientific_name || 'Unknown'
+    const sp = r.scientific_name!
     if (!map[day]) map[day] = {}
     map[day][sp] = (map[day][sp] || 0) + 1
   }
-  return Object.entries(map)
+  const header = ['date', ...activeSpecies].join(',')
+  const dataRows = Object.entries(map)
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([date, counts]) => {
-      const pt: DailyPoint = { date }
-      for (const sp of species) pt[sp] = counts[sp] || 0
-      return pt
-    })
-}
-
-const COLORS = ['#4caf50', '#2196f3', '#ff9800', '#e91e63', '#9c27b0', '#00bcd4', '#ff5722', '#8bc34a']
-
-function csvFromPoints(points: DailyPoint[], species: string[]): string {
-  const header = ['date', ...species].join(',')
-  const rows = points.map(p => [p.date, ...species.map(sp => String(p[sp] ?? 0))].join(','))
-  return [header, ...rows].join('\n')
+    .map(([date, counts]) =>
+      [date, ...activeSpecies.map((sp) => String(counts[sp] ?? 0))].join(','),
+    )
+  return [header, ...dataRows].join('\n')
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -67,7 +103,6 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
   const [selectedSpecies, setSelectedSpecies] = useState<Set<string>>(new Set())
   const chartRef = useRef<HTMLDivElement>(null)
 
-  // Fetch observations for this deployment
   useEffect(() => {
     setLoading(true)
     supabase
@@ -83,28 +118,40 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
       })
   }, [deploymentId])
 
-  // All unique species in this deployment
-  const allSpecies = [...new Set(rows.map(r => r.scientific_name!).filter(Boolean))].sort()
+  const allSpecies = [...new Set(rows.map((r) => r.scientific_name!).filter(Boolean))].sort()
 
-  // Initialise selection once species are known
   useEffect(() => {
     if (allSpecies.length > 0 && selectedSpecies.size === 0) {
-      setSelectedSpecies(new Set(allSpecies.slice(0, 6))) // max 6 by default
+      setSelectedSpecies(new Set(allSpecies.slice(0, 6)))
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [allSpecies.join(',')])
 
-  const activeSpecies = allSpecies.filter(s => selectedSpecies.has(s))
-  const points = pivotByDay(rows, activeSpecies)
+  const activeSpecies = allSpecies.filter((s) => selectedSpecies.has(s))
 
-  const toggleSpecies = (sp: string) => setSelectedSpecies(prev => {
-    const next = new Set(prev)
-    if (next.has(sp)) { next.delete(sp) } else { next.add(sp) }
-    return next
-  })
+  const toggleSpecies = (sp: string) =>
+    setSelectedSpecies((prev) => {
+      const next = new Set(prev)
+      if (next.has(sp)) { next.delete(sp) } else { next.add(sp) }
+      return next
+    })
+
+  // Filtered rows for the chart (only active species)
+  const filteredRows = useMemo(
+    () => rows.filter((r) => r.scientific_name && activeSpecies.includes(r.scientific_name)),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [rows, activeSpecies.join(',')],
+  )
+
+  // Vega-Lite spec — rebuilds only when data, active species, or chart type changes
+  const spec = useMemo(
+    () => buildObsSpec(filteredRows, activeSpecies, chartType),
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [filteredRows, activeSpecies.join(','), chartType],
+  )
 
   const downloadCsv = () => {
-    const csv = csvFromPoints(points, activeSpecies)
+    const csv = csvFromRows(filteredRows, activeSpecies)
     const blob = new Blob([csv], { type: 'text/csv' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a'); a.href = url
@@ -113,12 +160,11 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
   }
 
   const downloadPng = () => {
-    // PNG export uses html-to-image when available; install with: npm i html-to-image
     const pkg = 'html-to-image'
     import(/* @vite-ignore */ pkg)
       .then((mod: { toPng: (el: HTMLElement) => Promise<string> }) => {
         if (!chartRef.current) return
-        mod.toPng(chartRef.current).then(dataUrl => {
+        mod.toPng(chartRef.current).then((dataUrl) => {
           const a = document.createElement('a'); a.href = dataUrl
           a.download = `chart-${deploymentId}-${toIso(new Date())}.png`
           a.click()
@@ -145,9 +191,9 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
       {/* Controls */}
       <div className="glass-card" style={{ padding: '1rem 1.25rem', display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        {/* Chart type */}
+        {/* Chart type toggle */}
         <div style={{ display: 'flex', gap: 0, border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
-          {(['bar', 'line'] as ChartType[]).map(t => (
+          {(['bar', 'line'] as ChartType[]).map((t) => (
             <button
               key={t}
               onClick={() => setChartType(t)}
@@ -198,34 +244,10 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
         <div style={{ fontSize: '0.8125rem', opacity: 0.6, marginBottom: '0.75rem' }}>
           Observations per day · {rows.length} total
         </div>
-        {points.length === 0 ? (
+        {filteredRows.length === 0 ? (
           <div style={{ opacity: 0.5, textAlign: 'center', padding: '2rem' }}>No data for selected species.</div>
         ) : (
-          <ResponsiveContainer width="100%" height={320}>
-            {chartType === 'bar' ? (
-              <BarChart data={points} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.07)" />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} />
-                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', fontSize: '0.75rem' }} />
-                <Legend wrapperStyle={{ fontSize: '0.75rem', fontStyle: 'italic' }} />
-                {activeSpecies.map((sp, i) => (
-                  <Bar key={sp} dataKey={sp} fill={COLORS[i % COLORS.length]} stackId="a" radius={[2, 2, 0, 0]} />
-                ))}
-              </BarChart>
-            ) : (
-              <LineChart data={points} margin={{ top: 4, right: 8, left: -16, bottom: 0 }}>
-                <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.07)" />
-                <XAxis dataKey="date" tick={{ fontSize: 11 }} tickLine={false} />
-                <YAxis tick={{ fontSize: 11 }} allowDecimals={false} />
-                <Tooltip contentStyle={{ background: 'var(--surface)', border: '1px solid var(--border)', fontSize: '0.75rem' }} />
-                <Legend wrapperStyle={{ fontSize: '0.75rem', fontStyle: 'italic' }} />
-                {activeSpecies.map((sp, i) => (
-                  <Line key={sp} type="monotone" dataKey={sp} stroke={COLORS[i % COLORS.length]} strokeWidth={2} dot={false} />
-                ))}
-              </LineChart>
-            )}
-          </ResponsiveContainer>
+          <VegaChart spec={spec} />
         )}
       </div>
 
@@ -240,8 +262,8 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
             </tr>
           </thead>
           <tbody>
-            {allSpecies.map(sp => {
-              const count = rows.filter(r => r.scientific_name === sp).length
+            {allSpecies.map((sp) => {
+              const count = rows.filter((r) => r.scientific_name === sp).length
               return (
                 <tr key={sp} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '0.35rem 0.5rem', fontStyle: 'italic' }}>{sp}</td>
@@ -257,7 +279,7 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Exports tab  (CamtrapDP real + others wired via supabase.functions.invoke)
+// Exports tab
 // ─────────────────────────────────────────────────────────────────────────────
 
 interface ExportCard {
@@ -267,7 +289,7 @@ interface ExportCard {
   icon: string
   ext: string
   format: string
-  real?: boolean  // true = backed by a real edge function
+  real?: boolean
 }
 
 const EXPORT_CARDS: ExportCard[] = [
@@ -292,8 +314,6 @@ function ExportsTab({ deploymentId }: { deploymentId: string }) {
     setBusy(card.id)
     try {
       if (card.real) {
-        // Real CamtrapDP export via Supabase Edge Function
-        // Need project_id — fetch it first
         const { data: dep } = await supabase
           .from('deployments')
           .select('project_id')
@@ -310,7 +330,6 @@ function ExportsTab({ deploymentId }: { deploymentId: string }) {
         a.download = `camtrapdp-${dep.project_id}-${toIso(new Date())}.zip`
         a.click(); URL.revokeObjectURL(url)
       } else {
-        // Placeholder: generate a minimal CSV stub
         const content = `deployment_id,format\n${deploymentId},${card.format}`
         const blob = new Blob([content], { type: 'text/plain' })
         const url = URL.createObjectURL(blob)
@@ -319,7 +338,7 @@ function ExportsTab({ deploymentId }: { deploymentId: string }) {
         a.click(); URL.revokeObjectURL(url)
       }
       const entry = { id: `exp-${Date.now()}`, format: card.format, created_at: new Date().toISOString() }
-      setLogs(prev => [entry, ...prev.slice(0, 9)])
+      setLogs((prev) => [entry, ...prev.slice(0, 9)])
       showToast(`${card.format} downloaded`)
     } catch (err: unknown) {
       showToast(`Export failed: ${err instanceof Error ? err.message : String(err)}`)
@@ -335,10 +354,8 @@ function ExportsTab({ deploymentId }: { deploymentId: string }) {
           ✓ {toast}
         </div>
       )}
-
-      {/* Export cards */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(260px, 1fr))', gap: '1rem' }}>
-        {EXPORT_CARDS.map(card => {
+        {EXPORT_CARDS.map((card) => {
           const isBusy = busy === card.id
           return (
             <div
@@ -346,8 +363,8 @@ function ExportsTab({ deploymentId }: { deploymentId: string }) {
               className="glass-card"
               style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '0.75rem', cursor: 'pointer', transition: 'transform 0.15s', border: isBusy ? '1px solid var(--primary)' : undefined }}
               onClick={() => !isBusy && trigger(card)}
-              onMouseEnter={e => { e.currentTarget.style.transform = 'translateY(-2px)' }}
-              onMouseLeave={e => { e.currentTarget.style.transform = 'translateY(0)' }}
+              onMouseEnter={(e) => { e.currentTarget.style.transform = 'translateY(-2px)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.transform = 'translateY(0)' }}
             >
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
                 <span style={{ fontSize: '1.75rem' }}>{card.icon}</span>
@@ -371,8 +388,6 @@ function ExportsTab({ deploymentId }: { deploymentId: string }) {
           )
         })}
       </div>
-
-      {/* Audit log */}
       {logs.length > 0 && (
         <div className="glass-card" style={{ padding: '1.25rem' }}>
           <h4 style={{ marginTop: 0, marginBottom: '0.75rem', fontSize: '0.875rem' }}>Recent downloads</h4>
@@ -384,7 +399,7 @@ function ExportsTab({ deploymentId }: { deploymentId: string }) {
               </tr>
             </thead>
             <tbody>
-              {logs.map(l => (
+              {logs.map((l) => (
                 <tr key={l.id} style={{ borderBottom: '1px solid var(--border)' }}>
                   <td style={{ padding: '0.35rem 0.5rem' }}>{l.format}</td>
                   <td style={{ padding: '0.35rem 0.5rem', opacity: 0.65 }}>{new Date(l.created_at).toLocaleString()}</td>
@@ -447,7 +462,7 @@ export function ReportingPage() {
         ))}
       </div>
 
-      {tab === 'charts' && <ChartsTab deploymentId={deployment_id} />}
+      {tab === 'charts'  && <ChartsTab  deploymentId={deployment_id} />}
       {tab === 'exports' && <ExportsTab deploymentId={deployment_id} />}
     </div>
   )

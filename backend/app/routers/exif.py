@@ -183,6 +183,7 @@ async def parse_exif(
                 results=results,
                 deployment_ids=list(deployment_ids),
                 folder_prefixes=list(folder_prefixes),
+                user_id=user.id if user else None,
             )
         except Exception as exc:
             logger.error("drive_enqueue_failed", error=str(exc))
@@ -209,6 +210,7 @@ async def _enqueue_drive_upload(
     results: list,
     deployment_ids: List[str],
     folder_prefixes: Optional[List[str]] = None,
+    user_id: Optional[str] = None,
 ) -> dict:
     """Upload images to Supabase Storage and enqueue the Drive upload job.
 
@@ -363,6 +365,7 @@ async def _enqueue_drive_upload(
 
     payload = {
         "files": storage_entries,
+        "user_id": user_id,
     }
 
     try:
