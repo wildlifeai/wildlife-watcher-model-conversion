@@ -9,4 +9,5 @@ hdbscan>=0.8.33                  # Density clustering of embeddings
 scikit-learn>=1.4                # Clustering/reduction utilities
 umap-learn>=0.5                  # UMAP 2D/50D reduction (stable coords)
 speciesnet>=4.0.1                # Detector + species classifier ensemble
+pybioclip>=1.0                   # BioCLIP secondary/zero-shot classifier (Tree-of-Life)
 # arq lives in requirements.txt (base) so both the API (enqueue) and worker (execute) have it.

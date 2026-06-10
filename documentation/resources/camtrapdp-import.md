@@ -167,8 +167,24 @@ The CamtrapDP import domain depends on the backend database schema. Key tables a
 |---------------|-----------------|-------|
 | `deployments` | `setup_by`, `project_id`, `device_id`, `name`, `deployment_start`, `location_name` | `setup_by` is set to the importing user |
 | `devices` | `bluetooth_id` (UNIQUE, NOT NULL) | Placeholder devices use `uuid5(DNS, "imported-<name>")` |
-| `media` | `deployment_id`, `file_name` | `file_path` stores original CamtrapDP paths |
-| `observations` | `deployment_id`, `event_id` (uuid) | `event_id` converted from short CamtrapDP strings via `uuid5` |
+| `media` | `deployment_id`, `file_name`, `file_path` | Public `http(s)` URLs are stored as-is; zip-embedded images are uploaded to Google Drive and `file_path` is patched to `gdrive://<id>` so the resolver can serve thumbnails. |
+| `observations` | `deployment_id`, `event_id`, `source_type`, `review_status` | `event_id` via `uuid5`; provenance mapped from `classificationMethod` — see **Annotation mode** below. |
+
+### Annotation mode & provenance
+
+The import UI asks how to treat the package (`annotation_mode`):
+
+- **`final`** (default) — the package is a finished dataset. Imported labels keep correct provenance
+  (`classificationMethod=machine` → `source_type=ai`/`review_status=ai_reviewed`; `human` →
+  `human`/`human_reviewed`; unspecified → trusted as `human_reviewed`), and **media with no
+  observation are seeded a reviewed `blank` observation** ("confirmed empty — no animals"), so they
+  show a green ✓ *Empty* instead of a red ✕.
+- **`unprocessed`** — the images still need annotating; media with no observation are left bare so
+  they surface as work to do.
+
+> This replaced the old behaviour where every imported observation was hardcoded
+> `source_type='imported'` / `review_status='unreviewed'`, which made even correctly-annotated and
+> empty images render as red ✕ "No label".
 
 ### Check Constraints
 

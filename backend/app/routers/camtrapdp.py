@@ -9,7 +9,7 @@ POST /api/camtrapdp/import
 import asyncio
 
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 
 from app.dependencies import get_current_user, get_privileged_client, get_user_client
 from app.domain import camtrapdp as domain
@@ -26,6 +26,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 @router.post("/import", response_model=ApiResponse)
 async def import_camtrapdp(
     file: UploadFile,
+    annotation_mode: str = Form("final"),
     user=Depends(get_current_user),
     user_client=Depends(get_user_client),
     svc=Depends(get_privileged_client),
@@ -43,6 +44,9 @@ async def import_camtrapdp(
     # ── Validate upload ────────────────────────────────────────────────
     if not file.filename or not file.filename.endswith(".zip"):
         raise HTTPException(status_code=400, detail="Only .zip files are accepted.")
+
+    if annotation_mode not in ("final", "unprocessed"):
+        annotation_mode = "final"
 
     if file.size and file.size > MAX_UPLOAD_BYTES:
         raise HTTPException(
@@ -146,7 +150,9 @@ async def import_camtrapdp(
 
     # ── Run import (blocking I/O — run in thread) ──────────────────────
     try:
-        result: CamtrapImportResult = await asyncio.to_thread(domain.import_package, pkg, user.id, org_id, svc, user_client)
+        result: CamtrapImportResult = await asyncio.to_thread(
+            domain.import_package, pkg, user.id, org_id, svc, user_client, annotation_mode
+        )
     except Exception as exc:
         logger.error("camtrapdp_import_failed", error=str(exc))
         raise HTTPException(
@@ -178,6 +184,7 @@ async def import_camtrapdp(
                     drive_files.append({
                         "file_bytes": p.file_bytes,
                         "filename": p.filename,
+                        "media_id": p.media_id,
                         "timestamp": p.deployment_start,
                         "mime_type": p.mime_type,
                         "project": {"id": p.project_id, "name": p.project_name},
@@ -192,6 +199,29 @@ async def import_camtrapdp(
                     })
 
                 stats = await drive.upload_analysis_images(drive_files)
+
+                # ── Patch media.file_path → gdrive://<id> ──────────────────
+                # Without this, zip-embedded images keep their relative path and
+                # the resolver can't serve a thumbnail (issue: blank thumbnails).
+                uploaded_files = stats.pop("files", [])
+                patched = 0
+                for uf in uploaded_files:
+                    if not uf.get("media_id"):
+                        continue  # only the CamtrapDP path pre-creates media to patch
+                    try:
+                        svc.table("media").update(
+                            {"file_path": f"gdrive://{uf['file_id']}", "file_public": False}
+                        ).eq("id", uf["media_id"]).execute()
+                        patched += 1
+                    except Exception as exc:
+                        logger.warning(
+                            "camtrapdp_media_path_patch_failed",
+                            media_id=uf.get("media_id"),
+                            error=str(exc),
+                        )
+                if patched:
+                    logger.info("camtrapdp_media_paths_patched", count=patched)
+
                 result.drive_uploads = stats
                 logger.info("camtrapdp_drive_upload_complete", **stats)
 

@@ -56,8 +56,6 @@ export function UploadModal() {
   const [filePaths, setFilePaths] = useState<string[]>([])
   const [zipFile, setZipFile] = useState<File | null>(null)
 
-  // Drive option
-  const [uploadToDrive, setUploadToDrive] = useState(false)
 
   // Deployment data (fetched once for stats + validation)
   const [deployments, setDeployments] = useState<UploadDeployment[]>([])
@@ -81,7 +79,6 @@ export function UploadModal() {
       setFiles([])
       setFilePaths([])
       setZipFile(null)
-      setUploadToDrive(false)
       setInvalidDeployments({})
       setCamtrapResult(null)
       setCamtrapError(null)
@@ -206,7 +203,8 @@ export function UploadModal() {
 
   const handleUpload = () => {
     if (files.length === 0) return
-    startUpload(files, filePaths, uploadToDrive, deployments)
+    // Images always sync to Google Drive (long-term storage is the default).
+    startUpload(files, filePaths, true, deployments)
     // Modal closes inside startUpload → no explicit closeModal needed
   }
 
@@ -336,34 +334,22 @@ export function UploadModal() {
             ))}
           </div>
 
-          {/* Drive toggle */}
+          {/* Drive storage note — images always sync to Google Drive by default */}
           <div style={{
-            padding: '0.875rem 1rem',
-            border: `1px solid ${uploadToDrive ? 'var(--primary)' : 'var(--border)'}`,
+            padding: '0.75rem 1rem',
+            border: '1px solid var(--border)',
             borderRadius: 'var(--radius)',
-            transition: 'border-color 0.2s',
+            fontSize: '0.8125rem',
+            display: 'flex', alignItems: 'center', gap: '0.625rem',
           }}>
-            <label style={{
-              display: 'flex', alignItems: 'center', gap: '0.625rem',
-              cursor: 'pointer', userSelect: 'none', fontWeight: 500, fontSize: '0.875rem',
-            }}>
-              <input
-                type="checkbox"
-                checked={uploadToDrive}
-                onChange={(e) => setUploadToDrive(e.target.checked)}
-                style={{ width: '1rem', height: '1rem', accentColor: 'var(--primary)' }}
-              />
-              ☁️ Sync to Google Drive after upload
-            </label>
-            {uploadToDrive && (
-              <p style={{ margin: '0.5rem 0 0 1.625rem', fontSize: '0.75rem', opacity: 0.6 }}>
-                Images will be uploaded to your connected Google Drive folder for long-term storage.
-              </p>
-            )}
+            <span style={{ fontSize: '1rem' }}>☁️</span>
+            <span style={{ opacity: 0.75 }}>
+              Images are saved to your connected Google Drive folder for long-term storage.
+            </span>
           </div>
 
           {/* Validation warning */}
-          {uploadToDrive && hasInvalid && (
+          {hasInvalid && (
             <div style={{
               padding: '0.75rem',
               borderRadius: 'var(--radius)',

@@ -93,6 +93,37 @@ Set `VITE_API_BASE_URL` to your production backend URL at build time. Full hosti
 (Cloudflare Pages, Vercel, Render, VPS) and the production security checklist are in the
 [Deployment Guide](./documentation/resources/deployment-guide.md).
 
+## Running the AI/ML pipeline locally
+
+The heavy ML dependencies (`torch`, `speciesnet`, `pybioclip`, `transformers`, `hdbscan`, …) and
+the OpenCV **system libs** are **not** in the lean production image — they live in the **`dev`**
+Docker target (`backend/Dockerfile` → `backend/requirements-ml.txt`). Always start the local stack
+with **both** compose files:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+```
+
+The dev API is tagged **`ww-website-api-dev`** (distinct from the base `ww-website-api`) so a
+base-only `docker compose up` can't clobber the ~10 GB ML image — the recurring cause of
+`No module named 'speciesnet'`.
+
+**Enable the flags** in `.env` (all off by default):
+
+| Flag | Enables |
+|------|---------|
+| `FF_ML_ENABLED` + `FF_PIPELINE_ENABLED` | the pipeline + auto-annotate after upload |
+| `FF_SPECIESNET_ENABLED` | SpeciesNet detect + classify (core observations) |
+| `FF_BIOCLIP_ENABLED` | BioCLIP secondary zero-shot classifier |
+| `FF_MEDIA_REGISTRY_ENABLED` | thumbnails / animal crops (`media_prep`) |
+| `FF_WILDLIFE_BRAIN_ENABLED` | DINOv3 embeddings / clustering |
+
+**Model weights download on the first inference** (SpeciesNet from Kaggle; BioCLIP + DINOv3 from
+HuggingFace), so the first run is slow then cached. For CPU dev set `EMBEDDING_DEVICE=cpu`,
+`BIOCLIP_DEVICE=cpu`, and `EMBEDDING_DEFAULT_MODEL=dinov3-vits` (small/fast). DINOv3 is a **gated**
+HF model — put a token in `HF_TOKEN` (SpeciesNet/BioCLIP need none). Architecture:
+[04-AI-PIPELINE.md](./documentation/onboarding/04-AI-PIPELINE.md).
+
 ## Troubleshooting
 
 | Issue | Fix |
@@ -101,6 +132,9 @@ Set `VITE_API_BASE_URL` to your production backend URL at build time. Full hosti
 | Frontend can't reach API | Set `VITE_API_BASE_URL` (defaults to `http://localhost:8000`); confirm backend is running. |
 | `permission denied for table observations` | The `authenticated` role lacks write GRANTs — apply the `ww-backend` migration. See [03-DATA-AND-SYNC.md](./documentation/onboarding/03-DATA-AND-SYNC.md). |
 | iNaturalist / pipeline endpoints 404 | They are feature-flagged off by default — see [Feature Flags](#feature-flags). |
+| `No module named 'speciesnet'` / `torch` in a job | The container is on the lean base image. Rebuild + start with **both** compose files — see [Running the AI/ML pipeline locally](#running-the-aiml-pipeline-locally). |
+| `libxcb.so.1: cannot open shared object file` during inference | OpenCV system libs missing — rebuild the **dev** image (the Dockerfile installs `libgl1`, `libxcb1`, …). |
+| Uploaded images don't appear in Annotations | The Drive credential file is mounted only by the dev compose — start with both files, or the upload job can't authenticate. |
 | Vite env vars undefined | Root `.env` only; `vite.config.ts` maps `SUPABASE_URL`→`VITE_SUPABASE_URL`, etc. No `frontend/.env` needed. |
 
 ## Database Migrations

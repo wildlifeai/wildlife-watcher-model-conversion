@@ -15,6 +15,11 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--worker
 
 # --- Dev target (base + test tooling + heavy ML so local in-process embedding works) ---
 FROM base AS dev
+# OpenCV (pulled in by speciesnet/yolov5) loads these system libs at runtime —
+# without them inference fails with e.g. `libxcb.so.1: cannot open shared object file`.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements-dev.txt requirements-ml.txt ./
 RUN pip install --no-cache-dir -r requirements-dev.txt -r requirements-ml.txt
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
@@ -23,6 +28,10 @@ CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload
 # Runs the ARQ worker that processes embedding/inference jobs off the lean API.
 # Activating offload also requires Redis + switching enqueue to ARQ (see jobs/worker.py).
 FROM base AS worker
+# OpenCV system libs (see dev target) — required for speciesnet/yolov5 inference.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
 COPY requirements-ml.txt .
 RUN pip install --no-cache-dir -r requirements-ml.txt
 CMD ["arq", "app.jobs.worker.WorkerSettings"]

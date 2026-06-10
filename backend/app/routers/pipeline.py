@@ -52,6 +52,7 @@ async def run_inference_pipeline(
             confidence_threshold=body.confidence_threshold,
             config=body.config,
             user_id=user.id,
+            only_unannotated=body.only_unannotated,
         )
         return ApiResponse(
             data=result.model_dump(),

@@ -394,6 +394,45 @@ async def download_github_pretrained_job(job_id: str, user_id: str, org_id: str,
         raise
 
 
+async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | None = None) -> None:
+    """Run the AI annotation pipeline on freshly-uploaded deployments (best-effort).
+
+    Enqueued (fire-and-forget) by the upload job after media is registered, so species
+    observations populate the Annotations grid without a manual trigger. Step set is
+    built from the enabled feature flags; failures are logged, never raised.
+
+    Caveat: ``run_pipeline`` processes ALL media in a deployment, so re-uploading to an
+    already-annotated deployment re-runs it (duplicate AI observations). Fine for fresh
+    deployments; scope-to-new-media is a future enhancement.
+    """
+    from app.config import settings
+
+    if not (settings.FF_ML_ENABLED and settings.FF_PIPELINE_ENABLED):
+        return
+
+    from app.domain.pipeline import run_pipeline
+    from app.schemas.pipeline import PipelineStepType
+
+    steps: list[PipelineStepType] = []
+    if settings.FF_MEDIA_REGISTRY_ENABLED:
+        steps.append(PipelineStepType.MEDIA_PREP)
+    if settings.FF_SPECIESNET_ENABLED:
+        steps.append(PipelineStepType.SPECIESNET)
+        steps.append(PipelineStepType.ANIMAL_CROP)
+    if settings.FF_BIOCLIP_ENABLED:
+        steps.append(PipelineStepType.BIOCLIP)
+    if not steps:
+        return
+
+    for dep_id in deployment_ids:
+        try:
+            logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
+            await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id)
+            logger.info("auto_annotate_complete", deployment_id=dep_id)
+        except Exception as exc:
+            logger.warning("auto_annotate_failed", deployment_id=dep_id, error=str(exc))
+
+
 async def upload_drive_images_job(job_id: str, payload: dict):
     """Upload analysed images to Google Drive.
 
@@ -709,6 +748,96 @@ async def upload_drive_images_job(job_id: str, payload: dict):
             pass
 
         await complete_phase(job_id, ProgressPhase.DRIVE_UPLOAD)
+
+        # ── Register uploaded images as media rows ───────────
+        # Without this the images live in Google Drive but never appear in the
+        # Annotations grid (which queries the `media` table) and the AI pipeline
+        # has nothing to run on. One row per newly-uploaded file, pointing at the
+        # Drive object via gdrive:// so the media resolver can serve thumbnails.
+        import uuid as _uuid
+
+        from app.services.supabase_client import create_service_client
+
+        uploaded = stats.get("files", []) or []
+        # The exif-upload path (no media_id) registers media; CamtrapDP (media_id) patches.
+        candidates = [
+            uf for uf in uploaded
+            if uf.get("deployment_id") and uf.get("file_id") and not uf.get("media_id")
+        ]
+        svc = create_service_client()
+
+        # ── Guard 1: dedup. Skip files that already have a media row, by file_hash
+        # (the schema's dedup key) OR by gdrive:// path (covers rows lacking a hash,
+        # e.g. back-filled). Because upload_file now returns Drive-skipped duplicates
+        # too, this also *back-fills* a media row for an image that's in Drive but has
+        # no DB row yet — so re-upload is self-healing instead of stranding images.
+        existing_keys: set = set()
+        for dep in sorted({uf["deployment_id"] for uf in candidates}):
+            try:
+                rows = (
+                    svc.table("media").select("file_hash, file_path")
+                    .eq("deployment_id", dep).execute().data or []
+                )
+            except Exception:
+                rows = []
+            for r in rows:
+                if r.get("file_hash"):
+                    existing_keys.add(("hash", r["file_hash"]))
+                if r.get("file_path"):
+                    existing_keys.add(("path", r["file_path"]))
+
+        media_rows = [
+            {
+                "id": str(_uuid.uuid4()),
+                "deployment_id": uf["deployment_id"],
+                "file_path": f"gdrive://{uf['file_id']}",
+                "file_name": uf.get("filename") or "image.jpg",
+                "file_mediatype": "image/jpeg",
+                "timestamp": uf.get("timestamp"),
+                "file_public": False,
+                "file_hash": uf.get("file_hash"),
+            }
+            for uf in candidates
+            if ("hash", uf.get("file_hash")) not in existing_keys
+            and ("path", f"gdrive://{uf['file_id']}") not in existing_keys
+        ]
+        media_created = 0
+        if media_rows:
+            for i in range(0, len(media_rows), 100):
+                chunk = [{k: v for k, v in r.items() if v is not None} for r in media_rows[i:i + 100]]
+                try:
+                    svc.table("media").insert(chunk).execute()
+                    media_created += len(chunk)
+                except Exception as exc:
+                    logger.warning("media_register_failed", error=str(exc), job_id=job_id)
+            logger.info("media_registered", count=media_created, job_id=job_id)
+            await emit_event(
+                job_id,
+                ProgressEvent(
+                    type=EventType.PROGRESS,
+                    phase=ProgressPhase.DRIVE_UPLOAD,
+                    message=f"🗂️ Registered {media_created} image(s) — view them in Annotations",
+                ),
+            )
+
+            # Auto-run the AI annotation pipeline (async, best-effort) so species
+            # observations populate without a manual trigger. The upload job still
+            # completes promptly; annotations appear in the grid as the pipeline runs.
+            from app.config import settings as _settings
+
+            if _settings.FF_ML_ENABLED and _settings.FF_PIPELINE_ENABLED:
+                from app.jobs.runner import enqueue_local_job
+
+                dep_ids = sorted({r["deployment_id"] for r in media_rows})
+                enqueue_local_job(auto_annotate_deployments(dep_ids, payload.get("user_id")))
+                await emit_event(
+                    job_id,
+                    ProgressEvent(
+                        type=EventType.PROGRESS,
+                        phase=ProgressPhase.DRIVE_UPLOAD,
+                        message="🤖 AI annotation started — labels will appear in Annotations shortly",
+                    ),
+                )
 
         # ── Phase 3: CLEANUP ─────────────────────────────────
         await start_phase(job_id, ProgressPhase.CLEANUP)

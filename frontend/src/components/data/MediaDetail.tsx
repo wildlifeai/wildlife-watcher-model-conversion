@@ -1,23 +1,10 @@
 import { useState, useRef, useEffect } from 'react'
 import { supabase } from '../../config/supabase'
 import { useAuth } from '../../hooks/useAuth'
-import type { ObservationRecord } from './MediaBrowser'
+import type { ObservationRecord, MediaRecord } from './MediaBrowser'
 import { humanCreateFields, humanReviewFields, isHumanReviewed, isAiLabel } from '../../lib/observations'
 import { SpeciesPicker } from './SpeciesPicker'
 import { StatusBadge } from '../ui/StatusBadge'
-
-interface MediaRecord {
-  id: string
-  deployment_id: string
-  file_path: string
-  file_name: string | null
-  file_mediatype: string
-  timestamp: string | null
-  file_public: boolean
-  media_comments: string | null
-  exif_metadata: Record<string, unknown> | null
-  observations: ObservationRecord[]
-}
 
 interface Props {
   media: MediaRecord
@@ -52,11 +39,20 @@ const NAV_ARROW: React.CSSProperties = {
 const NAV_ARROW_LEFT: React.CSSProperties = { ...NAV_ARROW, left: 12 }
 const NAV_ARROW_RIGHT: React.CSSProperties = { ...NAV_ARROW, right: 12 }
 
-function resolveImageUrl(filePath: string, mediaId: string, size: 'thumb' | 'full' = 'full'): string | null {
+function resolveImageUrl(media: MediaRecord, size: 'thumb' | 'full' = 'full'): string | null {
+  // Prefer the public Supabase rendition (MEDIA_PREP) — the auth-gated proxy below
+  // can't load from a plain <img> tag, so for gdrive:// originals it's the only
+  // thing that renders. Full view favours the larger preview_url.
+  const asset = media.media_assets?.[0]
+  const rendition = size === 'full'
+    ? (asset?.preview_url || asset?.thumbnail_url)
+    : (asset?.thumbnail_url || asset?.preview_url)
+  if (rendition) return rendition
+  const filePath = media.file_path
   if (!filePath) return null
   if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath
   const apiBase = import.meta.env.VITE_API_BASE_URL || ''
-  return `${apiBase}/api/media/${mediaId}/image?size=${size}`
+  return `${apiBase}/api/media/${media.id}/image?size=${size}`
 }
 
 // EXIF panel — lists primitive key/values from the media's exif_metadata jsonb.
@@ -85,7 +81,7 @@ function ExifSection({ exif }: { exif: Record<string, unknown> | null }) {
 
 export function MediaDetail({ media, onClose, onUpdated, onNext, onPrev }: Props) {
   const { user } = useAuth()
-  const imgUrl = resolveImageUrl(media.file_path, media.id)
+  const imgUrl = resolveImageUrl(media)
 
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)

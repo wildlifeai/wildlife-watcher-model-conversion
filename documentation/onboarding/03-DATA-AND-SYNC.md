@@ -85,6 +85,36 @@ create_job() → queued → processing → completed
 - **Frontend**: polls `GET /api/jobs/{id}` (~2s); responses carry ordered `events[]` for incremental
   UI updates. The global `UploadContext` keeps progress alive across navigation via `ProgressDock`.
 
+## Image upload pipeline
+
+Dragging camera images into the website (Upload Data page → `AnalyseImages`, or the global Upload
+modal) runs this end-to-end. **Images always sync to Google Drive** — the old "Sync to Google Drive"
+toggle was removed; Drive is the default long-term store.
+
+```
+POST /api/exif/parse  → parse EXIF, match deployment (EXIF Deployment_ID → UserComment → GPS),
+                        buffer bytes to Azure blob store, enqueue upload_drive_images_job
+upload_drive_images_job:
+  DOWNLOAD → PREPROCESS (rename/sort into project/deployment folders)
+  → DRIVE_UPLOAD     google_drive.upload_analysis_images — hash-dedup skips files already in Drive
+  → REGISTER MEDIA   insert `media` rows (file_path = gdrive://<id>, file_hash) so images appear in
+                      the Annotations grid and the pipeline has something to run on
+  → AUTO-ANNOTATE    enqueue auto_annotate_deployments (the AI pipeline, async) — see 04-AI-PIPELINE
+  → CLEANUP          delete the Azure blobs; job completes
+```
+
+**Idempotency guards** (so re-uploads / partial uploads are safe):
+- **Guard 1 — media dedup + self-heal:** Drive upload hashes content (`appProperties.sha256`) and
+  skips duplicates, returning the *existing* file id. Media registration then dedups by
+  `media.file_hash` **or** `gdrive://` path (no duplicate rows), and **back-fills a `media` row for
+  any image that's in Drive but has no DB row yet** — so re-uploading recovers stranded images.
+- **Guard 2 — annotate only un-annotated media:** the auto-trigger runs `only_unannotated=true`, so
+  it processes only images without an AI observation (see [04-AI-PIPELINE](./04-AI-PIPELINE.md)).
+
+> **Local dev gotcha:** the Drive credential file is mounted by the **dev** compose, so always start
+> the API with both files: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`.
+> Starting with only the base compose drops the mount and the upload job fails to authenticate.
+
 ## Supabase resources expected
 
 - **Storage buckets**: `firmware`, `ai-models` (private).

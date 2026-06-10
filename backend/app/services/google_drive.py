@@ -92,17 +92,26 @@ class GoogleDriveService:
     @staticmethod
     def _load_credentials() -> service_account.Credentials:
         """Load service-account credentials from file path or inline JSON."""
-        raw = settings.GOOGLE_SERVICE_ACCOUNT_JSON
+        raw = (settings.GOOGLE_SERVICE_ACCOUNT_JSON or "").strip()
         if not raw:
             raise RuntimeError("GOOGLE_SERVICE_ACCOUNT_JSON is not set — cannot authenticate with Google Drive")
 
-        # Try as a file path first
-        path = Path(raw)
-        if path.is_file():
-            info = json.loads(path.read_text(encoding="utf-8"))
-        else:
-            # Assume inline JSON
+        # Inline JSON (e.g. production secret) starts with '{'; anything else is a file path.
+        # This avoids json.loads() choking on a misconfigured path and emitting a cryptic
+        # "Expecting value: line 1 column 1 (char 0)" — surface an actionable message instead.
+        if raw.startswith("{"):
             info = json.loads(raw)
+        else:
+            path = Path(raw)
+            if not path.is_file():
+                raise RuntimeError(
+                    f"GOOGLE_SERVICE_ACCOUNT_JSON points to a file that does not exist in this "
+                    f"environment: '{raw}'. In Docker, start the API with the dev compose so the "
+                    "service account is mounted and the path is set to /app/service-account.json:\n"
+                    "  docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d api\n"
+                    "Or set GOOGLE_SERVICE_ACCOUNT_JSON to the inline service-account JSON."
+                )
+            info = json.loads(path.read_text(encoding="utf-8"))
 
         return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
 
@@ -183,15 +192,20 @@ class GoogleDriveService:
 
     # ── Deduplication ────────────────────────────────────────────
 
-    def _file_exists_by_hash(self, parent_id: str, file_hash: str) -> bool:
-        """Check whether a file with the given hash already exists."""
+    def _find_file_id_by_hash(self, parent_id: str, file_hash: str) -> Optional[str]:
+        """Return the id of an existing file with this hash in the folder, or None.
+
+        Returning the id (not just a bool) lets the caller register a media row for a
+        Drive-skipped duplicate that has no DB row yet — see Guard 1 in the upload job.
+        """
         query = f"'{parent_id}' in parents and appProperties has {{ key='sha256' and value='{file_hash}' }} and trashed = false"
         results = (
             self._service.files()
             .list(q=query, fields="files(id)", spaces="drive", pageSize=1, supportsAllDrives=True, includeItemsFromAllDrives=True)
             .execute()
         )
-        return len(results.get("files", [])) > 0
+        files = results.get("files", [])
+        return files[0]["id"] if files else None
 
     # ── File upload ──────────────────────────────────────────────
 
@@ -202,20 +216,22 @@ class GoogleDriveService:
         file_bytes: bytes,
         mime_type: str,
         file_hash: str,
-    ) -> Optional[str]:
+    ) -> tuple[Optional[str], bool]:
         """Upload a single file to Google Drive.
 
-        Returns the file ID on success, or ``None`` if skipped (duplicate).
+        Returns ``(file_id, was_new)``. ``was_new`` is False when the file already
+        existed in Drive (dedup) — the existing id is still returned so the caller can
+        register/patch a media row for it.
 
         Raises on API errors (caller handles retries).
         """
-        # Dedup check
+        # Dedup check — returns the existing file id if present.
         async with self._api_lock:
-            exists = await asyncio.to_thread(self._file_exists_by_hash, parent_id, file_hash)
+            existing_id = await asyncio.to_thread(self._find_file_id_by_hash, parent_id, file_hash)
 
-        if exists:
+        if existing_id:
             logger.info("drive_upload_skipped_duplicate", filename=filename)
-            return None
+            return existing_id, False
 
         def _do_upload() -> str:
             import json
@@ -251,7 +267,7 @@ class GoogleDriveService:
 
         file_id = await asyncio.to_thread(_do_upload)
         logger.info("drive_file_uploaded", filename=filename, file_id=file_id)
-        return file_id
+        return file_id, True
 
     # ── Batch orchestration ──────────────────────────────────────
 
@@ -282,6 +298,10 @@ class GoogleDriveService:
         root_folder_id = settings.GOOGLE_DRIVE_FOLDER_ID
         sem = asyncio.Semaphore(MAX_CONCURRENT_UPLOADS)
         stats = {"uploaded": 0, "skipped": 0, "failed": 0}
+        # Per-file mapping so callers (e.g. CamtrapDP import) can patch the media
+        # record's file_path back to gdrive://<id>. Only populated when the caller
+        # supplies a ``media_id`` on the file dict.
+        uploaded_files: List[Dict[str, str]] = []
         total_files = len(files)
         completed_count = 0
         seen_folders: set = set()
@@ -351,7 +371,7 @@ class GoogleDriveService:
 
                     file_hash = compute_file_hash(file_bytes, deployment["id"])
 
-                    result = await self.upload_file(
+                    file_id, was_new = await self.upload_file(
                         parent_id=dep_folder_id,
                         filename=drive_name,
                         file_bytes=file_bytes,
@@ -360,20 +380,23 @@ class GoogleDriveService:
                     )
 
                     completed_count += 1
-                    if result:
-                        stats["uploaded"] += 1
+                    if file_id:
+                        stats["uploaded" if was_new else "skipped"] += 1
+                        # Record EVERY present file (new OR pre-existing duplicate) with its
+                        # hash, so callers can register a media row — including for files that
+                        # are already in Drive but have no media row yet (Guard 1 self-heal).
+                        uploaded_files.append({
+                            "file_id": file_id,
+                            "media_id": file_info.get("media_id"),
+                            "deployment_id": (file_info.get("deployment") or {}).get("id"),
+                            "filename": drive_name,
+                            "timestamp": file_info.get("timestamp"),
+                            "file_hash": file_hash,
+                            "was_new": was_new,
+                        })
                         if file_callback:
                             await file_callback(
-                                action="uploaded",
-                                filename=drive_name,
-                                index=completed_count,
-                                total=total_files,
-                            )
-                    else:
-                        stats["skipped"] += 1
-                        if file_callback:
-                            await file_callback(
-                                action="skipped",
+                                action="uploaded" if was_new else "skipped",
                                 filename=drive_name,
                                 index=completed_count,
                                 total=total_files,
@@ -399,4 +422,6 @@ class GoogleDriveService:
         await asyncio.gather(*[_upload_one(f) for f in files])
 
         logger.info("drive_batch_complete", **stats)
-        return stats
+        # ``files`` carries the per-media Drive IDs (when media_id supplied); the
+        # three integer counters keep the existing callers working unchanged.
+        return {**stats, "files": uploaded_files}

@@ -255,7 +255,9 @@ export function ProgressDock() {
             <Link
               to={annotationsLink}
               style={{ color: 'var(--primary)', fontWeight: 600, textDecoration: 'none' }}
-              onClick={clearUpload}
+              // Keep the upload state + logs around (minimised) instead of clearing,
+              // so the user can still see what happened after navigating to Annotations.
+              onClick={() => setDockState('minimised')}
             >
               🏷️ View Annotations →
             </Link>

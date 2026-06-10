@@ -13,6 +13,7 @@ class PendingDriveUpload(BaseModel):
     filename: str
     mime_type: str
     file_bytes: bytes  # raw bytes — excluded from JSON serialisation
+    media_id: str  # ww media UUID — used to patch file_path back to gdrive://<id>
     deployment_id: str
     deployment_start: Optional[str] = None
     location_name: Optional[str] = None

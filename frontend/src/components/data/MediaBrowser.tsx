@@ -14,7 +14,13 @@ import { isHumanReviewed, isAiLabel } from '../../lib/observations'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
-interface MediaRecord {
+export interface MediaAssetRecord {
+  thumbnail_url: string | null
+  preview_url: string | null
+  animal_crop_url: string | null
+}
+
+export interface MediaRecord {
   id: string
   deployment_id: string
   file_path: string
@@ -24,6 +30,8 @@ interface MediaRecord {
   file_public: boolean
   media_comments: string | null
   exif_metadata: Record<string, unknown> | null
+  // 1:1 rendition row (MEDIA_PREP): public Supabase Storage URLs for the grid.
+  media_assets: MediaAssetRecord[] | null
   observations: ObservationRecord[]
 }
 
@@ -80,17 +88,25 @@ const INAT_BTN_ACTIVE: React.CSSProperties = { ...INAT_BTN, backgroundColor: '#7
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
- * Resolve a file_path to a displayable image URL.
+ * Resolve a media record to a displayable image URL for the grid.
  *
- * - Public URLs (http/https) → use directly
- * - Private storage (gdrive://, relative paths, etc.) → proxy through backend
- * - Empty/missing → null (placeholder shown)
+ * - Rendition (MEDIA_PREP) → public Supabase Storage thumbnail/preview, used directly.
+ *   This is the primary path: the auth-gated /api/media/{id}/image proxy below cannot
+ *   work from a plain <img> tag (no Authorization header), so for gdrive:// originals
+ *   the rendition is the ONLY thing that renders.
+ * - Public http/https file_path → use directly.
+ * - Otherwise → backend proxy (only resolves for public files; gdrive:// without a
+ *   rendition will show the placeholder).
  */
-function resolveImageUrl(filePath: string, mediaId: string): string | null {
+function resolveImageUrl(media: MediaRecord): string | null {
+  const asset = media.media_assets?.[0]
+  const rendition = asset?.thumbnail_url || asset?.preview_url
+  if (rendition) return rendition
+  const filePath = media.file_path
   if (!filePath) return null
   if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath
   const apiBase = import.meta.env.VITE_API_BASE_URL || ''
-  return `${apiBase}/api/media/${mediaId}/image?size=thumb`
+  return `${apiBase}/api/media/${media.id}/image?size=thumb`
 }
 
 /** Hour-based day/night split: day = 06:00–18:00. */
@@ -192,6 +208,7 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
       .from('media')
       .select(
         'id, deployment_id, file_path, file_name, file_mediatype, timestamp, file_public, media_comments, exif_metadata, ' +
+        'media_assets(thumbnail_url, preview_url, animal_crop_url), ' +
         'observations(id, deployment_id, media_id, observation_type, scientific_name, vernacular_name, taxon_id, ' +
         'count, life_stage, sex, behavior, ' +
         'classification_method, classified_by, classification_probability, observation_comments, ' +
@@ -570,7 +587,7 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
             gap: thumbSize === 'small' ? '0.5rem' : '0.75rem',
           }}>
             {filtered.map(m => {
-              const imgUrl = resolveImageUrl(m.file_path, m.id)
+              const imgUrl = resolveImageUrl(m)
 
               // WS5-T4 / AN-2: derive status badge from the review_status contract
               const annotStatus = deriveAnnotationStatus({
@@ -585,7 +602,10 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
                 return br - ar
               })
               const topObs = sortedObs[0] || null
-              const label  = topObs?.scientific_name || null
+              // A reviewed "blank" observation = confirmed empty (no animals).
+              // Show "Empty" rather than the ambiguous "No label" placeholder.
+              const isEmpty = !!topObs && !topObs.scientific_name && topObs.observation_type === 'blank'
+              const label  = topObs?.scientific_name || (isEmpty ? 'Empty' : null)
               const conf   = topObs?.classification_probability ?? null
               const isSelected = selectedMediaId === m.id
               const inatSt  = inatStates.get(m.id)            // iNat upload/sync state (if any)
@@ -663,7 +683,11 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
                   {/* Label bar */}
                   <div style={{ padding: '0.375rem 0.5rem', fontSize: '0.6875rem' }}>
                     <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {label || <span style={{ opacity: 0.4 }}>No label</span>}
+                      {topObs?.scientific_name
+                        ? label
+                        : isEmpty
+                          ? <span style={{ opacity: 0.6, fontStyle: 'italic' }}>Empty</span>
+                          : <span style={{ opacity: 0.4 }}>No label</span>}
                     </div>
                     <div style={{ display: 'flex', justifyContent: 'space-between', opacity: 0.6, fontSize: '0.625rem' }}>
                       <span>{m.file_name || m.file_path.split('/').pop()}</span>

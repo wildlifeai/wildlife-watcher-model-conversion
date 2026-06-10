@@ -23,6 +23,7 @@ class PipelineStepType(str, Enum):
     MEDIA_PREP = "media_prep"  # thumbnails + previews → media_assets (run before SPECIESNET)
     SPECIESNET = "speciesnet"  # detector + classifier ensemble (preferred)
     ANIMAL_CROP = "animal_crop"  # crop best detection → animal_crop_url (run after SPECIESNET)
+    BIOCLIP = "bioclip"  # secondary zero-shot classifier on crops (run after ANIMAL_CROP)
     CUSTOM = "custom"
 
 
@@ -43,6 +44,11 @@ class PipelineRunRequest(BaseModel):
     config: dict[str, Any] = Field(
         default_factory=dict,
         description="Step-specific overrides (e.g. model path, batch_size)",
+    )
+    only_unannotated: bool = Field(
+        default=True,
+        description="Only process media without an existing AI observation (idempotent + "
+        "incremental). Set false to force a full re-run over every image in the deployment.",
     )
 
 

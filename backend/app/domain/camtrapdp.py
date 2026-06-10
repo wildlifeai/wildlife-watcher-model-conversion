@@ -182,12 +182,39 @@ def _map_feature_type(val: Optional[str]) -> Optional[str]:
     return _FEATURE_TYPE_MAP.get(s, "other")
 
 
+def _derive_import_provenance(
+    cls_method: Optional[str], annotation_mode: str
+) -> tuple[str, str]:
+    """Map a CamtrapDP observation's classificationMethod to WW provenance.
+
+    Returns ``(source_type, review_status)`` so the annotation badge renders
+    correctly instead of defaulting every imported row to a red ✕ "issue".
+
+    - ``machine`` → AI-produced label  → ('ai', 'ai_reviewed')
+    - ``human``   → human-validated    → ('human', 'human_reviewed')
+    - missing/unknown:
+        * annotation_mode='final'       → trust the package as validated
+                                          → ('imported', 'human_reviewed')
+        * annotation_mode='unprocessed' → leave for review
+                                          → ('imported', 'unreviewed')
+    """
+    if cls_method == "machine":
+        return "ai", "ai_reviewed"
+    if cls_method == "human":
+        return "human", "human_reviewed"
+    if annotation_mode == "final":
+        return "imported", "human_reviewed"
+    return "imported", "unreviewed"
+
+
 def import_package(
     pkg: CamtrapPackage,
     user_id: str,
     org_id: str,
     svc,  # Supabase service-role client
     user_client=None,  # Authenticated client for trigger context
+    annotation_mode: str = "final",  # 'final' = validated dataset, empty=no animals;
+    #                                   'unprocessed' = no-observation media need annotating
 ) -> CamtrapImportResult:
     """
     Insert a parsed CamtrapDP package into the WW database.
@@ -409,6 +436,7 @@ def import_package(
                     filename=file_name,
                     mime_type=mime,
                     file_bytes=zip_bytes,
+                    media_id=ww_id,
                     deployment_id=ww_dep_id,
                     deployment_start=_str(dep_row.get("deploymentStart")),
                     location_name=_str(dep_row.get("locationName")),
@@ -552,6 +580,7 @@ def import_package(
 
     obs_inserted = 0
     obs_batch: list[dict] = []
+    media_with_obs: set[str] = set()  # ww media ids that received ≥1 observation
 
     for o in pkg.observations:
         cdp_dep_id = o.get("deploymentID", "").strip()
@@ -585,6 +614,11 @@ def import_package(
         cdp_event_id = _str(o.get("eventID"))
         ww_event_id = event_id_map.get((cdp_event_id, ww_dep_id)) if cdp_event_id else None
 
+        if ww_media_id:
+            media_with_obs.add(ww_media_id)
+
+        source_type, review_status = _derive_import_provenance(cls_method, annotation_mode)
+
         row = {
             "id": str(uuid.uuid4()),
             "deployment_id": ww_dep_id,
@@ -593,8 +627,8 @@ def import_package(
             "observation_level": _str(o.get("observationLevel")) or ("media" if ww_media_id else "event"),
             "observation_type": obs_type,
             "scientific_name": _str(o.get("scientificName")),
-            "source_type": "imported",
-            "review_status": "unreviewed",
+            "source_type": source_type,
+            "review_status": review_status,
             "count": _int(o.get("count")),
             "life_stage": life_stage,
             "sex": sex,
@@ -631,6 +665,35 @@ def import_package(
             obs_inserted += len(obs_batch)
         except Exception as e:
             warnings.append(f"Failed to insert observation batch: {e}")
+
+    # ── Synthesize "confirmed empty" rows for media with no observations ──
+    # In 'final' mode the package is a finished dataset: a media item with no
+    # observation means a human looked and saw no animals. Insert a reviewed
+    # blank observation so the grid shows a green ✓ "Empty" rather than a red ✕.
+    # In 'unprocessed' mode we leave them bare so they surface as work to do.
+    if annotation_mode == "final":
+        empty_batch: list[dict] = [
+            {
+                "id": str(uuid.uuid4()),
+                "deployment_id": dep,
+                "media_id": mid,
+                "observation_level": "media",
+                "observation_type": "blank",
+                "source_type": "imported",
+                "review_status": "human_reviewed",
+            }
+            for mid, dep in media_dep_map.items()
+            if mid not in media_with_obs
+        ]
+        for i in range(0, len(empty_batch), BULK_CHUNK):
+            chunk = empty_batch[i:i + BULK_CHUNK]
+            try:
+                svc.table("observations").insert(chunk).execute()
+                obs_inserted += len(chunk)
+            except Exception as e:
+                warnings.append(f"Failed to insert empty-media observation batch: {e}")
+        if empty_batch:
+            logger.info("camtrapdp_import_empty_media_marked", count=len(empty_batch))
 
     logger.info(
         "camtrapdp_import_complete",

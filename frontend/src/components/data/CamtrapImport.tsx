@@ -60,6 +60,7 @@ export function CamtrapImport({ onImportComplete }: CamtrapImportProps) {
   const [expanded, setExpanded] = useState(false)
   const [dragging, setDragging] = useState(false)
   const [file, setFile] = useState<File | null>(null)
+  const [annotationMode, setAnnotationMode] = useState<'final' | 'unprocessed'>('final')
   const [importing, setImporting] = useState(false)
   const [result, setResult] = useState<ImportResult | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -94,6 +95,7 @@ export function CamtrapImport({ onImportComplete }: CamtrapImportProps) {
     try {
       const form = new FormData()
       form.append('file', file)
+      form.append('annotation_mode', annotationMode)
       const res = await apiClient.upload('/api/camtrapdp/import', form) as { data: ImportResult }
       setResult(res.data)
       onImportComplete?.(res.data.project_id)
@@ -205,6 +207,53 @@ export function CamtrapImport({ onImportComplete }: CamtrapImportProps) {
                 Large packages with many taxa can take 30–60 s. Please keep this tab open.
               </p>
             </div>
+          )}
+
+          {/* ── Annotation mode ────────────────────────────────────── */}
+          {file && !result && !importing && (
+            <fieldset style={{
+              marginTop: '0.75rem',
+              border: '1px solid var(--border)',
+              borderRadius: 'var(--radius)',
+              padding: '0.75rem 0.875rem',
+            }}>
+              <legend style={{ fontSize: '0.75rem', fontWeight: 600, padding: '0 0.375rem', opacity: 0.8 }}>
+                How should these annotations be treated?
+              </legend>
+
+              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', cursor: 'pointer', marginBottom: '0.5rem' }}>
+                <input
+                  type="radio"
+                  name="annotation-mode"
+                  checked={annotationMode === 'final'}
+                  onChange={() => setAnnotationMode('final')}
+                  style={{ marginTop: '0.2rem' }}
+                />
+                <span style={{ fontSize: '0.8125rem' }}>
+                  <strong>These are final annotations.</strong>{' '}
+                  <span style={{ opacity: 0.75 }}>
+                    Imported labels are valid; images with no observation are confirmed empty
+                    (no animals) and shown as reviewed.
+                  </span>
+                </span>
+              </label>
+
+              <label style={{ display: 'flex', gap: '0.5rem', alignItems: 'flex-start', cursor: 'pointer' }}>
+                <input
+                  type="radio"
+                  name="annotation-mode"
+                  checked={annotationMode === 'unprocessed'}
+                  onChange={() => setAnnotationMode('unprocessed')}
+                  style={{ marginTop: '0.2rem' }}
+                />
+                <span style={{ fontSize: '0.8125rem' }}>
+                  <strong>These images still need annotating.</strong>{' '}
+                  <span style={{ opacity: 0.75 }}>
+                    Images with no observation are treated as unprocessed work to be reviewed.
+                  </span>
+                </span>
+              </label>
+            </fieldset>
           )}
 
           {/* ── Action buttons ─────────────────────────────────────── */}

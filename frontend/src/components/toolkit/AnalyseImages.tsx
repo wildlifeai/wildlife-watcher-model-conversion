@@ -79,9 +79,6 @@ export function AnalyseImages() {
   // const zipInputRef = useRef<HTMLInputElement>(null) // Temporarily disabled — ZIP picker commented out
   const lastSeenSeqRef = useRef<Record<string, number>>({})
 
-  // Drive upload options
-  const [uploadToDrive, setUploadToDrive] = useState(false)
-
   // CamtrapDP import state
   const [zipFile, setZipFile] = useState<File | null>(null)
   const [camtrapImporting, setCamtrapImporting] = useState(false)
@@ -289,9 +286,8 @@ export function AnalyseImages() {
         for (const p of chunkPaths) {
           formData.append('paths', p)
         }
-        if (uploadToDrive) {
-          formData.append('upload_to_drive', 'true')
-        }
+        // Images always sync to Google Drive (default long-term storage).
+        formData.append('upload_to_drive', 'true')
         
         try {
           const response = await apiClient.upload('/api/exif/parse', formData)
@@ -363,8 +359,6 @@ export function AnalyseImages() {
                 } else if (driveInfo.status === 'error') {
                     logs.push({ ts: Date.now(), level: 'error', message: `❌ Azure/Drive integration failed: ${driveInfo.error || 'Unknown error'}` })
                 }
-              } else if (!uploadToDrive) {
-                  logs.push({ ts: Date.now(), level: 'success', message: `✅ Images ${startIdx}-${endIdx} extracted.` })
               }
               
               return {
@@ -735,42 +729,28 @@ export function AnalyseImages() {
         </div>
       )}
 
-      {/* ── Google Drive upload options ──────────────────────────── */}
+      {/* ── Google Drive storage note + deployment validation ────── */}
       {files.length > 0 && results.length === 0 && (
         <div
           className="card"
           style={{
             marginTop: '1rem',
             padding: '1rem 1.25rem',
-            borderLeft: uploadToDrive ? '3px solid var(--primary)' : '3px solid var(--border)',
-            transition: 'border-color 0.2s',
+            borderLeft: '3px solid var(--border)',
           }}
         >
-          {/* Toggle */}
-          <label
-            id="drive-upload-toggle"
-            style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.625rem',
-              cursor: 'pointer',
-              userSelect: 'none',
-              fontWeight: 500,
-              fontSize: '0.875rem',
-            }}
-          >
-            <input
-              type="checkbox"
-              checked={uploadToDrive}
-              onChange={(e) => {
-                setUploadToDrive(e.target.checked)
-              }}
-              style={{ width: '1rem', height: '1rem', accentColor: 'var(--primary)' }}
-            />
-            ☁️ Upload images to Google Drive
-          </label>
-          
-          {uploadToDrive && hasInvalidDeployments && (
+          {/* Images always sync to Google Drive (default long-term storage) */}
+          <div style={{
+            display: 'flex', alignItems: 'center', gap: '0.625rem',
+            fontWeight: 500, fontSize: '0.875rem',
+          }}>
+            <span style={{ fontSize: '1rem' }}>☁️</span>
+            <span style={{ opacity: 0.8 }}>
+              Images are saved to your connected Google Drive folder for long-term storage.
+            </span>
+          </div>
+
+          {hasInvalidDeployments && (
             <div style={{
               marginTop: '1rem',
               padding: '0.75rem',

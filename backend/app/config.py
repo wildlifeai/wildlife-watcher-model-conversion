@@ -54,6 +54,7 @@ class Settings(BaseSettings):
 
     # ── v4 Wildlife Brain feature flags ──────────────────────────────
     FF_SPECIESNET_ENABLED: bool = Field(False, description="Use SpeciesNet (detector + classifier) as the pipeline step")
+    FF_BIOCLIP_ENABLED: bool = Field(False, description="Enable the BioCLIP secondary/zero-shot classifier pipeline step")
     FF_WILDLIFE_BRAIN_ENABLED: bool = Field(False, description="Enable DINOv3 embedding / clustering / similarity endpoints")
     FF_MEDIA_REGISTRY_ENABLED: bool = Field(False, description="Enable Media Registry thumbnails/crops + resolve endpoints")
     FF_ACTIVE_LEARNING_ENABLED: bool = Field(False, description="Enable active-learning review queue scoring")
@@ -69,6 +70,10 @@ class Settings(BaseSettings):
     HF_TOKEN: str = Field("", description="HuggingFace token for gated DINOv3 model access")
     EMBEDDING_DEFAULT_MODEL: str = Field("dinov3-vith", description="Default server embedding variant (see embedding_registry)")
     EMBEDDING_DEVICE: str = Field("cpu", description="Torch device for server embedding ('cpu' or 'cuda')")
+
+    # ── BioCLIP (zero-shot / secondary classifier) ───────────────────
+    BIOCLIP_DEVICE: str = Field("cpu", description="Torch device for BioCLIP ('cpu' or 'cuda')")
+    BIOCLIP_RANK: str = Field("species", description="Default taxonomic rank for Tree-of-Life predictions")
     EMBEDDING_BATCH_SIZE: int = Field(32, description="Batch size for GPU/CPU embedding extraction")
     EMBEDDING_CHECKPOINT_EVERY: int = Field(1000, description="Write Qdrant + Supabase every N images for restartable jobs")
 

@@ -3,23 +3,32 @@
 How AI annotations are produced. Two tracks: the **SpeciesNet inference pipeline** (detect +
 classify) and the **Wildlife Brain** (DINOv3 embeddings → clustering → active learning).
 
+> **Running it locally** (the heavy ML deps live in the `dev` Docker image, feature flags, model
+> weights, HF token) → see [Running the AI/ML pipeline locally](../../readme.md#running-the-aiml-pipeline-locally).
+
 ## SpeciesNet inference pipeline
 
 Lives in [`backend/app/domain/pipeline.py`](../../backend/app/domain/pipeline.py), triggered by
-`POST /api/pipeline/run` and auto-run at the end of every Drive upload job. Steps run in order:
+`POST /api/pipeline/run` and **auto-run (async) at the end of every image upload** via
+`auto_annotate_deployments` (gated by `FF_ML_ENABLED` + `FF_PIPELINE_ENABLED`; the step set is
+built from the enabled per-step flags). Steps run in order:
 
-| Step (`PipelineStepType`) | What it does |
-|---|---|
-| `MEDIA_PREP` | Generate thumbnail + preview renditions into `media_assets` (Azure CDN) so the grid never hits Google Drive. No observations. |
-| `SPECIESNET` | **The core model.** Resolves each image to a temp file, runs the **SpeciesNet ensemble** (detector + species classifier in one pass), and writes media-level `observations` with bbox, detection `confidence`, species `classification_probability`, and `scientific_name`/`vernacular_name`. |
-| `ANIMAL_CROP` | Crops the best animal detection into `media_assets.animal_crop_url` for DINOv3. No observations. |
+| Step (`PipelineStepType`) | What it does | Flag |
+|---|---|---|
+| `MEDIA_PREP` | Generate thumbnail + preview renditions into `media_assets` (Azure CDN) so the grid never hits Google Drive. No observations. | `FF_MEDIA_REGISTRY_ENABLED` |
+| `SPECIESNET` | **The core model.** Resolves each image to a temp file, runs the **SpeciesNet ensemble** (detector + species classifier in one pass), and writes media-level `observations` with bbox, detection `confidence`, species `classification_probability`, and `scientific_name`/`vernacular_name`. | `FF_SPECIESNET_ENABLED` |
+| `ANIMAL_CROP` | Crops the best animal detection into `media_assets.animal_crop_url` for DINOv3 / BioCLIP. No observations. | — |
+| `BIOCLIP` | **Secondary zero-shot classifier** ([Imageomics BioCLIP](https://imageomics.github.io/pybioclip/)) run on the animal crop. Adds a *second* `animal` observation tagged with its own `source_model_version` (`bioclip-2`) — a complement / second opinion to SpeciesNet, strong for taxa outside SpeciesNet's ~2k label set. | `FF_BIOCLIP_ENABLED` |
 
-Each run records an `annotation_runs` row (steps, threshold, observation count, `created_by`) for
-provenance.
+**Idempotent + incremental (Guard 2):** by default `run_pipeline(only_unannotated=True)` fetches only
+media that **don't already have an `source_type='ai'` observation**, so re-running (or re-uploading)
+a deployment processes only the *new* images. The manual endpoint accepts `only_unannotated=false`
+to force a full re-run. Each run records an `annotation_runs` row (steps, threshold, observation
+count, `created_by`) for provenance.
 
 > **History:** the earlier `MegaDetectorStep`, `SpeciesNetClassifierStub`, and `EmptyFrameStep`
 > placeholders were **removed** — the SpeciesNet ensemble subsumes detection, classification, and
-> blank handling. The registry is now exactly `MEDIA_PREP → SPECIESNET → ANIMAL_CROP`.
+> blank handling. The registry is now `MEDIA_PREP → SPECIESNET → ANIMAL_CROP → BIOCLIP`.
 
 ### How blank / empty images are handled
 
