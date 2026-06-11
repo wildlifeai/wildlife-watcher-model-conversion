@@ -51,3 +51,14 @@ class ReviewDecisionRequest(BaseModel):
     scientific_name: Optional[str] = Field(None, description="Confirmed species (AI label for approve; new name for reassign)")
     vernacular_name: Optional[str] = None
     taxon_id: Optional[str] = None
+
+
+class MultiClusterRequest(BaseModel):
+    """Request to aggregate clusters across multiple deployments.
+
+    Only deployments that share the same embedding model variant can be
+    meaningfully clustered together (ViT-H and ViT-S are different vector spaces).
+    """
+
+    deployment_ids: list[str] = Field(..., description="Deployment UUIDs to aggregate clusters for")
+    min_confidence: float = Field(0.0, ge=0.0, le=1.0, description="Minimum cluster_confidence to include an image")

@@ -12,6 +12,10 @@ import type { AnnotationStatus } from '../ui/StatusBadge'
 import { Modal } from '../ui/Modal'
 import { isHumanReviewed, isAiLabel } from '../../lib/observations'
 import { getTimeOfDay, formatCaptureTime } from '../../lib/time'
+import { MediaGroup } from './MediaGroup'
+import { useMultiClusters } from '../../hooks/useBrain'
+import { MediaBulkActions, type BulkAction } from './MediaBulkActions'
+import { DeleteConfirmModal, AiModelPickerModal, PipelineLogModal } from './BulkActionModals'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -62,6 +66,7 @@ export interface ObservationRecord {
   // AN-1/AN-2: validation provenance + lifecycle (authoritative for status)
   review_status?: string | null
   source_type?: string | null
+  source_model_version?: string | null
   reviewer_id?: string | null
   annotator_id?: string | null
   bbox_x?: number | null
@@ -78,15 +83,8 @@ interface Props {
   initialSpecies?: string
 }
 
-type ThumbSize = 'small' | 'medium' | 'large'
 type TimeOfDay = 'all' | 'day' | 'night'
-
-/** Grid/thumbnail dimensions per size preset. */
-const THUMB = {
-  small:  { minWidth: 100, height: 80  },
-  medium: { minWidth: 140, height: 110 },
-  large:  { minWidth: 200, height: 160 },
-} as const
+type GroupBy = 'none' | 'cluster' | 'species' | 'sex' | 'life_stage' | 'annotation_type' | 'deployment' | 'model' | 'annotator'
 
 const INAT_BTN: React.CSSProperties = {
   padding: '0.3rem 0.6rem', fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap',
@@ -139,7 +137,22 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   const [filterSpecies, setFilterSpecies]       = useState<string>(initialSpecies ?? '')
   const [filterStatus, setFilterStatus]         = useState<string>('')
   const [filterAnnotator, setFilterAnnotator]   = useState<string>('')
-  const [thumbSize, setThumbSize]               = useState<ThumbSize>('medium')
+  const [filterModel, setFilterModel]           = useState<string>('')
+  const [filterAnnotationType, setFilterAnnotationType] = useState<string>('')
+  const [filterSex, setFilterSex]               = useState<string>('')
+  const [filterLifeStage, setFilterLifeStage]   = useState<string>('')
+  const [thumbScale, setThumbScale]             = useState(() => {
+    const saved = localStorage.getItem('ww:thumbScale')
+    return saved ? Number(saved) : 140
+  })
+  const [groupBy, setGroupBy]                   = useState<GroupBy>(() => {
+    return (localStorage.getItem('ww:groupBy') as GroupBy) || 'none'
+  })
+  const [clusterThreshold, setClusterThreshold] = useState(0.0)
+
+  // Persist thumbScale and groupBy to localStorage
+  useEffect(() => { localStorage.setItem('ww:thumbScale', String(thumbScale)) }, [thumbScale])
+  useEffect(() => { localStorage.setItem('ww:groupBy', groupBy) }, [groupBy])
 
   // ── Advanced filter state ─────────────────────────────────────────────────
   const [advancedOpen, setAdvancedOpen]   = useState(false)
@@ -154,11 +167,18 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
 
   // ── Phase 3: iNaturalist publish + tracking ───────────────────────────────
   const inat = useINat()
-  const [inatMode, setInatMode]         = useState(false)            // iNat selection mode
+  const [, setInatMode]         = useState(false)            // iNat selection mode
   const [inatSelected, setInatSelected] = useState<Set<string>>(new Set())
   const [inatStates, setInatStates]     = useState<Map<string, { state: INatState; uri: string | null }>>(new Map())
   const [inatBusy, setInatBusy]         = useState(false)
   const [inatMsg, setInatMsg]           = useState<string | null>(null)
+
+  // ── Phase 4: Unified selection mode (replaces separate iNat selection) ─────
+  const [selectionMode, setSelectionMode] = useState(false)
+  const [selectedIds, setSelectedIds]     = useState<Set<string>>(new Set())
+  const [showDeleteModal, setShowDeleteModal]   = useState(false)
+  const [showAiPicker, setShowAiPicker]         = useState(false)
+  const [pipelineLogs, setPipelineLogs]         = useState<string[] | null>(null)
   // Quick in-context connect: paste a personal API token (Pathway 2). The full
   // guided panel lives on the Other page; this is the convenience entry point.
   const connectInat = useCallback(async () => {
@@ -173,12 +193,12 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     }
   }, [inat])
 
-  const toggleInat = (id: string) => setInatSelected(prev => {
-    const next = new Set(prev)
-    if (next.has(id)) next.delete(id)
-    else next.add(id)
-    return next
-  })
+  // const toggleInat = (id: string) => setInatSelected(prev => {
+  //   const next = new Set(prev)
+  //   if (next.has(id)) next.delete(id)
+  //   else next.add(id)
+  //   return next
+  // })
 
   // Load iNat upload/sync state for a set of media (graceful if table absent).
   const loadInatStates = useCallback(async (ids: string[]) => {
@@ -197,10 +217,67 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     setInatStates(map)
   }, [])
 
+  // ── Unified selection helpers ──────────────────────────────────────────────
+  const toggleSelect = useCallback((id: string) => setSelectedIds(prev => {
+    const next = new Set(prev)
+    if (next.has(id)) next.delete(id); else next.add(id)
+    return next
+  }), [])
+
+  const handleBulkAction = useCallback(async (action: BulkAction) => {
+    if (action === 'delete') {
+      setShowDeleteModal(true)
+    } else if (action === 'ai') {
+      setShowAiPicker(true)
+    } else if (action === 'inat') {
+      if (!inat.connected) {
+        connectInat()
+        return
+      }
+      // Redirect to iNat upload using the unified selectedIds
+      setInatSelected(selectedIds)
+      setInatMode(true)
+      // Trigger upload immediately since photos are already selected
+      uploadToInat()
+    }
+  }, [inat.connected, connectInat, selectedIds])
+
+  const handleBatchDelete = useCallback(async (ids: string[]) => {
+    const resp = await fetch('/api/media/batch', {
+      method: 'DELETE',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ media_ids: ids }),
+    })
+    if (!resp.ok) throw new Error('Delete failed')
+    // Remove deleted media from local state
+    setMedia(prev => prev.filter(m => !ids.includes(m.id)))
+    setSelectedIds(new Set())
+    setSelectionMode(false)
+  }, [])
+
+  const handleRunAi = useCallback(async (models: string[]) => {
+    const ids = Array.from(selectedIds)
+    setPipelineLogs([`Starting AI pipeline for ${ids.length} images with models: ${models.join(', ')}…`])
+    try {
+      const resp = await fetch('/api/media/run-selected', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ media_ids: ids, steps: models }),
+      })
+      if (!resp.ok) throw new Error('Pipeline request failed')
+      const data = await resp.json()
+      setPipelineLogs(prev => [...(prev || []), `✓ Job queued: ${data.data?.job_id ?? 'unknown'}`])
+    } catch (e: any) {
+      setPipelineLogs(prev => [...(prev || []), `⚠ Error: ${e?.message || 'unknown'}`])
+    }
+  }, [selectedIds])
+
   // WS5-T6: honour initialDeploymentId on mount / when it changes
   useEffect(() => {
     if (initialDeploymentId) { setFilterDeployment(initialDeploymentId); setPage(0) }
   }, [initialDeploymentId])
+
+
 
   // Reset page when deployment filter changes
   useEffect(() => { setPage(0) }, [filterDeployment, deployments])
@@ -234,7 +311,7 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
         'observations(id, deployment_id, media_id, observation_type, scientific_name, vernacular_name, taxon_id, ' +
         'count, life_stage, sex, behavior, ' +
         'classification_method, classified_by, classification_probability, observation_comments, ' +
-        'review_status, source_type, reviewer_id, annotator_id, bbox_x, bbox_y, bbox_w, bbox_h)',
+        'review_status, source_type, source_model_version, reviewer_id, annotator_id, bbox_x, bbox_y, bbox_w, bbox_h)',
         { count: 'exact' }
       )
       .in('deployment_id', deploymentIds)
@@ -303,10 +380,37 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     return Array.from(names).sort()
   }, [media])
 
-  const annotatorList = useMemo(() => {
-    const ids = new Set<string>()
-    media.forEach(m => m.observations.forEach(o => { if (o.classified_by) ids.add(o.classified_by) }))
-    return Array.from(ids).sort()
+  const humanAnnotatorList = useMemo(() => {
+    const names = new Set<string>()
+    media.forEach(m => m.observations.forEach(o => {
+      if (o.classification_method === 'human' && o.classified_by) names.add(o.classified_by)
+    }))
+    return Array.from(names).sort()
+  }, [media])
+
+  const modelList = useMemo(() => {
+    const models = new Set<string>()
+    media.forEach(m => m.observations.forEach(o => {
+      const v = o.source_model_version || (o.classification_method === 'machine' ? o.classified_by : null)
+      if (v) models.add(v)
+    }))
+    return Array.from(models).sort().map(v => ({
+      value: v,
+      label: v.startsWith('speciesnet') ? `SpeciesNet (${v.split('-').pop()})` :
+             v.startsWith('bioclip')    ? `BioCLIP (${v.split('-').pop()})` : v,
+    }))
+  }, [media])
+
+  const sexList = useMemo(() => {
+    const vals = new Set<string>()
+    media.forEach(m => m.observations.forEach(o => { if (o.sex) vals.add(o.sex) }))
+    return Array.from(vals).sort()
+  }, [media])
+
+  const lifeStageList = useMemo(() => {
+    const vals = new Set<string>()
+    media.forEach(m => m.observations.forEach(o => { if (o.life_stage) vals.add(o.life_stage) }))
+    return Array.from(vals).sort()
   }, [media])
 
   // ── Client-side filter chain ──────────────────────────────────────────────
@@ -317,7 +421,27 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
       result = result.filter(m => m.observations.some(o => o.scientific_name === filterSpecies))
     }
     if (filterAnnotator) {
-      result = result.filter(m => m.observations.some(o => o.classified_by === filterAnnotator))
+      result = result.filter(m => m.observations.some(o =>
+        o.classification_method === 'human' && o.classified_by === filterAnnotator
+      ))
+    }
+    if (filterModel) {
+      result = result.filter(m => m.observations.some(o =>
+        (o.source_model_version === filterModel) ||
+        (o.classification_method === 'machine' && o.classified_by === filterModel)
+      ))
+    }
+    if (filterAnnotationType) {
+      result = result.filter(m => {
+        const hasBbox = m.observations.some(o => o.bbox_x != null)
+        return filterAnnotationType === 'bbox' ? hasBbox : !hasBbox
+      })
+    }
+    if (filterSex) {
+      result = result.filter(m => m.observations.some(o => o.sex === filterSex))
+    }
+    if (filterLifeStage) {
+      result = result.filter(m => m.observations.some(o => o.life_stage === filterLifeStage))
     }
     if (filterStatus) {
       result = result.filter(m => {
@@ -339,7 +463,102 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     }
 
     return result
-  }, [media, filterSpecies, filterAnnotator, filterStatus, filterDateFrom, filterDateTo, filterTime, tzByDeployment])
+  }, [media, filterSpecies, filterAnnotator, filterModel, filterAnnotationType, filterSex, filterLifeStage, filterStatus, filterDateFrom, filterDateTo, filterTime, tzByDeployment])
+
+  // ── Keyboard shortcuts ──────────────────────────────────────────────────────
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      // Ctrl/Cmd+A: select all visible media (only when in selection mode)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a' && selectionMode) {
+        e.preventDefault()
+        setSelectedIds(new Set(filtered.map(m => m.id)))
+      }
+      // Escape: exit selection mode or close detail modal
+      if (e.key === 'Escape') {
+        if (selectionMode) {
+          setSelectedIds(new Set())
+          setSelectionMode(false)
+        } else if (selectedMediaId) {
+          setSelectedMediaId(null)
+        }
+      }
+    }
+    window.addEventListener('keydown', handler)
+    return () => window.removeEventListener('keydown', handler)
+  }, [selectionMode, filtered, selectedMediaId])
+
+  // ── Cluster data (only fetched when groupBy === 'cluster') ─────────────────
+  const activeDeploymentIds = useMemo(() => {
+    if (filterDeployment) return [filterDeployment]
+    return deployments.map(d => d.id)
+  }, [deployments, filterDeployment])
+  const clustersQ = useMultiClusters(
+    groupBy === 'cluster' ? activeDeploymentIds : [],
+    clusterThreshold,
+  )
+
+  // ── Grouped media computation ─────────────────────────────────────────────
+  const groupedMedia = useMemo(() => {
+    if (groupBy === 'none') return null
+
+    const groups = new Map<string, MediaRecord[]>()
+    const deploymentNames = new Map(deployments.map(d => [d.id, d.location_name || d.id.slice(0, 8)]))
+
+    for (const m of filtered) {
+      let key: string
+      switch (groupBy) {
+        case 'cluster': {
+          // Cluster grouping uses the multi-cluster API response
+          if (!clustersQ.data) { key = '(Loading clusters…)'; break }
+          // const memberMap = new Map<string, string>()
+          // clustersQ.data.clusters.forEach(c => {
+            // Map media IDs to cluster labels from cluster_assignments
+            // The actual member media are in media_embeddings, not cluster_assignments
+          // })
+          // For now, check if this media is an outlier
+          if (clustersQ.data.outlier_media_ids.includes(m.id)) {
+            key = '🟡 Outliers'
+          } else {
+            key = '(Unclustered)'
+          }
+          break
+        }
+        case 'species':
+          key = m.observations[0]?.scientific_name || '(No species)'
+          break
+        case 'sex':
+          key = m.observations[0]?.sex || '(Unknown)'
+          break
+        case 'life_stage':
+          key = m.observations[0]?.life_stage || '(Unknown)'
+          break
+        case 'annotation_type':
+          key = m.observations.some(o => o.bbox_x != null) ? 'Bounding box' : 'Whole image'
+          break
+        case 'deployment':
+          key = deploymentNames.get(m.deployment_id) || m.deployment_id.slice(0, 8)
+          break
+        case 'model': {
+          const aiObs = m.observations.find(o => o.classification_method === 'machine')
+          key = aiObs?.source_model_version || aiObs?.classified_by || '(No AI model)'
+          break
+        }
+        case 'annotator': {
+          const humanObs = m.observations.find(o => o.classification_method === 'human')
+          key = humanObs?.classified_by || '(No annotator)'
+          break
+        }
+        default:
+          key = '(Ungrouped)'
+      }
+      const list = groups.get(key) || []
+      list.push(m)
+      groups.set(key, list)
+    }
+
+    // Sort groups by size descending
+    return Array.from(groups.entries()).sort((a, b) => b[1].length - a[1].length)
+  }, [filtered, groupBy, deployments, clustersQ.data])
 
   // ── KPI stats ─────────────────────────────────────────────────────────────
   const stats = useMemo(() => ({
@@ -391,31 +610,128 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     opacity: disabled ? 0.35 : 1,
   })
 
-  const { minWidth, height } = THUMB[thumbSize]
+  const minWidth = thumbScale
+  const height = Math.round(thumbScale * 0.78)
 
-  const thumbToggle = (
-    <div style={{ display: 'flex', border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
-      {(['small', 'medium', 'large'] as ThumbSize[]).map((s, i) => (
-        <button
-          key={s}
-          title={`${s.charAt(0).toUpperCase() + s.slice(1)} thumbnails`}
-          onClick={() => setThumbSize(s)}
-          style={{
-            padding: '0.35rem 0.7rem',
-            fontSize: '0.75rem',
-            border: 'none',
-            borderLeft: i > 0 ? '1px solid var(--border)' : 'none',
-            cursor: 'pointer',
-            backgroundColor: thumbSize === s ? 'var(--primary)' : 'transparent',
-            color: thumbSize === s ? '#fff' : 'var(--text-color)',
-            transition: 'background-color 0.15s',
-          }}
-        >
-          {s === 'small' ? 'S' : s === 'medium' ? 'M' : 'L'}
-        </button>
-      ))}
-    </div>
-  )
+  // ── Thumbnail card renderer (shared by flat + grouped grids) ──────────────
+  const renderThumbCard = (m: MediaRecord) => {
+    const imgUrl = resolveImageUrl(m)
+
+    // WS5-T4 / AN-2: derive status badge from the review_status contract
+    const annotStatus = deriveAnnotationStatus({
+      hasReviewed: m.observations.some(isHumanReviewed),
+      hasAi:       m.observations.some(isAiLabel),
+    })
+
+    // Top label: human-reviewed first, then AI
+    const sortedObs = [...m.observations].sort((a, b) => {
+      const ar = isHumanReviewed(a) ? 1 : 0
+      const br = isHumanReviewed(b) ? 1 : 0
+      return br - ar
+    })
+    const topObs = sortedObs[0] || null
+    const isEmpty = !!topObs && !topObs.scientific_name && topObs.observation_type === 'blank'
+    const label  = topObs?.scientific_name || (isEmpty ? 'Empty' : null)
+    const conf   = topObs?.classification_probability ?? null
+    const aiConfs = m.observations
+      .filter(o => isAiLabel(o) && o.classification_probability != null)
+      .map(o => o.classification_probability as number)
+    const lowestConf = aiConfs.length ? Math.min(...aiConfs) : null
+    const isSelected = selectedMediaId === m.id
+    const inatSt  = inatStates.get(m.id)
+    const sel = selectionMode && selectedIds.has(m.id)
+
+    return (
+      <div
+        key={m.id}
+        onClick={() => (selectionMode ? toggleSelect(m.id) : setSelectedMediaId(isSelected ? null : m.id))}
+        style={{
+          border: isSelected ? '2px solid var(--primary)' : sel ? '2px solid #74ac00' : '1px solid var(--border)',
+          borderRadius: 'var(--radius)',
+          overflow: 'hidden',
+          cursor: 'pointer',
+          backgroundColor: 'var(--surface)',
+          transition: 'border-color 0.15s, transform 0.15s',
+          transform: isSelected ? 'scale(1.02)' : undefined,
+        }}
+      >
+        {/* Thumbnail area */}
+        <div style={{
+          height,
+          backgroundColor: imgUrl ? undefined : 'rgba(0,0,0,0.04)',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          overflow: 'hidden',
+          position: 'relative',
+        }}>
+          {imgUrl ? (
+            <img
+              src={imgUrl}
+              alt={m.file_name || 'media'}
+              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+            />
+          ) : (
+            <span style={{ fontSize: '2rem', opacity: 0.3 }}>📷</span>
+          )}
+
+          {/* WS5-T4: Status badge — top-left overlay */}
+          <span style={{ position: 'absolute', top: 4, left: 4 }}>
+            <StatusBadge
+              status={annotStatus}
+              size="sm"
+              label={
+                annotStatus === 'ai' && lowestConf !== null
+                  ? `${(lowestConf * 100).toFixed(0)}%`
+                  : undefined
+              }
+            />
+          </span>
+
+          {/* Phase 3: iNaturalist dove badge — top-right overlay */}
+          {inatSt && (
+            <span style={{ position: 'absolute', top: 4, right: 4 }}>
+              <INatBadge state={inatSt.state} uri={inatSt.uri} />
+            </span>
+          )}
+
+          {/* Selection checkbox — bottom-left, only in select mode */}
+          {selectionMode && (
+            <span style={{
+              position: 'absolute', bottom: 4, left: 4, width: 18, height: 18,
+              borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
+              fontSize: '0.7rem', fontWeight: 700,
+              backgroundColor: sel ? '#74ac00' : 'rgba(0,0,0,0.45)',
+              color: '#fff', boxShadow: '0 0 0 1.5px rgba(255,255,255,0.85)',
+            }}>
+              {sel ? '✓' : ''}
+            </span>
+          )}
+        </div>
+
+        {/* Label bar */}
+        <div style={{ padding: '0.375rem 0.5rem', fontSize: '0.6875rem' }}>
+          <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+            {topObs?.scientific_name
+              ? label
+              : isEmpty
+                ? <span style={{ opacity: 0.6, fontStyle: 'italic' }}>Empty</span>
+                : <span style={{ opacity: 0.4 }}>No label</span>}
+          </div>
+          <div style={{ display: 'flex', justifyContent: 'space-between', opacity: 0.6, fontSize: '0.625rem' }}>
+            <span>{m.file_name || m.file_path.split('/').pop()}</span>
+            {conf !== null && <span>{(conf * 100).toFixed(0)}%</span>}
+          </div>
+          {m.timestamp && (
+            <div style={{ opacity: 0.5, fontSize: '0.625rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+              {formatCaptureTime(m.timestamp, tzByDeployment.get(m.deployment_id))}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div>
@@ -444,7 +760,26 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
               ) },
               { id: 'annotator', title: 'Annotator', content: (
                 <FilterSelect value={filterAnnotator} onChange={setFilterAnnotator} placeholder="Any annotator"
-                  options={annotatorList.map(a => ({ value: a, label: a }))} />
+                  options={humanAnnotatorList.map(a => ({ value: a, label: a }))} />
+              ) },
+              { id: 'model', title: 'AI Model', content: (
+                <FilterSelect value={filterModel} onChange={setFilterModel} placeholder="Any model"
+                  options={modelList} />
+              ) },
+              { id: 'annotation-type', title: 'Annotation', content: (
+                <FilterSelect value={filterAnnotationType} onChange={setFilterAnnotationType} placeholder="Any type"
+                  options={[
+                    { value: 'bbox',  label: '▣ Bounding box' },
+                    { value: 'whole', label: '▢ Whole image'  },
+                  ]} />
+              ) },
+              { id: 'sex', title: 'Sex', content: (
+                <FilterSelect value={filterSex} onChange={setFilterSex} placeholder="Any sex"
+                  options={sexList.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }))} />
+              ) },
+              { id: 'life-stage', title: 'Life stage', content: (
+                <FilterSelect value={filterLifeStage} onChange={setFilterLifeStage} placeholder="Any stage"
+                  options={lifeStageList.map(s => ({ value: s, label: s.charAt(0).toUpperCase() + s.slice(1) }))} />
               ) },
               {
                 id: 'refine', title: 'Refine',
@@ -469,9 +804,51 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
             ],
           },
           {
-            id: 'view', label: 'View', icon: '🗗',
+            id: 'group', label: 'Group', icon: '▦',
             groups: [
-              { id: 'thumbs', title: 'Thumbnail size', content: thumbToggle },
+              { id: 'group-mode', title: 'Group by', content: (
+                <FilterSelect value={groupBy} onChange={v => setGroupBy(v as GroupBy)} placeholder="None"
+                  options={[
+                    { value: 'none',            label: '— None' },
+                    { value: 'cluster',         label: '🧠 Cluster (embeddings)' },
+                    { value: 'species',         label: '🐾 Species' },
+                    { value: 'sex',             label: '♀♂ Sex' },
+                    { value: 'life_stage',      label: '🌱 Life stage' },
+                    { value: 'annotation_type', label: '▣ Annotation type' },
+                    { value: 'deployment',      label: '📍 Deployment' },
+                    { value: 'model',           label: '🤖 AI model' },
+                    { value: 'annotator',       label: '👤 Annotator' },
+                  ]} />
+              ) },
+              ...(groupBy === 'cluster' ? [{ id: 'cluster-threshold', title: 'Similarity', content: (
+                <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                  <span style={{ fontSize: '0.7rem', opacity: 0.6 }}>Loose</span>
+                  <input type="range" min={0} max={1} step={0.05} value={clusterThreshold}
+                    onChange={e => setClusterThreshold(+e.target.value)}
+                    style={{ width: 80, accentColor: 'var(--primary)', cursor: 'pointer' }} />
+                  <span style={{ fontSize: '0.7rem', opacity: 0.6 }}>Tight</span>
+                  <span style={{ fontSize: '0.7rem', fontWeight: 600, minWidth: '2rem' }}>{(clusterThreshold * 100).toFixed(0)}%</span>
+                  {clustersQ.isLoading && <span style={{ fontSize: '0.7rem', opacity: 0.5 }}>⏳</span>}
+                </div>
+              ) }] : []),
+            ],
+          },
+
+          {
+            id: 'select', label: 'Select', icon: '☑',
+            groups: [
+              { id: 'select-toggle', title: 'Mode', content: (
+                <button
+                  onClick={() => { setSelectionMode(v => !v); if (selectionMode) setSelectedIds(new Set()) }}
+                  style={selectionMode ? INAT_BTN_ACTIVE : INAT_BTN}
+                  title="Toggle selecting photos for bulk actions"
+                >
+                  {selectionMode ? '☑ Selecting' : '☐ Select photos'}
+                </button>
+              ) },
+              ...(selectionMode ? [{ id: 'select-count', title: 'Count', content: (
+                <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{selectedIds.size} selected</span>
+              ) }] : []),
             ],
           },
           ...(inat.enabled ? [{
@@ -482,36 +859,6 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
                 content: inat.connected
                   ? <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 600 }}>✓ {inat.username || 'Connected'}</span>
                   : <button onClick={connectInat} style={INAT_BTN}>🔗 Connect</button>,
-              },
-              {
-                id: 'inat-select', title: 'Selection',
-                content: (
-                  <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
-                    <button
-                      onClick={() => { setInatMode(v => !v); setInatSelected(new Set()) }}
-                      style={inatMode ? INAT_BTN_ACTIVE : INAT_BTN}
-                      title="Toggle selecting photos to publish to iNaturalist"
-                    >
-                      {inatMode ? '☑ Selecting' : '☐ Select photos'}
-                    </button>
-                    {inatMode && <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{inatSelected.size} selected</span>}
-                  </div>
-                ),
-              },
-              {
-                id: 'inat-upload', title: 'Publish',
-                content: (
-                  <button
-                    onClick={uploadToInat}
-                    disabled={!inat.connected || inatSelected.size === 0 || inatBusy}
-                    style={(!inat.connected || inatSelected.size === 0 || inatBusy)
-                      ? { ...INAT_BTN, opacity: 0.45, cursor: 'not-allowed' }
-                      : INAT_BTN_ACTIVE}
-                    title={!inat.connected ? 'Connect your iNaturalist account first (Account group)' : undefined}
-                  >
-                    {inatBusy ? '⏳ Uploading…' : `⬆ Upload ${inatSelected.size} to iNat`}
-                  </button>
-                ),
               },
               {
                 id: 'inat-sync', title: 'Community IDs',
@@ -557,6 +904,12 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
         {stats.noImage > 0 && (
           <span style={{ color: 'var(--warning, #f59e0b)' }}>• <strong>{stats.noImage}</strong> without hosted image</span>
         )}
+        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', marginLeft: 'auto', fontSize: '0.75rem', opacity: 0.7, flexShrink: 0 }}>
+          <span>🔍</span>
+          <input type="range" min={80} max={280} step={10} value={thumbScale}
+            onChange={e => setThumbScale(+e.target.value)}
+            style={{ width: 100, accentColor: 'var(--primary)', cursor: 'pointer' }} />
+        </label>
         {hasAdvancedFilters && (
           <button
             onClick={clearAdvanced}
@@ -574,6 +927,17 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
 
       {loading && <p style={{ opacity: 0.6 }}>Loading media…</p>}
       {error && <p style={{ color: 'var(--error)' }}>⚠ {error}</p>}
+
+      {/* ── Bulk action toolbar (unified selection mode) ──────────── */}
+      {selectionMode && (
+        <MediaBulkActions
+          selectedCount={selectedIds.size}
+          onSelectAll={() => setSelectedIds(new Set(filtered.map(m => m.id)))}
+          onClearSelection={() => { setSelectedIds(new Set()); setSelectionMode(false) }}
+          onAction={handleBulkAction}
+          inatConnected={!!inat.connected}
+        />
+      )}
 
       {/* ── No-image guidance banner ──────────────────────────────── */}
       {!loading && stats.noImage > 0 && stats.noImage === stats.total && (
@@ -603,135 +967,28 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
           {!loading && filtered.length === 0 && (
             <p style={{ opacity: 0.6, padding: '1rem 0' }}>No media records found for the selected filters.</p>
           )}
+          {/* Grouped view — collapsible sections */}
+          {groupedMedia ? groupedMedia.map(([groupLabel, groupItems]) => (
+            <MediaGroup key={groupLabel} label={groupLabel} count={groupItems.length}>
+              <div style={{
+                display: 'grid',
+                gridTemplateColumns: `repeat(auto-fill, minmax(${minWidth}px, 1fr))`,
+                gap: thumbScale < 120 ? '0.5rem' : '0.75rem',
+              }}>
+                {groupItems.map(m => renderThumbCard(m))}
+              </div>
+            </MediaGroup>
+          )) : (
+          /* Flat (ungrouped) grid */
           <div style={{
             display: 'grid',
             gridTemplateColumns: `repeat(auto-fill, minmax(${minWidth}px, 1fr))`,
-            gap: thumbSize === 'small' ? '0.5rem' : '0.75rem',
+            gap: thumbScale < 120 ? '0.5rem' : '0.75rem',
           }}>
-            {filtered.map(m => {
-              const imgUrl = resolveImageUrl(m)
-
-              // WS5-T4 / AN-2: derive status badge from the review_status contract
-              const annotStatus = deriveAnnotationStatus({
-                hasReviewed: m.observations.some(isHumanReviewed),
-                hasAi:       m.observations.some(isAiLabel),
-              })
-
-              // Top label: human-reviewed first, then AI
-              const sortedObs = [...m.observations].sort((a, b) => {
-                const ar = isHumanReviewed(a) ? 1 : 0
-                const br = isHumanReviewed(b) ? 1 : 0
-                return br - ar
-              })
-              const topObs = sortedObs[0] || null
-              // A reviewed "blank" observation = confirmed empty (no animals).
-              // Show "Empty" rather than the ambiguous "No label" placeholder.
-              const isEmpty = !!topObs && !topObs.scientific_name && topObs.observation_type === 'blank'
-              const label  = topObs?.scientific_name || (isEmpty ? 'Empty' : null)
-              const conf   = topObs?.classification_probability ?? null
-              // Badge shows the LOWEST-confidence AI detection in the image (the weakest
-              // link worth reviewing). The gear icon already signals "AI", so the badge
-              // text is just the percentage.
-              const aiConfs = m.observations
-                .filter(o => isAiLabel(o) && o.classification_probability != null)
-                .map(o => o.classification_probability as number)
-              const lowestConf = aiConfs.length ? Math.min(...aiConfs) : null
-              const isSelected = selectedMediaId === m.id
-              const inatSt  = inatStates.get(m.id)            // iNat upload/sync state (if any)
-              const inatSel = inatMode && inatSelected.has(m.id)
-
-              return (
-                <div
-                  key={m.id}
-                  onClick={() => (inatMode ? toggleInat(m.id) : setSelectedMediaId(isSelected ? null : m.id))}
-                  style={{
-                    border: isSelected ? '2px solid var(--primary)' : inatSel ? '2px solid #74ac00' : '1px solid var(--border)',
-                    borderRadius: 'var(--radius)',
-                    overflow: 'hidden',
-                    cursor: 'pointer',
-                    backgroundColor: 'var(--surface)',
-                    transition: 'border-color 0.15s, transform 0.15s',
-                    transform: isSelected ? 'scale(1.02)' : undefined,
-                  }}
-                >
-                  {/* Thumbnail area */}
-                  <div style={{
-                    height,
-                    backgroundColor: imgUrl ? undefined : 'rgba(0,0,0,0.04)',
-                    display: 'flex',
-                    alignItems: 'center',
-                    justifyContent: 'center',
-                    overflow: 'hidden',
-                    position: 'relative',
-                  }}>
-                    {imgUrl ? (
-                      <img
-                        src={imgUrl}
-                        alt={m.file_name || 'media'}
-                        style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
-                      />
-                    ) : (
-                      <span style={{ fontSize: '2rem', opacity: 0.3 }}>📷</span>
-                    )}
-
-                    {/* WS5-T4: Status badge — top-left overlay */}
-                    <span style={{ position: 'absolute', top: 4, left: 4 }}>
-                      <StatusBadge
-                        status={annotStatus}
-                        size="sm"
-                        label={
-                          annotStatus === 'ai' && lowestConf !== null
-                            ? `${(lowestConf * 100).toFixed(0)}%`
-                            : undefined
-                        }
-                      />
-                    </span>
-
-                    {/* Phase 3: iNaturalist dove badge — top-right overlay */}
-                    {inatSt && (
-                      <span style={{ position: 'absolute', top: 4, right: 4 }}>
-                        <INatBadge state={inatSt.state} uri={inatSt.uri} />
-                      </span>
-                    )}
-
-                    {/* iNat selection checkbox — bottom-left, only in select mode */}
-                    {inatMode && (
-                      <span style={{
-                        position: 'absolute', bottom: 4, left: 4, width: 18, height: 18,
-                        borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                        fontSize: '0.7rem', fontWeight: 700,
-                        backgroundColor: inatSel ? '#74ac00' : 'rgba(0,0,0,0.45)',
-                        color: '#fff', boxShadow: '0 0 0 1.5px rgba(255,255,255,0.85)',
-                      }}>
-                        {inatSel ? '✓' : ''}
-                      </span>
-                    )}
-                  </div>
-
-                  {/* Label bar */}
-                  <div style={{ padding: '0.375rem 0.5rem', fontSize: '0.6875rem' }}>
-                    <div style={{ fontWeight: 600, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                      {topObs?.scientific_name
-                        ? label
-                        : isEmpty
-                          ? <span style={{ opacity: 0.6, fontStyle: 'italic' }}>Empty</span>
-                          : <span style={{ opacity: 0.4 }}>No label</span>}
-                    </div>
-                    <div style={{ display: 'flex', justifyContent: 'space-between', opacity: 0.6, fontSize: '0.625rem' }}>
-                      <span>{m.file_name || m.file_path.split('/').pop()}</span>
-                      {conf !== null && <span>{(conf * 100).toFixed(0)}%</span>}
-                    </div>
-                    {m.timestamp && (
-                      <div style={{ opacity: 0.5, fontSize: '0.625rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                        {formatCaptureTime(m.timestamp, tzByDeployment.get(m.deployment_id))}
-                      </div>
-                    )}
-                  </div>
-                </div>
-              )
-            })}
+            {filtered.map(m => renderThumbCard(m))}
           </div>
+          )}
+
         </div>
 
         {/* Full-screen labeling modal */}
@@ -878,6 +1135,30 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
 
         </div>
       </Modal>
+
+      {/* ── Bulk action modals ──────────────────────────────────── */}
+      {showDeleteModal && (
+        <DeleteConfirmModal
+          mediaIds={Array.from(selectedIds)}
+          fileNames={filtered.filter(m => selectedIds.has(m.id)).map(m => m.file_name || m.file_path.split('/').pop() || m.id)}
+          onConfirm={handleBatchDelete}
+          onClose={() => setShowDeleteModal(false)}
+        />
+      )}
+      {showAiPicker && (
+        <AiModelPickerModal
+          count={selectedIds.size}
+          onRun={handleRunAi}
+          onClose={() => setShowAiPicker(false)}
+        />
+      )}
+      {pipelineLogs !== null && (
+        <PipelineLogModal
+          isRunning={pipelineLogs.length > 0 && !pipelineLogs[pipelineLogs.length - 1]?.startsWith('✓') && !pipelineLogs[pipelineLogs.length - 1]?.startsWith('⚠')}
+          logs={pipelineLogs}
+          onClose={() => setPipelineLogs(null)}
+        />
+      )}
     </div>
   )
 }

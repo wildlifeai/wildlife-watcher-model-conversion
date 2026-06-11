@@ -18,6 +18,7 @@ from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import limiter
 from app.middleware.request_id import RequestIDMiddleware
 from app.routers import (
+    auth,
     brain,
     camtrapdp,
     clustering,
@@ -95,6 +96,7 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── Routers ──────────────────────────────────────────────────────────
+app.include_router(auth.router)
 app.include_router(jobs.router)
 app.include_router(deployments.router)
 app.include_router(exif.router)

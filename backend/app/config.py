@@ -39,6 +39,13 @@ class Settings(BaseSettings):
     PUBLIC_API_ENABLED: bool = Field(False, description="Enable /api/v1/* endpoints")
     API_KEY_HASH_ROUNDS: int = Field(12, description="bcrypt rounds for API key hashing")
 
+    # ── Demo account ─────────────────────────────────────────────────
+    # Credentials for the shared read-only demo user (seeded by
+    # scripts/seed_demo.py). The /api/auth/demo-session endpoint is
+    # disabled unless both are set.
+    DEMO_EMAIL: str = Field("", description="Email of the shared demo account")
+    DEMO_PASSWORD: str = Field("", description="Password of the shared demo account")
+
     # ── Observability ────────────────────────────────────────────────
     SENTRY_DSN: Optional[str] = Field(None, description="Sentry DSN for error tracking")
     LOG_LEVEL: str = Field("info", description="Logging level")

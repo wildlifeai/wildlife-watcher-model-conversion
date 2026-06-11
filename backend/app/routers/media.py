@@ -6,10 +6,13 @@ GET /api/media/{media_id}/image?size=thumb → low-res thumbnail (grid)
 GET /api/media/{media_id}/image?size=full  → full resolution (detail panel)
 """
 
+import asyncio
+from datetime import datetime, timezone
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
 from app.config import settings
 from app.dependencies import get_current_user
@@ -155,5 +158,114 @@ async def enqueue_thumbnail_backfill(
     enqueue_local_job(backfill_thumbnails_job(job_id, deployment_id))
     return ApiResponse(
         data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id},
+        meta=ApiMeta(request_id=req_id),
+    )
+
+
+# ── Batch operations ─────────────────────────────────────────────────────────
+
+
+class BatchDeleteRequest(BaseModel):
+    """Soft-delete multiple media records."""
+
+    media_ids: list[str] = Field(..., max_length=500)
+
+
+@router.delete("/batch")
+async def batch_delete_media(
+    request: Request,
+    body: BatchDeleteRequest,
+    user=Depends(get_current_user),
+):
+    """Soft-delete multiple media records (sets deleted_at).
+
+    Idempotent: already-deleted media are silently skipped.
+    """
+    req_id = getattr(request.state, "request_id", None)
+    svc = supabase_client.create_service_client()
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _delete():
+        result = (
+            svc.table("media")
+            .update({"deleted_at": now})
+            .in_("id", body.media_ids)
+            .is_("deleted_at", "null")
+            .execute()
+        )
+        return len(result.data or [])
+
+    deleted = await asyncio.to_thread(_delete)
+    return ApiResponse(
+        data={"deleted": deleted, "requested": len(body.media_ids)},
+        meta=ApiMeta(request_id=req_id),
+    )
+
+
+class RunSelectedRequest(BaseModel):
+    """Queue a pipeline run for specific media IDs."""
+
+    media_ids: list[str] = Field(..., max_length=200)
+    steps: list[str] = Field(default=["speciesnet"], description="Pipeline step types to run")
+    confidence_threshold: float = Field(0.2, ge=0.0, le=1.0)
+
+
+@router.post("/run-selected")
+async def run_pipeline_selected(
+    request: Request,
+    body: RunSelectedRequest,
+    user=Depends(get_current_user),
+):
+    """Queue a pipeline run for specific media IDs (not the full deployment).
+
+    Looks up the deployment_id from the first media record, then runs the
+    pipeline with a media_ids filter.
+    """
+    req_id = getattr(request.state, "request_id", None)
+    if not body.media_ids:
+        return ApiResponse(
+            error=ApiError(code="VALIDATION_ERROR", message="media_ids cannot be empty."),
+            meta=ApiMeta(request_id=req_id),
+        )
+
+    svc = supabase_client.create_service_client()
+
+    def _lookup():
+        resp = (
+            svc.table("media")
+            .select("deployment_id")
+            .in_("id", body.media_ids[:1])
+            .limit(1)
+            .execute()
+        )
+        return resp.data[0]["deployment_id"] if resp.data else None
+
+    deployment_id = await asyncio.to_thread(_lookup)
+    if not deployment_id:
+        return ApiResponse(
+            error=ApiError(code="NOT_FOUND", message="No media found for the given IDs."),
+            meta=ApiMeta(request_id=req_id),
+        )
+
+    from app.jobs.dispatch import enqueue_job
+    from app.jobs.store import create_job
+
+    job_id = await create_job()
+    await enqueue_job(
+        "run_pipeline_job",
+        job_id,
+        deployment_id,
+        body.steps,
+        body.confidence_threshold,
+        body.media_ids,
+    )
+    return ApiResponse(
+        data={
+            "job_id": job_id,
+            "status": "queued",
+            "deployment_id": deployment_id,
+            "media_count": len(body.media_ids),
+            "steps": body.steps,
+        },
         meta=ApiMeta(request_id=req_id),
     )

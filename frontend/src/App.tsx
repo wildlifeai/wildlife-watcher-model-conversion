@@ -233,7 +233,7 @@ const USER_TABS = [
 ] as const
 
 function Layout({ children }: { children: React.ReactNode }) {
-  const { user, logout } = useAuth()
+  const { user, logout, isDemo } = useAuth()
   const location = useLocation()
 
   const { data: managedOrgs } = useQuery({
@@ -338,7 +338,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 
             {user && (
               <>
-                <UploadNavButton />
+                {!isDemo && <UploadNavButton />}
                 <AccountMenu
                   email={user.email ?? ''}
                   isOrgManager={isOrgManager}
@@ -351,6 +351,27 @@ function Layout({ children }: { children: React.ReactNode }) {
           </div>
         </div>
       </header>
+
+      {/* Demo banner — the session is a real (read-only) login, so the rest of
+          the app needs no demo-specific code paths. */}
+      {isDemo && (
+        <div style={{
+          backgroundColor: 'rgba(76,175,80,0.12)', borderBottom: '1px solid var(--border)',
+          padding: '0.5rem 0', fontSize: '0.8125rem', textAlign: 'center',
+        }}>
+          🔍 You're exploring a read-only demo with sample data.{' '}
+          <button
+            onClick={logout}
+            style={{
+              background: 'none', border: 'none', padding: 0, cursor: 'pointer',
+              color: 'var(--primary)', fontSize: 'inherit', fontWeight: 600, textDecoration: 'underline',
+            }}
+          >
+            Exit demo
+          </button>
+          {' '}and create an account to work with your own data.
+        </div>
+      )}
 
       <main style={{ flex: 1, padding: '2rem 0' }}>
         <div className="container">

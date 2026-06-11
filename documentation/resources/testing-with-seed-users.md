@@ -32,11 +32,11 @@ The seed data covers four distinct permission levels. Each level unlocks differe
 
 | Role | Example User | Website Capabilities |
 |------|-------------|---------------------|
-| **Platform Admin** (`ww_admin`) | `alice@ww.org` | Full platform access. Can see cross-org data. Admin tooling (if implemented). |
-| **Organisation Manager** | `laura@ww.org`, `bob@ww.org` | View/edit org details. Add/remove org members. Create projects. **Upload Model** page visible. |
-| **Project Admin** | `nancy@ww.org`, `oliver@ww.org` | Edit project details. Add/remove project members. Manage deployments within assigned projects. |
-| **Project Member** | `mark@ww.org`, `carol@ww.org` | View-only access to assigned projects and their deployments, media, and observations. |
-| **Unassigned Member** | `emma@ww.org`, `henry@ww.org` | Authenticated but no project assignments — sees empty My Data. |
+| **Platform Admin** (`ww_admin`) | `tui@ww.org` | Full platform access. Can see cross-org data. Admin tooling (if implemented). |
+| **Organisation Manager** | `kowhai@ww.org`, `tama@ww.org` | View/edit org details. Add/remove org members. Create projects. **Upload Model** page visible. |
+| **Project Admin** | `moana@ww.org`, `ariki@ww.org` | Edit project details. Add/remove project members. Manage deployments within assigned projects. |
+| **Project Member** | `rata@ww.org`, `ngaio@ww.org` | View-only access to assigned projects and their deployments, media, and observations. |
+| **Unassigned Member** | `hemi@ww.org`, `ria@ww.org` | Authenticated but no project assignments — sees empty My Data. |
 
 ### Feature Visibility by Role
 
@@ -67,13 +67,13 @@ Using `pytest` + the Supabase client, you can authenticate as each test user and
 
 | Test Scenario | Login As | API Call | Expected Result |
 |--------------|----------|----------|-----------------|
-| Org manager sees own org projects | `laura@ww.org` | `GET /api/projects` | Returns Tiger Tracking, Bird Migration only |
-| Org manager cannot see other org projects | `laura@ww.org` | `GET /api/projects` | Does NOT return Marine Life, Forest Patrol |
-| Project member sees assigned project | `carol@ww.org` | `GET /api/projects` | Returns Tiger Tracking only |
-| Project member cannot see unassigned project | `carol@ww.org` | `GET /api/projects` | Does NOT return Bird Migration |
-| Unassigned user sees no projects | `emma@ww.org` | `GET /api/projects` | Returns empty list |
-| Upload Model blocked for non-managers | `mark@ww.org` | `POST /api/models/convert` | Returns `403` |
-| CamtrapDP import succeeds for any authenticated user | `carol@ww.org` | `POST /api/camtrapdp/import` | Returns `200` with valid ZIP |
+| Org manager sees own org projects | `kowhai@ww.org` | `GET /api/projects` | Returns Wētāpunga Tracking, Kiwi Migration Study only |
+| Org manager cannot see other org projects | `kowhai@ww.org` | `GET /api/projects` | Does NOT return Tuatara Documentation, Jewelled Gecko Patrol |
+| Project member sees assigned project | `ngaio@ww.org` | `GET /api/projects` | Returns Wētāpunga Tracking only |
+| Project member cannot see unassigned project | `ngaio@ww.org` | `GET /api/projects` | Does NOT return Kiwi Migration Study |
+| Unassigned user sees no projects | `hemi@ww.org` | `GET /api/projects` | Returns empty list |
+| Upload Model blocked for non-managers | `rata@ww.org` | `POST /api/models/convert` | Returns `403` |
+| CamtrapDP import succeeds for any authenticated user | `ngaio@ww.org` | `POST /api/camtrapdp/import` | Returns `200` with valid ZIP |
 
 **Implementation approach:**
 
@@ -93,23 +93,23 @@ def login_as(email: str):
     client.auth.sign_in_with_password({"email": email, "password": SEED_PASSWORD})
     return client
 
-@pytest.mark.integration
+@pytest.rata.integration
 def test_org_manager_sees_own_projects():
-    client = login_as("laura@ww.org")
+    client = login_as("kowhai@ww.org")
     projects = client.table("projects").select("name").execute()
     names = [p["name"] for p in projects.data]
-    assert "Tiger Tracking Program" in names
-    assert "Marine Life Documentation" not in names
+    assert "Wētāpunga Tracking Program" in names
+    assert "Tuatara Documentation" not in names
 
-@pytest.mark.integration
+@pytest.rata.integration
 def test_unassigned_user_sees_no_projects():
-    client = login_as("emma@ww.org")
+    client = login_as("hemi@ww.org")
     projects = client.table("projects").select("name").execute()
     assert projects.data == []
 ```
 
 > [!WARNING]
-> These integration tests require a running dev Supabase instance with seeded data. They should be tagged with `@pytest.mark.integration` and excluded from the standard CI pipeline (which uses mock env vars). Run them manually or in a dedicated CI job that targets the dev environment.
+> These integration tests require a running dev Supabase instance with seeded data. They should be tagged with `@pytest.rata.integration` and excluded from the standard CI pipeline (which uses mock env vars). Run them manually or in a dedicated CI job that targets the dev environment.
 
 ### Tier 2: Browser-Level UI Validation (Frontend)
 
@@ -119,13 +119,13 @@ Using Playwright or Cypress against `http://localhost:5173` (with the backend po
 
 | Test Scenario | Login As | Check |
 |--------------|----------|-------|
-| Upload Model nav item visible for managers | `bob@ww.org` | `Upload Model` link present in header nav |
-| Upload Model nav item hidden for members | `mark@ww.org` | `Upload Model` link NOT in header nav |
-| My Data shows correct project count | `carol@ww.org` | Projects tab shows exactly 1 project |
-| My Data is empty for unassigned users | `emma@ww.org` | Projects tab shows "No projects" or empty state |
-| Map tab shows pins only for visible deployments | `oliver@ww.org` | Map markers correspond to Marine Life Documentation only |
-| Edit button visible for project admins | `nancy@ww.org` | Edit controls visible on Bird Migration Study |
-| Edit button hidden for project members | `frank@ww.org` | Edit controls NOT visible on Bird Migration Study |
+| Upload Model nav item visible for managers | `tama@ww.org` | `Upload Model` link present in header nav |
+| Upload Model nav item hidden for members | `rata@ww.org` | `Upload Model` link NOT in header nav |
+| My Data shows correct project count | `ngaio@ww.org` | Projects tab shows exactly 1 project |
+| My Data is empty for unassigned users | `hemi@ww.org` | Projects tab shows "No projects" or empty state |
+| Map tab shows pins only for visible deployments | `ariki@ww.org` | Map rataers correspond to Tuatara Documentation only |
+| Edit button visible for project admins | `moana@ww.org` | Edit controls visible on Kiwi Migration Study |
+| Edit button hidden for project members | `kiri@ww.org` | Edit controls NOT visible on Kiwi Migration Study |
 
 **Implementation approach:**
 
@@ -144,17 +144,17 @@ async function loginAs(page, email: string) {
 }
 
 test('org manager sees Upload Model nav link', async ({ page }) => {
-  await loginAs(page, 'bob@ww.org');
+  await loginAs(page, 'tama@ww.org');
   await expect(page.locator('nav >> text=Upload Model')).toBeVisible();
 });
 
 test('project member does NOT see Upload Model nav link', async ({ page }) => {
-  await loginAs(page, 'mark@ww.org');
+  await loginAs(page, 'rata@ww.org');
   await expect(page.locator('nav >> text=Upload Model')).not.toBeVisible();
 });
 
 test('unassigned user sees empty projects', async ({ page }) => {
-  await loginAs(page, 'emma@ww.org');
+  await loginAs(page, 'hemi@ww.org');
   await expect(page.locator('[data-testid="projects-list"]')).toBeEmpty();
 });
 ```
@@ -168,13 +168,13 @@ For quick manual testing during feature development, use these users:
 
 | I want to test… | Use this user | Why |
 |-----------------|--------------|-----|
-| Full admin capabilities | `alice@ww.org` | Platform admin (`ww_admin`) with cross-org visibility |
-| Org management features | `laura@ww.org` | Org manager + project admin in Wildlife Research |
-| Cross-org isolation | `oliver@ww.org` | Manager of Conservation Society — should NOT see Wildlife Research data |
-| Project-scoped editing | `nancy@ww.org` | Project admin (Bird Migration) but only org member — cannot manage the org itself |
-| Read-only project access | `mark@ww.org` | Project member — can view Tiger Tracking but cannot edit |
-| Cross-org project membership | `carol@ww.org` | General org member assigned to a Wildlife Research project |
-| Empty state / onboarding | `emma@ww.org` | Authenticated but unassigned — tests empty dashboards |
+| Full admin capabilities | `tui@ww.org` | Platform admin (`ww_admin`) with cross-org visibility |
+| Org management features | `kowhai@ww.org` | Org manager + project admin in Wildlife Research |
+| Cross-org isolation | `ariki@ww.org` | Manager of Conservation Society — should NOT see Wildlife Research data |
+| Project-scoped editing | `moana@ww.org` | Project admin (Kiwi Migration Study) but only org member — cannot manage the org itself |
+| Read-only project access | `rata@ww.org` | Project member — can view Wētāpunga Tracking but cannot edit |
+| Cross-org project membership | `ngaio@ww.org` | General org member assigned to a Wildlife Research project |
+| Empty state / onboarding | `hemi@ww.org` | Authenticated but unassigned — tests empty dashboards |
 | CI/CD model uploads | `apps@wildlife.ai` | System manager account used by deployment pipelines |
 
 ## Multi-Tenant Isolation Quick Checks
@@ -183,24 +183,24 @@ The seed data creates 4 organisations and 4 projects specifically to test data i
 
 ```
 General                         Wildlife Research Institute
-├── alice (ww_admin)            ├── laura (manager, Tiger admin)
-├── bob (manager)               ├── mark (member, Tiger member)
-├── carol → Tiger Tracking      ├── nancy (member, Bird admin)
-├── frank → Bird Migration      │
-├── david → Marine Life         Conservation Society
-├── grace → Marine Life         ├── oliver (manager, Marine admin)
-├── emma (unassigned)           ├── paula (member, Marine member)
-├── henry (unassigned)          │
-├── iris (unassigned)           Park Rangers Network
-├── jack (unassigned)           ├── quinn (manager, Forest admin)
-└── apps@wildlife.ai (manager)  └── rachel (member, Forest member)
+├── tui (ww_admin)            ├── kōwhai (manager, Tiger admin)
+├── tama (manager)               ├── rata (member, Tiger member)
+├── ngaio → Wētāpunga Tracking      ├── moana (member, Bird admin)
+├── kiri → Kiwi Migration Study      │
+├── tane → Tuatara Documentation         Conservation Society
+├── ata → Tuatara Documentation         ├── ariki (manager, Marine admin)
+├── hemi (unassigned)           ├── aroha (member, Marine member)
+├── ria (unassigned)          │
+├── rangi (unassigned)           Park Rangers Network
+├── manu (unassigned)           ├── ruru (manager, Forest admin)
+└── apps@wildlife.ai (manager)  └── weka (member, Forest member)
 ```
 
-When logged in as **Laura**, the RLS policies should ensure:
-- ✅ Tiger Tracking Program and Bird Migration Study are visible
+When logged in as **Kōwhai**, the RLS policies should ensure:
+- ✅ Wētāpunga Tracking Program and Kiwi Migration Study are visible
 - ✅ Wildlife Research Institute org details are editable
-- ❌ Marine Life Documentation is NOT visible
-- ❌ Forest Patrol System is NOT visible
+- ❌ Tuatara Documentation is NOT visible
+- ❌ Jewelled Gecko Patrol System is NOT visible
 - ❌ Conservation Society org details are NOT accessible
 
 ## Adding New Test Users

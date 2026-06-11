@@ -16,7 +16,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.config import settings
 from app.dependencies import get_current_user
-from app.schemas.brain import ConfirmClusterRequest, EmbedRequest, ReprocessAllRequest, ReprocessRequest, ReviewDecisionRequest
+from app.schemas.brain import ConfirmClusterRequest, EmbedRequest, MultiClusterRequest, ReprocessAllRequest, ReprocessRequest, ReviewDecisionRequest
 from app.schemas.common import ApiError, ApiMeta, ApiResponse
 from app.services.supabase_client import create_service_client
 
@@ -103,6 +103,87 @@ async def list_clusters(request: Request, deployment_id: str, user=Depends(get_c
 
     run_id, clusters = await asyncio.to_thread(_fetch)
     return ApiResponse(data={"embedding_run_id": run_id, "clusters": clusters}, meta=ApiMeta(request_id=req_id))
+
+
+@router.post("/clusters/multi")
+async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depends(get_current_user)):
+    """Aggregate clusters across multiple deployments.
+
+    Returns clusters from each deployment's latest completed embedding run,
+    grouped by model variant (ViT-H vs ViT-S are separate vector spaces).
+    Optionally filters member media by cluster_confidence >= min_confidence.
+    """
+    req_id = getattr(request.state, "request_id", None)
+    if not settings.FF_WILDLIFE_BRAIN_ENABLED:
+        return _disabled(req_id)
+
+    if not body.deployment_ids:
+        return ApiResponse(data={"clusters": [], "outlier_media_ids": [], "model_groups": []}, meta=ApiMeta(request_id=req_id))
+
+    svc = create_service_client()
+
+    def _fetch():
+        # 1. Get the latest completed embedding run per deployment.
+        runs_resp = (
+            svc.table("embedding_runs")
+            .select("id, deployment_id, model_name")
+            .in_("deployment_id", body.deployment_ids)
+            .eq("status", "complete")
+            .order("created_at", desc=True)
+            .execute()
+        )
+        if not runs_resp.data:
+            return [], [], []
+
+        # Keep only the latest run per deployment.
+        seen: dict[str, dict] = {}
+        for r in runs_resp.data:
+            if r["deployment_id"] not in seen:
+                seen[r["deployment_id"]] = r
+        latest_runs = list(seen.values())
+        run_ids = [r["id"] for r in latest_runs]
+
+        # 2. Fetch cluster assignments for all runs.
+        clusters_resp = (
+            svc.table("cluster_assignments")
+            .select("*")
+            .in_("embedding_run_id", run_ids)
+            .order("image_count", desc=True)
+            .execute()
+        )
+        clusters = clusters_resp.data or []
+
+        # 3. Fetch member media per cluster (with optional confidence filter).
+        members_query = (
+            svc.table("media_embeddings")
+            .select("media_id, cluster_id, deployment_id, cluster_confidence, is_outlier")
+            .in_("deployment_id", body.deployment_ids)
+        )
+        if body.min_confidence > 0:
+            members_query = members_query.gte("cluster_confidence", body.min_confidence)
+        members_resp = members_query.execute()
+        members = members_resp.data or []
+
+        # 4. Group by model variant (cross-variant is not meaningful).
+        run_model = {r["id"]: r.get("model_name", "unknown") for r in latest_runs}
+        model_groups: dict[str, list[str]] = {}
+        for r in latest_runs:
+            model = r.get("model_name", "unknown")
+            model_groups.setdefault(model, []).append(r["deployment_id"])
+
+        # Enrich clusters with their model variant.
+        for c in clusters:
+            c["model_name"] = run_model.get(c.get("embedding_run_id", ""), "unknown")
+
+        outlier_ids = [m["media_id"] for m in members if m.get("is_outlier")]
+
+        return clusters, outlier_ids, [{"model_name": k, "deployment_ids": v} for k, v in model_groups.items()]
+
+    clusters, outlier_ids, model_groups = await asyncio.to_thread(_fetch)
+    return ApiResponse(
+        data={"clusters": clusters, "outlier_media_ids": outlier_ids, "model_groups": model_groups},
+        meta=ApiMeta(request_id=req_id),
+    )
 
 
 @router.get("/umap/{deployment_id}")

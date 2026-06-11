@@ -95,6 +95,26 @@ export function useConfirmCluster(deploymentId?: string) {
   })
 }
 
+export interface MultiClusterResult {
+  clusters: (ClusterAssignment & { model_name?: string })[]
+  outlier_media_ids: string[]
+  model_groups: { model_name: string; deployment_ids: string[] }[]
+}
+
+export function useMultiClusters(deploymentIds: string[], minConfidence = 0) {
+  return useQuery({
+    queryKey: ['brain', 'clusters-multi', ...deploymentIds.sort(), minConfidence],
+    queryFn: async () => {
+      const r = (await apiClient.post('/api/brain/clusters/multi', {
+        deployment_ids: deploymentIds,
+        min_confidence: minConfidence,
+      })) as any
+      return r.data as MultiClusterResult
+    },
+    enabled: deploymentIds.length > 0,
+  })
+}
+
 export function useEmbedDeployment() {
   return useMutation({
     mutationFn: async (deploymentId: string) => {

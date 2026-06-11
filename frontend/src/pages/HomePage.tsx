@@ -5,6 +5,7 @@ import { useProjectSelection } from '../hooks/useProjectSelection'
 import { supabase } from '../config/supabase'
 import { QRCodeSVG } from 'qrcode.react'
 import { ThreeStepGuide, DEFAULT_SIGNED_IN_STEPS, DEFAULT_MARKETING_STEPS } from '../components/common/ThreeStepGuide'
+import { DemoLoginButton } from '../components/common/DemoLoginButton'
 
 const APP_STORE_URL = 'https://apps.apple.com/app/id6480342929'
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.wildlife.wildlifewatcher&pcampaignid=web_share'
@@ -201,22 +202,25 @@ function MarketingHero() {
           Analyse photos from your Wildlife Watchers, visualise your data, and share
           results — all in one place.
         </p>
-        <Link
-          to="/login"
-          className="btn"
-          id="hero-login-button"
-          style={{
-            display: 'inline-block',
-            padding: '0.875rem 2.5rem',
-            fontSize: '1.125rem',
-            fontWeight: 600,
-            textDecoration: 'none',
-            borderRadius: 'var(--radius)',
-            boxShadow: '0 4px 14px rgba(0,110,28,0.3)',
-          }}
-        >
-          Log in to get started
-        </Link>
+        <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+          <Link
+            to="/login"
+            className="btn"
+            id="hero-login-button"
+            style={{
+              display: 'inline-block',
+              padding: '0.875rem 2.5rem',
+              fontSize: '1.125rem',
+              fontWeight: 600,
+              textDecoration: 'none',
+              borderRadius: 'var(--radius)',
+              boxShadow: '0 4px 14px rgba(0,110,28,0.3)',
+            }}
+          >
+            Log in to get started
+          </Link>
+          <DemoLoginButton style={{ padding: '0.875rem 2.5rem', fontSize: '1.125rem' }} />
+        </div>
       </div>
 
       {/* ── Get the Mobile App ──────────────────────────────────────────── */}
