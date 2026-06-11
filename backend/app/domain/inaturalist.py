@@ -17,8 +17,8 @@ import structlog
 
 from app.services.inat_oauth import (
     INAT_API_BASE,
-    get_api_jwt,
     get_user_token,
+    resolve_api_jwt,
 )
 
 logger = structlog.get_logger()
@@ -46,7 +46,7 @@ async def get_inat_user_profile(user_id: str) -> Dict[str, Any]:
     if not token:
         raise INatDomainError("Not connected to iNaturalist")
 
-    api_jwt = await get_api_jwt(token["access_token"])
+    api_jwt = await resolve_api_jwt(token)
 
     async with httpx.AsyncClient(timeout=15) as client:
         response = await client.get(
@@ -94,7 +94,7 @@ async def create_observation(
     if not token:
         raise INatDomainError("Not connected to iNaturalist")
 
-    api_jwt = await get_api_jwt(token["access_token"])
+    api_jwt = await resolve_api_jwt(token)
 
     observation_data = {
         "observation": {
@@ -150,7 +150,7 @@ async def upload_observation_photo(
     if not token:
         raise INatDomainError("Not connected to iNaturalist")
 
-    api_jwt = await get_api_jwt(token["access_token"])
+    api_jwt = await resolve_api_jwt(token)
 
     files = {
         "file": (filename, photo_bytes, "image/jpeg"),

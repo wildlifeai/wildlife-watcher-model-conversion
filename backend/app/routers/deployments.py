@@ -82,3 +82,37 @@ async def validate_deployments(
             results[dep_id] = "not_found"
 
     return results
+
+
+@router.post("/backfill-timezones")
+async def backfill_timezones(
+    user: Any = Depends(get_current_user),
+) -> Dict[str, int]:
+    """Resolve and persist ``deployments.timezone`` for deployments that lack it.
+
+    Idempotent maintenance task: for every deployment with coordinates but no
+    timezone, derive the IANA zone from latitude/longitude (timezonefinder) and
+    store it so the UI can render capture times in local time. Run once after the
+    timezone column is deployed; new CamtrapDP imports populate it automatically.
+    """
+    from app.domain.photo_preprocessing import resolve_timezone
+
+    svc = create_service_client()
+    rows = (
+        svc.table("deployments")
+        .select("id, latitude, longitude, timezone")
+        .is_("timezone", "null")
+        .not_.is_("latitude", "null")
+        .not_.is_("longitude", "null")
+        .execute()
+        .data
+        or []
+    )
+    updated = 0
+    for dep in rows:
+        tz = resolve_timezone(dep.get("latitude"), dep.get("longitude"))
+        if not tz:
+            continue
+        svc.table("deployments").update({"timezone": tz}).eq("id", dep["id"]).execute()
+        updated += 1
+    return {"candidates": len(rows), "updated": updated}

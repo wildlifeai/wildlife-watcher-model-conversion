@@ -47,6 +47,24 @@ def _get_timezone_finder():
 # ── UTC → Local Time ────────────────────────────────────────────────
 
 
+def resolve_timezone(lat: Optional[float], lon: Optional[float]) -> Optional[str]:
+    """Resolve GPS coordinates to an IANA timezone name (e.g. ``Pacific/Auckland``).
+
+    Used to populate ``deployments.timezone`` so the website can render each
+    deployment's capture times in its local zone (DST handled by the IANA name).
+    Returns ``None`` when coordinates are missing or the zone can't be determined,
+    in which case callers fall back to UTC.
+    """
+    if lat is None or lon is None:
+        return None
+    try:
+        tf = _get_timezone_finder()
+        return tf.timezone_at(lat=lat, lng=lon)
+    except Exception as exc:
+        logger.warning("timezone_resolution_failed", lat=lat, lon=lon, error=str(exc))
+        return None
+
+
 def utc_to_local(utc_dt: datetime, lat: float, lon: float) -> datetime:
     """Convert a UTC datetime to local time using GPS coordinates.
 
@@ -57,8 +75,7 @@ def utc_to_local(utc_dt: datetime, lat: float, lon: float) -> datetime:
     try:
         from zoneinfo import ZoneInfo
 
-        tf = _get_timezone_finder()
-        tz_name = tf.timezone_at(lat=lat, lng=lon)
+        tz_name = resolve_timezone(lat, lon)
         if not tz_name:
             logger.debug("timezone_not_found", lat=lat, lon=lon)
             return utc_dt

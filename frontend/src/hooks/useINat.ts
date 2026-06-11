@@ -49,6 +49,20 @@ export function useINat() {
     if (d.authorization_url) window.location.href = d.authorization_url
   }, [])
 
+  // Pathway 2: connect with a personal API token the user pastes from
+  // https://www.inaturalist.org/users/api_token (no OAuth app / callback needed).
+  const setToken = useCallback(async (apiToken: string) => {
+    const d = unwrap(await apiClient.post('/api/inat/token', { api_token: apiToken.trim() }))
+    setConnected(!!d.connected)
+    setUsername(d.inat_username ?? null)
+  }, [])
+
+  const disconnect = useCallback(async () => {
+    await apiClient.post('/api/inat/disconnect')
+    setConnected(false)
+    setUsername(null)
+  }, [])
+
   const publish = useCallback(async (
     mediaIds: string[],
     opts?: { gap_seconds?: number; geoprivacy?: string },
@@ -67,5 +81,5 @@ export function useINat() {
     return unwrap(await apiClient.post('/api/inat/sync'))
   }, [])
 
-  return { connected, username, enabled, connect, publish, sync, refresh }
+  return { connected, username, enabled, connect, setToken, disconnect, publish, sync, refresh }
 }

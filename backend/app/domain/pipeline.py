@@ -17,7 +17,7 @@ import time
 import uuid
 from abc import ABC, abstractmethod
 from datetime import datetime, timezone
-from typing import Any, Optional
+from typing import Any, Awaitable, Callable, Optional
 
 import structlog
 
@@ -517,6 +517,7 @@ async def run_pipeline(
     config: dict[str, Any] | None = None,
     user_id: str | None = None,
     only_unannotated: bool = True,
+    on_step: Optional[Callable[[str, int, int], Awaitable[None]]] = None,
 ) -> PipelineRunResult:
     """Execute a sequence of pipeline steps on a deployment.
 
@@ -583,9 +584,13 @@ async def run_pipeline(
     step_results: list[PipelineStepResult] = []
     total_observations = 0
 
-    for step_type in steps:
+    for _idx, step_type in enumerate(steps):
         step = get_step(step_type)
         logger.info("pipeline_step_start", step=step_type.value, deployment_id=deployment_id)
+        if on_step is not None:
+            # Report step start so callers (e.g. the upload job) can surface granular
+            # AI-pipeline progress + logs instead of a frozen bar.
+            await on_step(step_type.value, _idx, len(steps))
         result = await step.run(media, deployment_id, config)
         step_results.append(result)
         total_observations += result.observations_created

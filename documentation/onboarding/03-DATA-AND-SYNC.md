@@ -99,6 +99,8 @@ upload_drive_images_job:
   → DRIVE_UPLOAD     google_drive.upload_analysis_images — hash-dedup skips files already in Drive
   → REGISTER MEDIA   insert `media` rows (file_path = gdrive://<id>, file_hash) so images appear in
                       the Annotations grid and the pipeline has something to run on
+                      (EXIF timestamps are normalised "YYYY:MM:DD HH:MM:SS" → ISO before insert —
+                       raw EXIF is rejected by Postgres and would silently create 0 media rows)
   → AUTO-ANNOTATE    enqueue auto_annotate_deployments (the AI pipeline, async) — see 04-AI-PIPELINE
   → CLEANUP          delete the Azure blobs; job completes
 ```
@@ -114,6 +116,29 @@ upload_drive_images_job:
 > **Local dev gotcha:** the Drive credential file is mounted by the **dev** compose, so always start
 > the API with both files: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`.
 > Starting with only the base compose drops the mount and the upload job fails to authenticate.
+
+## Timezones & capture time
+
+Camera EXIF timestamps are **UTC**, and `media.timestamp` (a `timestamptz`) stores that exact UTC
+instant — never local wall-clock. To show users "the time where the photo was taken", we format that
+instant in the **deployment's** timezone at display time.
+
+- **`deployments.timezone`** — an IANA zone name (e.g. `Pacific/Auckland`), owned by the `ww-backend`
+  schema (display-only; `media.timestamp` stays UTC). It is **app-populated** (no DB trigger):
+  `resolve_timezone(lat, lon)` in [`domain/photo_preprocessing.py`](../../backend/app/domain/photo_preprocessing.py)
+  derives it from the deployment's GPS via `timezonefinder`. CamtrapDP import sets it automatically;
+  existing/device deployments are filled by `POST /api/deployments/backfill-timezones` (idempotent).
+- **Display** — [`frontend/src/lib/time.ts`](../../frontend/src/lib/time.ts) (`formatCaptureTime`,
+  `getTimeOfDay`, `hourInTimezone`) renders the UTC instant in the deployment zone (with a label like
+  `10:44 am NZST`) and drives the day/night filter. **Store the IANA name, not a fixed offset**, so DST
+  is handled automatically (NZ is +12 in winter, +13 in summer).
+- **Graceful fallback** — when `timezone` is `NULL` (or the column isn't deployed yet) the UI falls
+  back to the **viewer's browser** zone, i.e. the previous behaviour. Deployment queries fetch the
+  column defensively (retry without it) so the app keeps working during the schema rollout.
+
+> **Why not store local time in the DB?** A `timestamptz` is an absolute instant; putting local
+> wall-clock in it loses the instant, breaks cross-deployment sorting, mishandles DST, and corrupts
+> CamtrapDP / Darwin Core export. One source of truth (UTC) + a per-deployment zone is the correct model.
 
 ## Supabase resources expected
 

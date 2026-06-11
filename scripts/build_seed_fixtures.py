@@ -61,7 +61,7 @@ _DEP_COLS = (
     "latitude, longitude, altitude, accuracy, deployment_status_id, "
     "deployment_start, deployment_end, capture_method_id, "
     "activity_detection_sensitivity_id, timelapse_interval_seconds, "
-    "camera_height, start_deployment_comments, end_deployment_comments"
+    "camera_height, start_deployment_comments, end_deployment_comments, timezone"
 )
 
 
@@ -150,7 +150,7 @@ def build_fixture_sql(records: list[dict]) -> str:
             "deployment_status_id, deployment_start, deployment_end, setup_by, ended_by, "
             "capture_method_id, activity_detection_sensitivity_id, "
             "timelapse_interval_seconds, camera_height, start_deployment_comments, "
-            "end_deployment_comments) VALUES",
+            "end_deployment_comments, timezone) VALUES",
             f"    ({sql_str(dep_id)}, {sql_str(proj_id)}, {sql_str(dev_id)}, "
             f"{sql_str(d.get('name'))}, {sql_str(d.get('location_name'))}, "
             f"{sql_str(d.get('location_description'))}, {sql_str(d.get('latitude'))}, "
@@ -161,10 +161,13 @@ def build_fixture_sql(records: list[dict]) -> str:
             f"{sql_str(d.get('activity_detection_sensitivity_id') or 2)}, "
             f"{sql_str(d.get('timelapse_interval_seconds'))}, {sql_str(d.get('camera_height'))}, "
             f"{sql_str(d.get('start_deployment_comments'))}, "
-            f"{sql_str(d.get('end_deployment_comments'))})",
+            # IANA timezone for local-time display; carried through from the source DB
+            # (NULL → UI falls back to UTC, or run POST /api/deployments/backfill-timezones).
+            f"{sql_str(d.get('end_deployment_comments'))}, {sql_str(d.get('timezone'))})",
             "  ON CONFLICT (id) DO UPDATE SET project_id = EXCLUDED.project_id, "
             "device_id = EXCLUDED.device_id, name = EXCLUDED.name, "
-            "latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, updated_at = now();",
+            "latitude = EXCLUDED.latitude, longitude = EXCLUDED.longitude, "
+            "timezone = EXCLUDED.timezone, updated_at = now();",
             "",
             f"  RAISE NOTICE '  ✓ template fixture: % (deployment %)', "
             f"{sql_str(d.get('name'))}, {sql_str(dep_id)};",

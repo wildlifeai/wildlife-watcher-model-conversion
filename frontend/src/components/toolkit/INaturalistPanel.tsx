@@ -8,10 +8,16 @@ interface INatStatus {
   inat_icon_url?: string
 }
 
+const INAT_TOKEN_URL = 'https://www.inaturalist.org/users/api_token'
+
 export function INaturalistPanel() {
   const [status, setStatus] = useState<INatStatus | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  // Pathway 2 (pasted personal token) state
+  const [showPaste, setShowPaste] = useState(false)
+  const [tokenInput, setTokenInput] = useState('')
+  const [submitting, setSubmitting] = useState(false)
 
   const checkStatus = useCallback(async () => {
     try {
@@ -48,17 +54,23 @@ export function INaturalistPanel() {
     }
   }, [checkStatus])
 
-  const handleConnect = async () => {
+  // Pathway 2: submit the personal API token the user pasted. No OAuth app /
+  // callback URL needed — the token is validated server-side, then stored.
+  const handleSubmitToken = async () => {
+    const token = tokenInput.trim()
+    if (!token) { setError('Paste your iNaturalist API token first'); return }
     try {
+      setSubmitting(true)
       setError(null)
-      const res = await apiClient.get('/api/inat/auth')
+      const res = await apiClient.post('/api/inat/token', { api_token: token })
       const data = res.data ?? res
-      if (data.authorization_url) {
-        // Redirect to iNaturalist in same window
-        window.location.href = data.authorization_url
-      }
+      setStatus({ connected: !!data.connected, inat_username: data.inat_username })
+      setTokenInput('')
+      setShowPaste(false)
     } catch (e: any) {
-      setError(e.message || 'Failed to start iNaturalist connection')
+      setError(e.message || 'That token was rejected — make sure you copied the full api_token')
+    } finally {
+      setSubmitting(false)
     }
   }
 
@@ -170,7 +182,7 @@ export function INaturalistPanel() {
           ) : (
             <button
               className="btn"
-              onClick={handleConnect}
+              onClick={() => setShowPaste((v) => !v)}
               disabled={loading}
               style={{
                 fontSize: '0.75rem',
@@ -180,11 +192,52 @@ export function INaturalistPanel() {
                 border: 'none',
               }}
             >
-              {loading ? '…' : 'Connect'}
+              {loading ? '…' : showPaste ? 'Cancel' : 'Connect'}
             </button>
           )}
         </div>
       </div>
+
+      {/* Pathway 2: paste a personal API token (no OAuth app required). */}
+      {!status?.connected && showPaste && (
+        <div style={{ marginTop: '0.85rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+          <div style={{ fontSize: '0.75rem', opacity: 0.8 }}>
+            1. Open{' '}
+            <a href={INAT_TOKEN_URL} target="_blank" rel="noopener noreferrer" style={{ color: '#74ac00', fontWeight: 600 }}>
+              your iNaturalist API token ↗
+            </a>{' '}
+            (log in to iNaturalist if asked) and copy the long <code>api_token</code> value.
+            <br />2. Paste it below and Connect. The token lasts ~24h, so you may need to re-paste a fresh one daily.
+          </div>
+          <textarea
+            value={tokenInput}
+            onChange={(e) => setTokenInput(e.target.value)}
+            placeholder="Paste your iNaturalist api_token here…"
+            rows={3}
+            spellCheck={false}
+            style={{
+              width: '100%', fontFamily: 'monospace', fontSize: '0.7rem',
+              padding: '0.5rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+              background: 'var(--surface-2)', color: 'var(--text)', resize: 'vertical',
+            }}
+          />
+          <div>
+            <button
+              className="btn"
+              onClick={handleSubmitToken}
+              disabled={submitting || !tokenInput.trim()}
+              style={{
+                fontSize: '0.75rem', padding: '0.375rem 0.9rem',
+                background: submitting || !tokenInput.trim() ? 'var(--surface-2)' : 'linear-gradient(135deg, #74ac00, #4a7c00)',
+                color: submitting || !tokenInput.trim() ? 'var(--text)' : '#fff',
+                border: 'none', cursor: submitting || !tokenInput.trim() ? 'not-allowed' : 'pointer',
+              }}
+            >
+              {submitting ? 'Connecting…' : 'Connect'}
+            </button>
+          </div>
+        </div>
+      )}
 
       {error && error !== 'login_required' && error !== 'not_enabled' && (
         <div

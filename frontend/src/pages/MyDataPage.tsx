@@ -98,6 +98,7 @@ interface Deployment {
   deployment_start: string | null
   deployment_end: string | null
   created_at: string
+  timezone?: string | null
   observation_count?: number
 }
 
@@ -216,17 +217,21 @@ export function MyDataPage() {
     setLoading(true)
     setError(null)
 
-    let query = supabase
-      .from('deployments')
-      .select('id, project_id, location_name, latitude, longitude, deployment_start, deployment_end, created_at, projects(name), devices(name)')
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
-
-    if (selectedProjectIds.length > 0) {
-      query = query.in('project_id', selectedProjectIds)
+    // `timezone` may not be deployed yet → retry without it so the page still loads.
+    const baseCols = 'id, project_id, location_name, latitude, longitude, deployment_start, deployment_end, created_at, projects(name), devices(name)'
+    const runQuery = (cols: string) => {
+      let q = supabase
+        .from('deployments')
+        .select(cols)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+      if (selectedProjectIds.length > 0) q = q.in('project_id', selectedProjectIds)
+      return q
     }
 
-    query.then(({ data, error: err }) => {
+    ;(async () => {
+      let { data, error: err } = await runQuery(`${baseCols}, timezone`)
+      if (err) ({ data, error: err } = await runQuery(baseCols))
       if (err) { setError(err.message); setLoading(false); return }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rows = (data || []).map((d: any) => ({
@@ -238,7 +243,7 @@ export function MyDataPage() {
       })) as Deployment[]
       setDeployments(rows)
       setLoading(false)
-    })
+    })()
   }, [user, tab, selectedProjectIds])
 
   // ── Fetch observations for Map + Reports tabs ───────────────────────────────
@@ -570,7 +575,7 @@ export function MyDataPage() {
       {/* ── Media tab ──────────────────────────────────────────────────────── */}
       {tab === 'media' && (
         <MediaBrowser
-          deployments={deployments.map(d => ({ id: d.id, location_name: d.location_name, project_id: d.project_id }))}
+          deployments={deployments.map(d => ({ id: d.id, location_name: d.location_name, project_id: d.project_id, timezone: d.timezone }))}
         />
       )}
     </div>

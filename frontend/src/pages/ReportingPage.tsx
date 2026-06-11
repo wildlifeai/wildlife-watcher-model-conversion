@@ -437,7 +437,7 @@ export function ReportingPage() {
             style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', fontSize: '0.8125rem' }}>
             ◀ Analysis
           </button>
-          <button className="btn" onClick={() => navigate('/my-data')}
+          <button className="btn" onClick={() => navigate('/insights')}
             style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', fontSize: '0.8125rem' }}>
             My Data
           </button>

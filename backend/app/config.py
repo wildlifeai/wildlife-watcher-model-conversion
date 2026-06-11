@@ -54,6 +54,14 @@ class Settings(BaseSettings):
 
     # ── v4 Wildlife Brain feature flags ──────────────────────────────
     FF_SPECIESNET_ENABLED: bool = Field(False, description="Use SpeciesNet (detector + classifier) as the pipeline step")
+    SPECIESNET_RUN_MODE: str = Field(
+        "single_thread",
+        description=(
+            "SpeciesNet predict() run mode. 'single_thread' is required when running in-process "
+            "in the API server: 'multi_thread'/'multi_process' race the torch.fx detector trace "
+            "across threads/forks and fail with NameError('module is not installed as a submodule')."
+        ),
+    )
     FF_BIOCLIP_ENABLED: bool = Field(False, description="Enable the BioCLIP secondary/zero-shot classifier pipeline step")
     FF_WILDLIFE_BRAIN_ENABLED: bool = Field(False, description="Enable DINOv3 embedding / clustering / similarity endpoints")
     FF_MEDIA_REGISTRY_ENABLED: bool = Field(False, description="Enable Media Registry thumbnails/crops + resolve endpoints")
@@ -112,6 +120,16 @@ class Settings(BaseSettings):
     INAT_CLIENT_ID: str = Field("")
     INAT_CLIENT_SECRET: str = Field("")
     INAT_REDIRECT_URI: str = Field("https://wildlifewatcher.ai/inat/callback")
+
+    # ── Notifications: email channel ─────────────────────────────────
+    # Provider for the email notification channel. 'none' = no-op stub (logs instead of
+    # sending). Set to 'azure_acs' | 'resend' | 'sendgrid' + the provider's credentials
+    # to enable real delivery (see services/email_channel.py).
+    EMAIL_PROVIDER: str = Field("none", description="Email provider: none|azure_acs|resend|sendgrid")
+    EMAIL_FROM: str = Field("", description="From address for notification emails")
+    RESEND_API_KEY: str = Field("")
+    SENDGRID_API_KEY: str = Field("")
+    ACS_CONNECTION_STRING: str = Field("")
 
     model_config = {"env_file": ("../.env", ".env"), "env_file_encoding": "utf-8", "extra": "ignore"}
 

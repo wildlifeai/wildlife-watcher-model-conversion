@@ -11,6 +11,7 @@ import { StatusBadge, deriveAnnotationStatus } from '../ui/StatusBadge'
 import type { AnnotationStatus } from '../ui/StatusBadge'
 import { Modal } from '../ui/Modal'
 import { isHumanReviewed, isAiLabel } from '../../lib/observations'
+import { getTimeOfDay, formatCaptureTime } from '../../lib/time'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -31,8 +32,15 @@ export interface MediaRecord {
   media_comments: string | null
   exif_metadata: Record<string, unknown> | null
   // 1:1 rendition row (MEDIA_PREP): public Supabase Storage URLs for the grid.
-  media_assets: MediaAssetRecord[] | null
+  // PostgREST returns this to-one embed as a single object (media_id is the PK),
+  // but tolerate an array too in case the relationship is ever re-detected.
+  media_assets: MediaAssetRecord | MediaAssetRecord[] | null
   observations: ObservationRecord[]
+}
+
+/** Normalise the media_assets embed (PostgREST returns a single object for to-one). */
+function firstAsset(a: MediaAssetRecord | MediaAssetRecord[] | null | undefined): MediaAssetRecord | undefined {
+  return Array.isArray(a) ? a[0] : (a ?? undefined)
 }
 
 export interface ObservationRecord {
@@ -63,9 +71,11 @@ export interface ObservationRecord {
 }
 
 interface Props {
-  deployments: { id: string; location_name: string | null; project_id: string }[]
+  deployments: { id: string; location_name: string | null; project_id: string; timezone?: string | null }[]
   /** WS5-T6: Pre-select a deployment when navigating from the upload dock. */
   initialDeploymentId?: string
+  /** Pre-apply a species filter (e.g. deep-linked from an Insights chart). */
+  initialSpecies?: string
 }
 
 type ThumbSize = 'small' | 'medium' | 'large'
@@ -99,7 +109,7 @@ const INAT_BTN_ACTIVE: React.CSSProperties = { ...INAT_BTN, backgroundColor: '#7
  *   rendition will show the placeholder).
  */
 function resolveImageUrl(media: MediaRecord): string | null {
-  const asset = media.media_assets?.[0]
+  const asset = firstAsset(media.media_assets)
   const rendition = asset?.thumbnail_url || asset?.preview_url
   if (rendition) return rendition
   const filePath = media.file_path
@@ -109,17 +119,16 @@ function resolveImageUrl(media: MediaRecord): string | null {
   return `${apiBase}/api/media/${media.id}/image?size=thumb`
 }
 
-/** Hour-based day/night split: day = 06:00–18:00. */
-function getTimeOfDay(timestamp: string | null): 'day' | 'night' {
-  if (!timestamp) return 'day'   // unknown → treat as day (no false exclusions)
-  const h = new Date(timestamp).getHours()
-  return h >= 6 && h < 18 ? 'day' : 'night'
-}
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
+export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies }: Props) {
   const { user } = useAuth()
+  // deployment_id → IANA timezone, so capture times render in the photo's local zone.
+  const tzByDeployment = useMemo(
+    () => new Map(deployments.map(d => [d.id, d.timezone ?? null])),
+    [deployments],
+  )
   const [media, setMedia]         = useState<MediaRecord[]>([])
   const [loading, setLoading]     = useState(false)
   const [error, setError]         = useState<string | null>(null)
@@ -127,7 +136,7 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
 
   // ── Primary filters (in ControlBar) ──────────────────────────────────────
   const [filterDeployment, setFilterDeployment] = useState<string>('')
-  const [filterSpecies, setFilterSpecies]       = useState<string>('')
+  const [filterSpecies, setFilterSpecies]       = useState<string>(initialSpecies ?? '')
   const [filterStatus, setFilterStatus]         = useState<string>('')
   const [filterAnnotator, setFilterAnnotator]   = useState<string>('')
   const [thumbSize, setThumbSize]               = useState<ThumbSize>('medium')
@@ -150,6 +159,19 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
   const [inatStates, setInatStates]     = useState<Map<string, { state: INatState; uri: string | null }>>(new Map())
   const [inatBusy, setInatBusy]         = useState(false)
   const [inatMsg, setInatMsg]           = useState<string | null>(null)
+  // Quick in-context connect: paste a personal API token (Pathway 2). The full
+  // guided panel lives on the Other page; this is the convenience entry point.
+  const connectInat = useCallback(async () => {
+    const t = window.prompt(
+      'Paste your iNaturalist API token\n(open https://www.inaturalist.org/users/api_token, log in, and copy the api_token value):',
+    )
+    if (!t || !t.trim()) return
+    try {
+      await inat.setToken(t)
+    } catch {
+      setInatMsg('iNaturalist token was rejected — copy the full api_token and try again.')
+    }
+  }, [inat])
 
   const toggleInat = (id: string) => setInatSelected(prev => {
     const next = new Set(prev)
@@ -313,11 +335,11 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
       result = result.filter(m => !m.timestamp || m.timestamp <= filterDateTo + 'T23:59:59')
     }
     if (filterTime !== 'all') {
-      result = result.filter(m => getTimeOfDay(m.timestamp) === filterTime)
+      result = result.filter(m => getTimeOfDay(m.timestamp, tzByDeployment.get(m.deployment_id)) === filterTime)
     }
 
     return result
-  }, [media, filterSpecies, filterAnnotator, filterStatus, filterDateFrom, filterDateTo, filterTime])
+  }, [media, filterSpecies, filterAnnotator, filterStatus, filterDateFrom, filterDateTo, filterTime, tzByDeployment])
 
   // ── KPI stats ─────────────────────────────────────────────────────────────
   const stats = useMemo(() => ({
@@ -459,7 +481,7 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
                 id: 'inat-account', title: 'Account',
                 content: inat.connected
                   ? <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 600 }}>✓ {inat.username || 'Connected'}</span>
-                  : <button onClick={() => inat.connect()} style={INAT_BTN}>🔗 Connect</button>,
+                  : <button onClick={connectInat} style={INAT_BTN}>🔗 Connect</button>,
               },
               {
                 id: 'inat-select', title: 'Selection',
@@ -607,6 +629,13 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
               const isEmpty = !!topObs && !topObs.scientific_name && topObs.observation_type === 'blank'
               const label  = topObs?.scientific_name || (isEmpty ? 'Empty' : null)
               const conf   = topObs?.classification_probability ?? null
+              // Badge shows the LOWEST-confidence AI detection in the image (the weakest
+              // link worth reviewing). The gear icon already signals "AI", so the badge
+              // text is just the percentage.
+              const aiConfs = m.observations
+                .filter(o => isAiLabel(o) && o.classification_probability != null)
+                .map(o => o.classification_probability as number)
+              const lowestConf = aiConfs.length ? Math.min(...aiConfs) : null
               const isSelected = selectedMediaId === m.id
               const inatSt  = inatStates.get(m.id)            // iNat upload/sync state (if any)
               const inatSel = inatMode && inatSelected.has(m.id)
@@ -652,8 +681,8 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
                         status={annotStatus}
                         size="sm"
                         label={
-                          annotStatus === 'ai' && conf !== null
-                            ? `AI ${(conf * 100).toFixed(0)}%`
+                          annotStatus === 'ai' && lowestConf !== null
+                            ? `${(lowestConf * 100).toFixed(0)}%`
                             : undefined
                         }
                       />
@@ -693,6 +722,11 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
                       <span>{m.file_name || m.file_path.split('/').pop()}</span>
                       {conf !== null && <span>{(conf * 100).toFixed(0)}%</span>}
                     </div>
+                    {m.timestamp && (
+                      <div style={{ opacity: 0.5, fontSize: '0.625rem', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                        {formatCaptureTime(m.timestamp, tzByDeployment.get(m.deployment_id))}
+                      </div>
+                    )}
                   </div>
                 </div>
               )
@@ -704,6 +738,7 @@ export function MediaBrowser({ deployments, initialDeploymentId }: Props) {
         {selectedMedia && (
           <MediaDetail
             media={selectedMedia}
+            timezone={tzByDeployment.get(selectedMedia.deployment_id)}
             onClose={() => setSelectedMediaId(null)}
             onUpdated={handleMediaUpdated}
             onNext={advanceToNext}

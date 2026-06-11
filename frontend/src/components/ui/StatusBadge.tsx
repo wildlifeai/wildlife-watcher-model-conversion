@@ -43,7 +43,7 @@ const STYLES: Record<AnnotationStatus, BadgeStyle> = {
     bg:           'rgba(20,184,166,0.88)',
     border:       'rgba(20,184,166,0.4)',
     color:        '#ffffff',
-    icon:         'AI',
+    icon:         '⚙',
     defaultLabel: 'AI',
   },
   reviewed: {

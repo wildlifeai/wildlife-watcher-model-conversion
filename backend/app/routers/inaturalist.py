@@ -18,10 +18,11 @@ Observations:
 
 import asyncio
 import secrets
+import time
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from app.config import settings
@@ -53,6 +54,7 @@ from app.services.inat_oauth import (
     get_user_token,
     revoke_user_token,
     store_user_token,
+    validate_api_token,
 )
 from app.services.supabase_client import create_service_client
 
@@ -61,10 +63,19 @@ logger = structlog.get_logger()
 router = APIRouter(prefix="/api/inat", tags=["inaturalist"])
 
 
-def _check_enabled():
-    """Guard: reject requests if iNat integration is disabled."""
+def _check_feature():
+    """Guard: reject requests if the iNat feature flag is off.
+
+    Used by the Pathway-2 (pasted personal token) endpoints, which need no OAuth
+    app — only the feature flag.
+    """
     if not settings.FF_INAT_ENABLED:
         raise HTTPException(404, detail="iNaturalist integration is not enabled")
+
+
+def _check_enabled():
+    """Guard for the OAuth (Pathway-1) endpoints: feature flag + a registered app."""
+    _check_feature()
     if not settings.INAT_CLIENT_ID:
         raise HTTPException(500, detail="INAT_CLIENT_ID not configured")
 
@@ -137,13 +148,51 @@ async def inat_callback(
     )
 
 
+@router.post("/token")
+async def inat_set_token(
+    request: Request,
+    api_token: str = Body(..., embed=True, description="Personal iNaturalist API JWT from /users/api_token"),
+    user=Depends(get_current_user),
+):
+    """Connect via a manually-pasted personal API token (Pathway 2 — no OAuth app).
+
+    The user copies their JWT from https://www.inaturalist.org/users/api_token and
+    pastes it here. We validate it against iNat, then store it like any other token
+    bundle so publish/sync work unchanged. The JWT is ~24h-lived, so reconnecting is
+    just re-pasting a fresh one.
+    """
+    _check_feature()
+
+    jwt = (api_token or "").strip()
+    try:
+        username = await validate_api_token(jwt)
+    except INatOAuthError as e:
+        raise HTTPException(400, detail=str(e))
+
+    await store_user_token(
+        user.id,
+        {
+            "api_token": jwt,
+            "manual": True,
+            "inat_username": username,
+            "obtained_at": int(time.time()),
+            "expires_in": 86400,  # iNat personal JWTs last ~24h
+        },
+    )
+
+    return ApiResponse(
+        data=INatConnectionStatus(connected=True, inat_username=username).model_dump(),
+        meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
+    )
+
+
 @router.get("/status")
 async def inat_status(
     request: Request,
     user=Depends(get_current_user),
 ):
     """Check if the current user is connected to iNaturalist."""
-    _check_enabled()
+    _check_feature()
 
     token = await get_user_token(user.id)
     if not token:
@@ -177,7 +226,7 @@ async def inat_disconnect(
     user=Depends(get_current_user),
 ):
     """Disconnect from iNaturalist (revoke stored token)."""
-    _check_enabled()
+    _check_feature()
 
     await revoke_user_token(user.id)
 
@@ -201,7 +250,7 @@ async def create_inat_observation(
     Uses the Wildlife Watcher AI model's prediction as the species_guess.
     Default geoprivacy is 'obscured' to protect sensitive locations.
     """
-    _check_enabled()
+    _check_feature()
 
     try:
         result = await create_observation(
@@ -235,7 +284,7 @@ async def publish_to_inat(
     each photo through the backend proxy (bypassing browser CORS), and records
     the mapping in inat_observations / inat_observation_media for status tracking.
     """
-    _check_enabled()
+    _check_feature()
 
     try:
         result = await publish_media_to_inat(
@@ -266,7 +315,7 @@ async def sync_inat(
     source_type='consensus'. A scheduled job can call the same domain function
     with no user filter to sync everyone.
     """
-    _check_enabled()
+    _check_feature()
 
     result = await sync_inat_identifications(user_id=user.id)
     return ApiResponse(
@@ -284,7 +333,7 @@ async def get_inat_observation_status(
 
     This is a public query — no auth required for public observations.
     """
-    _check_enabled()
+    _check_feature()
 
     try:
         status = await get_observation_status(observation_id)
@@ -303,7 +352,7 @@ async def batch_poll_inat_observations(
     request: Request,
 ):
     """Batch poll identification status for multiple observations."""
-    _check_enabled()
+    _check_feature()
 
     try:
         results = await batch_poll_observations(body.observation_ids)

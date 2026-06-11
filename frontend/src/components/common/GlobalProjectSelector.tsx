@@ -1,11 +1,13 @@
 import { useState, useRef, useEffect } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { useProjectSelection } from '../../hooks/useProjectSelection'
-import { Folder, ChevronDown, CheckSquare, Square } from 'lucide-react'
+import { Folder, ChevronDown, CheckSquare, Square, Settings2 } from 'lucide-react'
 
 export function GlobalProjectSelector() {
   const { projects, selectedProjectIds, toggleProject, selectAll, clearAll, isLoading } = useProjectSelection()
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const navigate = useNavigate()
 
   // Close dropdown when clicking outside
   useEffect(() => {
@@ -114,6 +116,19 @@ export function GlobalProjectSelector() {
                 </div>
               )
             })}
+          </div>
+          {/* Manage projects → Settings */}
+          <div
+            onClick={() => { setIsOpen(false); navigate('/settings') }}
+            style={{
+              display: 'flex', alignItems: 'center', gap: '0.5rem',
+              padding: '0.55rem 0.75rem', cursor: 'pointer', fontSize: '0.8125rem',
+              borderTop: '1px solid var(--border)', color: 'var(--primary)', fontWeight: 600,
+            }}
+            className="hover:bg-gray-50 transition-colors"
+          >
+            <Settings2 size={15} />
+            <span>Manage projects…</span>
           </div>
         </div>
       )}

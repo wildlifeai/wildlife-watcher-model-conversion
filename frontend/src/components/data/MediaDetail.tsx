@@ -5,9 +5,12 @@ import type { ObservationRecord, MediaRecord } from './MediaBrowser'
 import { humanCreateFields, humanReviewFields, isHumanReviewed, isAiLabel } from '../../lib/observations'
 import { SpeciesPicker } from './SpeciesPicker'
 import { StatusBadge } from '../ui/StatusBadge'
+import { formatCaptureTime } from '../../lib/time'
 
 interface Props {
   media: MediaRecord
+  /** Deployment IANA timezone for rendering the capture time in local time. */
+  timezone?: string | null
   onClose: () => void
   onUpdated: (updated: MediaRecord) => void
   /** Step to the next image (also used for Confirm/Blank auto-advance). */
@@ -43,7 +46,8 @@ function resolveImageUrl(media: MediaRecord, size: 'thumb' | 'full' = 'full'): s
   // Prefer the public Supabase rendition (MEDIA_PREP) — the auth-gated proxy below
   // can't load from a plain <img> tag, so for gdrive:// originals it's the only
   // thing that renders. Full view favours the larger preview_url.
-  const asset = media.media_assets?.[0]
+  // media_assets is a to-one embed → PostgREST returns a single object (tolerate array).
+  const asset = Array.isArray(media.media_assets) ? media.media_assets[0] : (media.media_assets ?? undefined)
   const rendition = size === 'full'
     ? (asset?.preview_url || asset?.thumbnail_url)
     : (asset?.thumbnail_url || asset?.preview_url)
@@ -79,7 +83,7 @@ function ExifSection({ exif }: { exif: Record<string, unknown> | null }) {
   )
 }
 
-export function MediaDetail({ media, onClose, onUpdated, onNext, onPrev }: Props) {
+export function MediaDetail({ media, timezone, onClose, onUpdated, onNext, onPrev }: Props) {
   const { user } = useAuth()
   const imgUrl = resolveImageUrl(media)
 
@@ -368,7 +372,7 @@ export function MediaDetail({ media, onClose, onUpdated, onNext, onPrev }: Props
 
         {/* ── Metadata ─────────────────────────────────────── */}
         <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', fontSize: '0.75rem', opacity: 0.7 }}>
-          {media.timestamp && <div>📅 {new Date(media.timestamp).toLocaleString()}</div>}
+          {media.timestamp && <div>📅 {formatCaptureTime(media.timestamp, timezone)}</div>}
           <div>📁 {media.file_mediatype}</div>
           {media.observations.filter(isAiLabel).length > 0 && (
             <div>🔍 {media.observations.filter(isAiLabel).length} AI detection{media.observations.filter(isAiLabel).length > 1 ? 's' : ''}</div>

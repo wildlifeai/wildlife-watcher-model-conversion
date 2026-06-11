@@ -26,6 +26,10 @@ services:
       - GOOGLE_DRIVE_FOLDER_ID=${GOOGLE_DRIVE_FOLDER_ID:-}
       - GOOGLE_SERVICE_ACCOUNT_JSON=${GOOGLE_SERVICE_ACCOUNT_JSON:-}
       - GOOGLE_DRIVE_MAX_FILE_SIZE_MB=${GOOGLE_DRIVE_MAX_FILE_SIZE_MB:-50}
+      # iNaturalist OAuth
+      - INAT_CLIENT_ID=${INAT_CLIENT_ID:-}
+      - INAT_CLIENT_SECRET=${INAT_CLIENT_SECRET:-}
+      - INAT_REDIRECT_URI=${INAT_REDIRECT_URI:-https://wildlifewatcher.ai/inat/callback}
       # Feature Flags
       - FF_INAT_ENABLED=${FF_INAT_ENABLED:-false}
       - FF_ML_ENABLED=${FF_ML_ENABLED:-false}

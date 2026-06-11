@@ -35,6 +35,9 @@ export interface DataTableProps<T> {
   onRowClick?: (row: T) => void
   /** Rows the caller considers "selected" — highlighted with a green tint. */
   selectedKeys?: Set<string>
+  /** When set, a leading checkbox column appears and selection changes are reported here
+   *  (drives bulk actions). `selectedKeys` holds the current selection. */
+  onSelectionChange?: (keys: Set<string>) => void
   /** Extra content rendered to the right of the search box (e.g. a Create button). */
   toolbar?: React.ReactNode
   /** Cap displayed rows (client-side paging). 0 = no limit. Default 0. */
@@ -80,6 +83,7 @@ export function DataTable<T>({
   emptyMessage = 'No records found.',
   onRowClick,
   selectedKeys,
+  onSelectionChange,
   toolbar,
   pageSize = 0,
 }: DataTableProps<T>) {
@@ -238,6 +242,22 @@ export function DataTable<T>({
         <table style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead>
             <tr>
+              {onSelectionChange && (
+                <th style={{ ...thStyle, width: 36, cursor: 'default', textAlign: 'center' }}>
+                  <input
+                    type="checkbox"
+                    aria-label="Select all"
+                    checked={paged.length > 0 && paged.every(r => selectedKeys?.has(rowKey(r)))}
+                    onChange={e => {
+                      const next = new Set(selectedKeys ?? [])
+                      if (e.target.checked) paged.forEach(r => next.add(rowKey(r)))
+                      else paged.forEach(r => next.delete(rowKey(r)))
+                      onSelectionChange(next)
+                    }}
+                    style={{ cursor: 'pointer' }}
+                  />
+                </th>
+              )}
               {visibleColumns.map(col => (
                 <th
                   key={col.key}
@@ -266,7 +286,7 @@ export function DataTable<T>({
             {paged.length === 0 ? (
               <tr>
                 <td
-                  colSpan={visibleColumns.length}
+                  colSpan={visibleColumns.length + (onSelectionChange ? 1 : 0)}
                   style={{ ...tdStyle, textAlign: 'center', opacity: 0.5, padding: '2.5rem' }}
                 >
                   {emptyMessage}
@@ -294,6 +314,21 @@ export function DataTable<T>({
                         : 'transparent'
                     }}
                   >
+                    {onSelectionChange && (
+                      <td style={{ ...tdStyle, width: 36, textAlign: 'center' }} onClick={e => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          aria-label="Select row"
+                          checked={!!isSelected}
+                          onChange={() => {
+                            const next = new Set(selectedKeys ?? [])
+                            if (next.has(key)) next.delete(key); else next.add(key)
+                            onSelectionChange(next)
+                          }}
+                          style={{ cursor: 'pointer' }}
+                        />
+                      </td>
+                    )}
                     {visibleColumns.map(col => (
                       <td key={col.key} style={{ ...tdStyle, ...col.cellStyle }}>
                         {col.render ? col.render(row) : getVal(row, col)}

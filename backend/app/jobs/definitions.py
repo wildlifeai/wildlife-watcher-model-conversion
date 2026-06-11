@@ -22,8 +22,43 @@ from app.jobs.store import (
     update_summary,
 )
 from app.schemas.job import EventType, JobStatus, ProgressEvent, ProgressPhase
+from app.services.notifications_service import emit_detection_notifications
 
 logger = structlog.get_logger()
+
+# Human-readable labels for AI pipeline steps, surfaced in the upload progress log.
+_STEP_LABEL = {
+    "media_prep": "Generating thumbnails",
+    "speciesnet": "Detecting & classifying species",
+    "animal_crop": "Cropping animals",
+    "bioclip": "Running BioCLIP classifier",
+}
+_STEP_EMOJI = {
+    "media_prep": "🖼️",
+    "speciesnet": "🦊",
+    "animal_crop": "✂️",
+    "bioclip": "🧬",
+}
+
+
+def _normalize_exif_timestamp(ts):
+    """Convert an EXIF datetime (``YYYY:MM:DD HH:MM:SS``, colons in the date) to ISO.
+
+    Postgres rejects the raw EXIF form ("date/time field value out of range", 22008),
+    which silently fails the whole media insert. Returns the value unchanged if it's
+    None or already ISO/parseable by the DB.
+    """
+    if not isinstance(ts, str):
+        return ts
+    ts = ts.strip()
+    if not ts:
+        return None
+    for fmt in ("%Y:%m:%d %H:%M:%S", "%Y:%m:%d %H:%M:%S%z"):
+        try:
+            return datetime.strptime(ts, fmt).isoformat()
+        except ValueError:
+            continue
+    return ts  # already ISO (or unknown) — let the DB validate
 
 
 async def convert_model_job(job_id: str, user_id: str, model_id: str):
@@ -394,6 +429,30 @@ async def download_github_pretrained_job(job_id: str, user_id: str, org_id: str,
         raise
 
 
+def build_pipeline_steps() -> list:
+    """Build the ordered pipeline step list from the enabled feature flags.
+
+    Returns an empty list when ML/pipeline are disabled (or no per-step flags are on),
+    in which case callers skip the AI pipeline entirely. Single source of truth shared by
+    the upload job's inline AI phase and the standalone ``auto_annotate_deployments``.
+    """
+    from app.config import settings
+    from app.schemas.pipeline import PipelineStepType
+
+    if not (settings.FF_ML_ENABLED and settings.FF_PIPELINE_ENABLED):
+        return []
+
+    steps: list = []
+    if settings.FF_MEDIA_REGISTRY_ENABLED:
+        steps.append(PipelineStepType.MEDIA_PREP)
+    if settings.FF_SPECIESNET_ENABLED:
+        steps.append(PipelineStepType.SPECIESNET)
+        steps.append(PipelineStepType.ANIMAL_CROP)
+    if settings.FF_BIOCLIP_ENABLED:
+        steps.append(PipelineStepType.BIOCLIP)
+    return steps
+
+
 async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | None = None) -> None:
     """Run the AI annotation pipeline on freshly-uploaded deployments (best-effort).
 
@@ -405,22 +464,9 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
     already-annotated deployment re-runs it (duplicate AI observations). Fine for fresh
     deployments; scope-to-new-media is a future enhancement.
     """
-    from app.config import settings
-
-    if not (settings.FF_ML_ENABLED and settings.FF_PIPELINE_ENABLED):
-        return
-
     from app.domain.pipeline import run_pipeline
-    from app.schemas.pipeline import PipelineStepType
 
-    steps: list[PipelineStepType] = []
-    if settings.FF_MEDIA_REGISTRY_ENABLED:
-        steps.append(PipelineStepType.MEDIA_PREP)
-    if settings.FF_SPECIESNET_ENABLED:
-        steps.append(PipelineStepType.SPECIESNET)
-        steps.append(PipelineStepType.ANIMAL_CROP)
-    if settings.FF_BIOCLIP_ENABLED:
-        steps.append(PipelineStepType.BIOCLIP)
+    steps = build_pipeline_steps()
     if not steps:
         return
 
@@ -428,6 +474,7 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
         try:
             logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
             await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id)
+            await emit_detection_notifications(dep_id)
             logger.info("auto_annotate_complete", deployment_id=dep_id)
         except Exception as exc:
             logger.warning("auto_annotate_failed", deployment_id=dep_id, error=str(exc))
@@ -526,8 +573,11 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                 content, _ = await retrieve_blob(entry["blob_id"])
 
                 download_completed += 1
-                progress = 0.05 + (0.35 * (download_completed / total_files))
-                await update_job(job_id, progress=min(progress, 0.40))
+                # Budget: download 0.05→0.20, drive-upload 0.20→0.45, register/cleanup
+                # →0.50, AI pipeline 0.50→1.0 (the AI phase is the longest, so it owns
+                # the bulk of the bar instead of the bar freezing at ~99%).
+                progress = 0.05 + (0.15 * (download_completed / total_files))
+                await update_job(job_id, progress=min(progress, 0.20))
 
                 if content:
                     await update_summary(job_id, downloaded_inc=1)
@@ -683,8 +733,8 @@ async def upload_drive_images_job(job_id: str, payload: dict):
             elif action == "uploaded":
                 drive_completed = index
                 await update_summary(job_id, uploaded_inc=1)
-                progress = 0.40 + (0.50 * (index / total))
-                await update_job(job_id, progress=min(progress, 0.90))
+                progress = 0.20 + (0.25 * (index / total))
+                await update_job(job_id, progress=min(progress, 0.45))
                 await emit_event(
                     job_id,
                     ProgressEvent(
@@ -699,8 +749,8 @@ async def upload_drive_images_job(job_id: str, payload: dict):
             elif action == "skipped":
                 drive_completed = index
                 await update_summary(job_id, skipped_inc=1)
-                progress = 0.40 + (0.50 * (index / total))
-                await update_job(job_id, progress=min(progress, 0.90))
+                progress = 0.20 + (0.25 * (index / total))
+                await update_job(job_id, progress=min(progress, 0.45))
                 await emit_event(
                     job_id,
                     ProgressEvent(
@@ -793,7 +843,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                 "file_path": f"gdrive://{uf['file_id']}",
                 "file_name": uf.get("filename") or "image.jpg",
                 "file_mediatype": "image/jpeg",
-                "timestamp": uf.get("timestamp"),
+                "timestamp": _normalize_exif_timestamp(uf.get("timestamp")),
                 "file_public": False,
                 "file_hash": uf.get("file_hash"),
             }
@@ -809,7 +859,23 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                     svc.table("media").insert(chunk).execute()
                     media_created += len(chunk)
                 except Exception as exc:
-                    logger.warning("media_register_failed", error=str(exc), job_id=job_id)
+                    # A batch insert is all-or-nothing, so one bad row strands the whole
+                    # chunk (and silently leaves images with no media → empty Annotations).
+                    # Fall back to per-row inserts so good rows still land and the
+                    # offending row is identified.
+                    logger.warning("media_register_chunk_failed", error=str(exc), job_id=job_id)
+                    for row in chunk:
+                        try:
+                            svc.table("media").insert(row).execute()
+                            media_created += 1
+                        except Exception as row_exc:
+                            logger.warning(
+                                "media_register_failed",
+                                error=str(row_exc),
+                                file_name=row.get("file_name"),
+                                timestamp=row.get("timestamp"),
+                                job_id=job_id,
+                            )
             logger.info("media_registered", count=media_created, job_id=job_id)
             await emit_event(
                 job_id,
@@ -820,28 +886,14 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                 ),
             )
 
-            # Auto-run the AI annotation pipeline (async, best-effort) so species
-            # observations populate without a manual trigger. The upload job still
-            # completes promptly; annotations appear in the grid as the pipeline runs.
-            from app.config import settings as _settings
-
-            if _settings.FF_ML_ENABLED and _settings.FF_PIPELINE_ENABLED:
-                from app.jobs.runner import enqueue_local_job
-
-                dep_ids = sorted({r["deployment_id"] for r in media_rows})
-                enqueue_local_job(auto_annotate_deployments(dep_ids, payload.get("user_id")))
-                await emit_event(
-                    job_id,
-                    ProgressEvent(
-                        type=EventType.PROGRESS,
-                        phase=ProgressPhase.DRIVE_UPLOAD,
-                        message="🤖 AI annotation started — labels will appear in Annotations shortly",
-                    ),
-                )
+            # NOTE: the AI pipeline is NOT triggered here. It runs once, inline, in the
+            # dedicated AI_PIPELINE phase below (after cleanup) so it has proper progress
+            # events and the job's final status reflects it. Triggering it here as well
+            # caused two concurrent pipelines per deployment (the torch.fx detector race).
 
         # ── Phase 3: CLEANUP ─────────────────────────────────
         await start_phase(job_id, ProgressPhase.CLEANUP)
-        await update_job(job_id, progress=0.92)
+        await update_job(job_id, progress=0.47)
 
         blob_ids = [entry["blob_id"] for entry in file_entries]
 
@@ -868,8 +920,8 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                             message=f"🧹 Cleaning up temporary buffers ({completed}/{total})",
                         ),
                     )
-                    progress = 0.92 + (0.08 * (completed / total))
-                    await update_job(job_id, progress=min(progress, 0.99))
+                    progress = 0.47 + (0.03 * (completed / total))
+                    await update_job(job_id, progress=min(progress, 0.50))
             return completed
 
         deleted = await _cleanup_blobs()
@@ -878,10 +930,9 @@ async def upload_drive_images_job(job_id: str, payload: dict):
 
         await complete_phase(job_id, ProgressPhase.CLEANUP)
 
-        # ── Phase 4: AI PIPELINE (auto-run per deployment after Drive sync) ─
+        # ── Phase 4: AI PIPELINE (auto-run once per deployment after Drive sync) ─
         # Imports deferred to keep the top-level module lightweight.
         from app.domain.pipeline import run_pipeline  # noqa: PLC0415
-        from app.schemas.pipeline import PipelineStepType  # noqa: PLC0415
 
         _user_id = payload.get("user_id")
         # Unique deployment IDs present in this upload batch
@@ -891,30 +942,41 @@ async def upload_drive_images_job(job_id: str, payload: dict):
             if entry.get("deployment") and entry.get("deployment", {}).get("id")
         })
 
+        # Step set from the enabled flags (same source as auto_annotate_deployments),
+        # so this single inline run includes SpeciesNet/BioCLIP/etc. when enabled.
+        _steps = build_pipeline_steps()
         pipeline_errors = 0
-        if _dep_ids:
+        if _dep_ids and _steps:
             await start_phase(job_id, ProgressPhase.AI_PIPELINE)
-            _default_steps = [
-                PipelineStepType.MEDIA_PREP,
-                PipelineStepType.SPECIESNET,
-                PipelineStepType.ANIMAL_CROP,
-            ]
+            # The AI phase owns the tail of the progress bar (0.50 → 1.0): it is by far
+            # the longest phase, so the bar keeps moving + logs a line per step instead
+            # of freezing at the end of the upload.
+            _ai_total = max(1, len(_dep_ids) * len(_steps))
+            _ai_done = 0
+
             for _dep_id in _dep_ids:
-                await emit_event(
-                    job_id,
-                    ProgressEvent(
-                        type=EventType.PROGRESS,
-                        phase=ProgressPhase.AI_PIPELINE,
-                        message=f"🤖 Running AI analysis for deployment {_dep_id[:8]}…",
-                    ),
-                )
+                async def _on_step(step_name: str, _i: int, _n: int, _dep=_dep_id) -> None:
+                    nonlocal _ai_done
+                    await emit_event(
+                        job_id,
+                        ProgressEvent(
+                            type=EventType.PROGRESS,
+                            phase=ProgressPhase.AI_PIPELINE,
+                            message=f"{_STEP_EMOJI.get(step_name, '🔬')} {_STEP_LABEL.get(step_name, step_name)} — {_dep[:8]}…",
+                        ),
+                    )
+                    await update_job(job_id, progress=min(0.50 + 0.48 * (_ai_done / _ai_total), 0.98))
+                    _ai_done += 1
+
                 try:
                     _result = await run_pipeline(
                         deployment_id=_dep_id,
-                        steps=_default_steps,
+                        steps=_steps,
                         confidence_threshold=0.2,
                         user_id=_user_id,
+                        on_step=_on_step,
                     )
+                    await emit_detection_notifications(_dep_id)
                     await emit_event(
                         job_id,
                         ProgressEvent(

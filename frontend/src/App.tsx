@@ -5,6 +5,8 @@ import { queryClient } from './lib/queryClient'
 import { useAuth } from './hooks/useAuth'
 import { ProjectSelectionProvider } from './hooks/useProjectSelection'
 import { GlobalProjectSelector } from './components/common/GlobalProjectSelector'
+import { useHasActiveDeployments } from './hooks/useHasActiveDeployments'
+import { useNotifications, type AppNotification } from './hooks/useNotifications'
 import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
 import { MyDataPage } from './pages/MyDataPage'
@@ -25,8 +27,11 @@ import { UmapExplorerPage } from './pages/UmapExplorerPage'
 import { ReviewQueuePage } from './pages/ReviewQueuePage'
 import { DatasetHealthPage } from './pages/DatasetHealthPage'
 import { AnnotationsPage } from './pages/AnnotationsPage'
-import { ResultsPage } from './pages/ResultsPage'
-import { OtherPage } from './pages/OtherPage'
+import { InsightsPage } from './pages/InsightsPage'
+import { ToolkitPage } from './pages/ToolkitPage'
+import { FieldPage } from './pages/FieldPage'
+import { NotificationsPage } from './pages/NotificationsPage'
+import { SettingsPage } from './pages/SettingsPage'
 import { UploadLogsPage } from './pages/UploadLogsPage'
 import { UploadProvider, useUploadStore } from './contexts/UploadContext'
 import { UploadModal } from './components/upload/UploadModal'
@@ -46,14 +51,23 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
   return <>{children}</>
 }
 
+// Legacy-path redirect that preserves the query string (e.g. /results?tab=projects
+// → /insights?tab=projects), so old bookmarks keep their sub-tab.
+function RedirectTo({ to }: { to: string }) {
+  const { search } = useLocation()
+  return <Navigate to={`${to}${search}`} replace />
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // AccountMenu — user email dropdown
 // ─────────────────────────────────────────────────────────────────────────────
 
-function AccountMenu({ email, isOrgManager, onLogout }: {
+function AccountMenu({ email, isOrgManager, onLogout, unreadCount, recent }: {
   email: string
   isOrgManager: boolean
   onLogout: () => void
+  unreadCount: number
+  recent: AppNotification[]
 }) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
@@ -79,28 +93,86 @@ function AccountMenu({ email, isOrgManager, onLogout }: {
     <div ref={ref} style={{ position: 'relative' }}>
       <button
         onClick={() => setOpen(v => !v)}
+        title={email}
+        aria-label={`Account: ${email}`}
         style={{
-          display: 'flex', alignItems: 'center', gap: '0.375rem',
-          padding: '0.375rem 0.625rem',
-          fontSize: '0.8125rem', fontWeight: 500,
-          border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-          backgroundColor: 'var(--surface)', color: 'var(--text-color)',
-          cursor: 'pointer', maxWidth: '180px',
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          width: 34, height: 34, padding: 0,
+          border: '1px solid var(--border)', borderRadius: '50%',
+          backgroundColor: 'var(--primary)', color: '#fff',
+          fontSize: '0.85rem', fontWeight: 700, textTransform: 'uppercase',
+          cursor: 'pointer', lineHeight: 1,
         }}
       >
-        <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-          {email}
-        </span>
-        <span style={{ opacity: 0.5, fontSize: '0.7rem', flexShrink: 0 }}>▾</span>
+        {(email.trim()[0] || '?')}
       </button>
+
+      {/* Unread badge on the avatar */}
+      {unreadCount > 0 && (
+        <span style={{
+          position: 'absolute', top: -6, right: -6, zIndex: 1,
+          minWidth: 17, height: 17, padding: '0 4px', borderRadius: 9,
+          background: '#ef4444', color: '#fff', fontSize: '0.65rem', fontWeight: 700,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          boxShadow: '0 0 0 2px var(--surface)', pointerEvents: 'none',
+        }}>
+          {unreadCount > 9 ? '9+' : unreadCount}
+        </span>
+      )}
 
       {open && (
         <div style={{
           position: 'absolute', right: 0, top: 'calc(100% + 6px)', zIndex: 200,
           backgroundColor: 'var(--bg-color)', border: '1px solid var(--border)',
           borderRadius: 'var(--radius)', boxShadow: '0 4px 16px rgba(0,0,0,0.15)',
-          minWidth: '180px', padding: '0.25rem 0',
+          minWidth: '240px', padding: '0.25rem 0',
         }}>
+          {/* Signed-in identity */}
+          <div style={{ padding: '0.4rem 0.875rem 0.5rem', borderBottom: '1px solid var(--border)', marginBottom: '0.25rem' }}>
+            <div style={{ fontSize: '0.7rem', opacity: 0.5 }}>Signed in as</div>
+            <div style={{ fontSize: '0.8125rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{email}</div>
+          </div>
+          {/* Recent notifications preview */}
+          {recent.length > 0 && (
+            <>
+              <div style={{ padding: '0.35rem 0.875rem 0.2rem', fontSize: '0.7rem', fontWeight: 700, opacity: 0.5, textTransform: 'uppercase', letterSpacing: '0.03em' }}>
+                Recent
+              </div>
+              {recent.slice(0, 5).map(n => (
+                <Link
+                  key={n.id}
+                  to="/notifications"
+                  onClick={() => setOpen(false)}
+                  style={{ ...itemStyle, alignItems: 'flex-start', flexDirection: 'column', gap: '0.1rem', opacity: n.read_at ? 0.6 : 1 }}
+                  onMouseEnter={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(76,175,80,0.07)')}
+                  onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'transparent')}
+                >
+                  <span style={{ fontWeight: n.read_at ? 500 : 700, fontSize: '0.78rem', whiteSpace: 'normal' }}>
+                    {!n.read_at && <span style={{ color: '#ef4444', marginRight: 4 }}>•</span>}{n.title}
+                  </span>
+                </Link>
+              ))}
+              <div style={{ height: '1px', backgroundColor: 'var(--border)', margin: '0.25rem 0' }} />
+            </>
+          )}
+          <Link
+            to="/notifications"
+            onClick={() => setOpen(false)}
+            style={itemStyle}
+            onMouseEnter={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(76,175,80,0.07)')}
+            onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'transparent')}
+          >
+            🔔 Notifications{unreadCount > 0 ? ` (${unreadCount})` : ''}{recent.length > 0 ? ' — View all' : ''}
+          </Link>
+          <Link
+            to="/settings"
+            onClick={() => setOpen(false)}
+            style={itemStyle}
+            onMouseEnter={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(76,175,80,0.07)')}
+            onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'transparent')}
+          >
+            ⚙ Settings
+          </Link>
           {isOrgManager && (
             <Link
               to="/upload-model"
@@ -148,10 +220,16 @@ function UploadNavButton() {
 // Layout
 // ─────────────────────────────────────────────────────────────────────────────
 
+// Lifecycle order: prepare (Toolkit) → collect (Annotations) → analyse (Insights).
+// The conditional 📡 Field tab is inserted between Toolkit and Annotations in a later
+// phase, only for users with an active deployment.
 const USER_TABS = [
+  { id: 'toolkit',     label: '🧰 Toolkit',     to: '/toolkit' },
+  // Phase 3: a conditional { id: 'field', label: '📡 Field', to: '/field' } tab is
+  // inserted here when the user has active deployments reporting LoRaWAN heartbeats.
+  // Held back until the LoRaWAN pipeline is live; the /field route renders a placeholder.
   { id: 'annotations', label: '🏷️ Annotations', to: '/annotations' },
-  { id: 'results',     label: '📊 Results',     to: '/results' },
-  { id: 'other',       label: '⚙ Other',        to: '/other' },
+  { id: 'insights',    label: '📈 Insights',    to: '/insights' },
 ] as const
 
 function Layout({ children }: { children: React.ReactNode }) {
@@ -171,8 +249,16 @@ function Layout({ children }: { children: React.ReactNode }) {
   })
   const isOrgManager = !!(managedOrgs && managedOrgs.length > 0)
 
+  // 📡 Field is a conditional tab: shown only when the user has active deployments
+  // out in the field. Inserted between Toolkit and Annotations.
+  const hasField = useHasActiveDeployments()
+  const { unreadCount, items: notifications } = useNotifications()
+  const navTabs = hasField
+    ? [USER_TABS[0], { id: 'field', label: '📡 Field', to: '/field' }, ...USER_TABS.slice(1)]
+    : [...USER_TABS]
+
   // Resolve which top-level tab is active (handles nested routes too)
-  const activeTab = USER_TABS.find(t => location.pathname.startsWith(t.to))?.id ?? null
+  const activeTab = navTabs.find(t => location.pathname.startsWith(t.to))?.id ?? null
 
   const tabStyle = (id: string): React.CSSProperties => ({
     display: 'flex', alignItems: 'center',
@@ -215,10 +301,18 @@ function Layout({ children }: { children: React.ReactNode }) {
             Wildlife Watcher
           </Link>
 
+          {/* Project selector — sits right of the logo; it scopes everything to its
+              right, so the header reads "in these projects → these views". */}
+          {user && (
+            <div style={{ display: 'flex', alignItems: 'center', paddingRight: '1.5rem', flexShrink: 0 }}>
+              <GlobalProjectSelector />
+            </div>
+          )}
+
           {/* 3-tab nav (signed-in only) */}
           {user && (
             <nav style={{ display: 'flex', alignItems: 'stretch', flexShrink: 0 }}>
-              {USER_TABS.map(tab => (
+              {navTabs.map(tab => (
                 <NavLink key={tab.id} to={tab.to} style={tabStyle(tab.id)}>
                   {tab.label}
                 </NavLink>
@@ -244,13 +338,14 @@ function Layout({ children }: { children: React.ReactNode }) {
 
             {user && (
               <>
-                <GlobalProjectSelector />
+                <UploadNavButton />
                 <AccountMenu
                   email={user.email ?? ''}
                   isOrgManager={isOrgManager}
                   onLogout={logout}
+                  unreadCount={unreadCount}
+                  recent={notifications}
                 />
-                <UploadNavButton />
               </>
             )}
           </div>
@@ -312,13 +407,20 @@ export default function App() {
               <Route path="/terms"          element={<TermsOfServicePage />} />
               <Route path="/resources"      element={<ResourcesPage />} />
 
-              {/* Primary 3-tab routes (WS2) */}
+              {/* Primary nav routes: Toolkit · Annotations · Insights (+ conditional Field later) */}
+              <Route path="/toolkit"     element={<RequireAuth><ToolkitPage /></RequireAuth>} />
+              <Route path="/field"       element={<RequireAuth><FieldPage /></RequireAuth>} />
               <Route path="/annotations" element={<RequireAuth><AnnotationsPage /></RequireAuth>} />
-              <Route path="/results"     element={<RequireAuth><ResultsPage /></RequireAuth>} />
-              <Route path="/other"       element={<RequireAuth><OtherPage /></RequireAuth>} />
+              <Route path="/insights"    element={<RequireAuth><InsightsPage /></RequireAuth>} />
 
-              {/* Legacy /my-data → /results */}
-              <Route path="/my-data" element={<Navigate to="/results" replace />} />
+              {/* Personal surfaces (avatar menu) — fleshed out in later phases */}
+              <Route path="/notifications" element={<RequireAuth><NotificationsPage /></RequireAuth>} />
+              <Route path="/settings"      element={<RequireAuth><SettingsPage /></RequireAuth>} />
+
+              {/* Legacy path redirects (query string preserved) */}
+              <Route path="/results"  element={<RedirectTo to="/insights" />} />
+              <Route path="/other"    element={<RedirectTo to="/toolkit" />} />
+              <Route path="/my-data"  element={<RedirectTo to="/insights" />} />
 
               {/* Upload — modal is the primary path; /upload-data kept for direct nav */}
               <Route path="/upload-data"    element={<RequireAuth><UploadDataPage /></RequireAuth>} />

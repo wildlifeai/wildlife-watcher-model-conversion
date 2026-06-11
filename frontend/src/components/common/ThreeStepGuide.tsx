@@ -35,12 +35,12 @@ export const DEFAULT_SIGNED_IN_STEPS: GuideStep[] = [
     linkLabel: 'Go to Annotations →',
   },
   {
-    icon: '📊',
-    title: '3. See & share results',
+    icon: '📈',
+    title: '3. See & share insights',
     description:
       'Explore charts, maps, and deployment tables. Export a CamtrapDP package for R or share the report with your team.',
-    linkTo: '/results',
-    linkLabel: 'Go to Results →',
+    linkTo: '/insights',
+    linkLabel: 'Go to Insights →',
   },
 ]
 

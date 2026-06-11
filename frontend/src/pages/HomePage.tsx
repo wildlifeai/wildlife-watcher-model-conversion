@@ -135,7 +135,7 @@ function Dashboard() {
               <ProjectCardTile
                 key={p.id}
                 project={p}
-                onOpen={() => { clearAll(); toggleProject(p.id); navigate('/results?tab=deployments') }}
+                onOpen={() => { clearAll(); toggleProject(p.id); navigate('/insights?tab=deployments') }}
                 onHealth={() => navigate(`/intelligence/${p.id}`)}
               />
             ))}
@@ -157,8 +157,8 @@ function Dashboard() {
             <a href={APP_STORE_URL} target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>Wildlife Watcher mobile app</a>.
           </p>
           <div style={{ display: 'flex', gap: '0.75rem', justifyContent: 'center', flexWrap: 'wrap' }}>
-            {/* ?create=true causes ResultsPage to auto-open the CreateProjectModal */}
-            <Link to="/results?tab=projects&create=true" className="btn" style={{ textDecoration: 'none' }}>
+            {/* ?create=true causes SettingsPage to auto-open the CreateProjectModal */}
+            <Link to="/settings?create=true" className="btn" style={{ textDecoration: 'none' }}>
               + Create Project
             </Link>
             <Link to="/upload-data" style={{ textDecoration: 'none', padding: '0.5rem 1rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', color: 'var(--text-color)', fontSize: '0.9rem' }}>

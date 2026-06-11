@@ -16,6 +16,7 @@ from typing import Optional
 
 import structlog
 
+from app.domain.photo_preprocessing import resolve_timezone
 from app.schemas.camtrapdp import CamtrapImportResult, PendingDriveUpload
 
 logger = structlog.get_logger()
@@ -355,6 +356,9 @@ def import_package(
         ww_id = str(uuid.uuid4())
         dep_id_map[cdp_id] = ww_id
 
+        dep_lat = _float(dep.get("latitude"))
+        dep_lon = _float(dep.get("longitude"))
+
         row = {
             "id": ww_id,
             "project_id": project_id,
@@ -364,8 +368,10 @@ def import_package(
             "location_name": _str(dep.get("locationName")) or cdp_id,
             "deployment_start": dep_start,
             "deployment_end": _str(dep.get("deploymentEnd")),
-            "latitude": _float(dep.get("latitude")),
-            "longitude": _float(dep.get("longitude")),
+            "latitude": dep_lat,
+            "longitude": dep_lon,
+            # IANA tz for display-time local-time rendering (UTC stays the stored instant).
+            "timezone": resolve_timezone(dep_lat, dep_lon),
             "accuracy": _float(dep.get("coordinateUncertainty")),
             "camera_height": _float(dep.get("cameraHeight")),
             "camera_tilt": _float(dep.get("cameraTilt")),

@@ -20,6 +20,7 @@ Design (per backend agent skill — services do infra only, no FastAPI):
 from __future__ import annotations
 
 import asyncio
+import threading
 from dataclasses import dataclass
 from typing import Any, Optional, Sequence
 
@@ -163,6 +164,12 @@ class SpeciesNetService:
         self.model_name = model_name
         self.version = SPECIESNET_VERSION
         self._model = None  # lazily constructed speciesnet.SpeciesNet
+        # Serialises model construction + inference across threads. The torch.fx
+        # detector trace is NOT safe to run concurrently on the shared model — two
+        # upload batches each auto-annotate the same deployment at once, which
+        # double-loads the model and corrupts the trace, raising
+        # NameError('module is not installed as a submodule').
+        self._lock = threading.Lock()
 
     def _get_model(self):
         if self._model is None:
@@ -177,9 +184,27 @@ class SpeciesNetService:
         if not image_paths:
             return []
 
+        from app.config import settings
+
         def _run() -> dict[str, Any]:
-            model = self._get_model()
-            return model.predict(filepaths=list(image_paths))
+            # Hold the lock across BOTH construction and inference so concurrent
+            # callers serialise rather than racing the detector's torch.fx trace.
+            with self._lock:
+                model = self._get_model()
+                # run_mode='single_thread' additionally avoids SpeciesNet's internal
+                # ThreadPool tracing the detector concurrently *within* one predict.
+                try:
+                    return model.predict(
+                        filepaths=list(image_paths),
+                        run_mode=settings.SPECIESNET_RUN_MODE,
+                        progress_bars=False,
+                    )
+                except Exception:
+                    # A failed/partial torch.fx trace can poison the cached model;
+                    # drop it so the next call rebuilds from scratch instead of
+                    # failing forever.
+                    self._model = None
+                    raise
 
         raw = await asyncio.to_thread(_run)
         return parse_speciesnet_output(raw)

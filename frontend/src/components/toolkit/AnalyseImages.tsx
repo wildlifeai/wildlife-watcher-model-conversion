@@ -710,7 +710,7 @@ export function AnalyseImages() {
                   )}
                 </div>
               )}
-              <Link to="/my-data" style={{ color: 'var(--primary)', fontWeight: 500, fontSize: '0.875rem', textDecoration: 'none' }}>
+              <Link to="/insights" style={{ color: 'var(--primary)', fontWeight: 500, fontSize: '0.875rem', textDecoration: 'none' }}>
                 View imported data in My Data →
               </Link>
             </div>

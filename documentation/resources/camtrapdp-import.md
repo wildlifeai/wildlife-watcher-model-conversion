@@ -50,6 +50,10 @@ During the CamtrapDP import, the system will automatically scan all observations
 | `validate_package(pkg)` | Light validation — returns warnings for missing GPS, missing columns, etc. |
 | `import_package(pkg, user_id, org_id, svc)` | Inserts all data into the WW database using a service-role client |
 
+> Each imported deployment also gets its **`timezone`** resolved from `latitude`/`longitude` via
+> `resolve_timezone` (timezonefinder), so capture times display in local time. Media `timestamp`
+> stays UTC — see [Timezones & capture time](../onboarding/03-DATA-AND-SYNC.md#timezones--capture-time).
+
 ### CamtrapDP → WW Vocabulary Mapping
 
 CamtrapDP v1.0 uses a broader controlled vocabulary than the WW check constraints. The import domain maps values automatically:

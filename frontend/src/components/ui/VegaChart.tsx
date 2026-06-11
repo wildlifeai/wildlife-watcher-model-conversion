@@ -66,7 +66,10 @@ export function VegaChart({ spec, style, className }: VegaChartProps) {
     let view: { finalize: () => void } | null = null
 
     embed(containerRef.current, spec, {
-      actions: false,
+      // Show only the export menu (PNG/SVG) so users can save a chart for a report;
+      // hide the source/compiled/editor actions to keep it clean.
+      actions: { export: true, source: false, compiled: false, editor: false },
+      downloadFileName: 'wildlife-watcher-chart',
       renderer: 'svg',
     })
       .then((result) => {
