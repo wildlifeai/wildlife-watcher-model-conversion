@@ -18,7 +18,6 @@ env/
 .streamlit/
 
 # Agent files
-.agents/
 .cursorrules
 .windsurfrules
 
