@@ -29,6 +29,9 @@ from app.registries.embedding_registry import ACTIVE_LEARNING_WEIGHTS
 
 logger = structlog.get_logger()
 
+# Rows per bulk-upsert request when persisting recomputed AL scores.
+_PERSIST_CHUNK = 500
+
 
 # ── Pure helpers ─────────────────────────────────────────────────────
 
@@ -126,8 +129,17 @@ async def recompute_scores(deployment_id: str, progress=None) -> int:
     updated = 0
 
     def _persist(scored: list[tuple[str, float]]):
-        for media_id, score in scored:
-            svc.table("media_embeddings").update({"active_learning_score": score, "al_score_updated_at": now}).eq("media_id", media_id).execute()
+        # Bulk upsert instead of one round-trip per row: media_id is the PK, so
+        # PostgREST merges just these columns into the existing rows. Rows were
+        # fetched from this table moments ago; if one vanished mid-run the
+        # insert path fails loudly on the deployment_id NOT NULL constraint
+        # (deliberately not supplied — never resurrect a deleted row).
+        payload = [
+            {"media_id": media_id, "active_learning_score": score, "al_score_updated_at": now}
+            for media_id, score in scored
+        ]
+        for i in range(0, len(payload), _PERSIST_CHUNK):
+            svc.table("media_embeddings").upsert(payload[i : i + _PERSIST_CHUNK]).execute()
 
     scored: list[tuple[str, float]] = []
     for row in embeddings:

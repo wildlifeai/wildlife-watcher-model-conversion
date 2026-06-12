@@ -16,6 +16,7 @@ class PendingDriveUpload(BaseModel):
     media_id: str  # ww media UUID — used to patch file_path back to gdrive://<id>
     deployment_id: str
     deployment_start: Optional[str] = None
+    deployment_end: Optional[str] = None
     location_name: Optional[str] = None
     project_id: str
     project_name: str

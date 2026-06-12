@@ -1,4 +1,4 @@
-import React, { useRef, useEffect, useState } from 'react'
+import React, { useRef, useEffect, useState, Suspense } from 'react'
 import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation } from 'react-router-dom'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/queryClient'
@@ -18,6 +18,11 @@ import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage'
 import { SupportPage } from './pages/SupportPage'
 import { TermsOfServicePage } from './pages/TermsOfServicePage'
 import { ResourcesPage } from './pages/ResourcesPage'
+import { FaqPage } from './pages/FaqPage'
+
+// Guides are lazy-loaded so the markdown renderer stays out of the main bundle.
+const GuidesPage = React.lazy(() => import('./pages/GuidesPage'))
+const GuideDetailPage = React.lazy(() => import('./pages/GuideDetailPage'))
 import { EventReviewPage } from './pages/EventReviewPage'
 import { AnalysisPage } from './pages/AnalysisPage'
 import { ReportingPage } from './pages/ReportingPage'
@@ -327,6 +332,9 @@ function Layout({ children }: { children: React.ReactNode }) {
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexShrink: 0 }}>
             {!user && (
               <>
+                <Link to="/faq" style={{ textDecoration: 'none', color: 'var(--text-color)', fontSize: '0.875rem', opacity: 0.8 }}>
+                  FAQ
+                </Link>
                 <Link to="/resources" style={{ textDecoration: 'none', color: 'var(--text-color)', fontSize: '0.875rem', opacity: 0.8 }}>
                   Resources
                 </Link>
@@ -391,7 +399,11 @@ function Layout({ children }: { children: React.ReactNode }) {
           <div style={{ opacity: 0.7, fontSize: '0.875rem' }}>
             &copy; {new Date().getFullYear()} Wildlife.ai
             {' | '}
+            <Link to="/faq" style={{ color: 'inherit', textDecoration: 'underline' }}>FAQ</Link>
+            {' | '}
             <Link to="/resources" style={{ color: 'inherit', textDecoration: 'underline' }}>Resources</Link>
+            {' | '}
+            <Link to="/guides" style={{ color: 'inherit', textDecoration: 'underline' }}>Guides</Link>
             {' | '}
             <Link to="/privacy" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' | '}
@@ -427,6 +439,9 @@ export default function App() {
               <Route path="/support"        element={<SupportPage />} />
               <Route path="/terms"          element={<TermsOfServicePage />} />
               <Route path="/resources"      element={<ResourcesPage />} />
+              <Route path="/faq"            element={<FaqPage />} />
+              <Route path="/guides"         element={<Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center', opacity: 0.5 }}>Loading…</div>}><GuidesPage /></Suspense>} />
+              <Route path="/guides/:slug"   element={<Suspense fallback={<div style={{ padding: '2rem', textAlign: 'center', opacity: 0.5 }}>Loading…</div>}><GuideDetailPage /></Suspense>} />
 
               {/* Primary nav routes: Toolkit · Annotations · Insights (+ conditional Field later) */}
               <Route path="/toolkit"     element={<RequireAuth><ToolkitPage /></RequireAuth>} />

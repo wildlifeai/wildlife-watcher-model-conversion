@@ -119,7 +119,7 @@ export function ResourcesPage() {
             <H3>What you will need</H3>
             <Ul items={[
               '4x high-quality AA batteries (non-rechargeable premium alkaline or lithium are recommended).',
-              'A microSD card with a capacity from 32 GB up to 64 GB is recommended (Class 10).'
+              'A FAT32-formatted microSD card, 32–64 GB (Class 10 or higher).'
             ]} />
           </Section>
 
@@ -173,7 +173,7 @@ export function ResourcesPage() {
             <H3>Before your first monitoring session</H3>
             <Ul items={[
               'Check the batteries — ensure fresh premium alkaline or lithium AA batteries are installed.',
-              'Check SD card available space — a microSD card with a capacity from 32 GB up to 64 GB is recommended (Class 10).',
+              'Check SD card available space — a FAT32-formatted microSD card, 32–64 GB (Class 10 or higher), is recommended.',
               'Test the camera preview to verify field of view.',
             ]} />
             <Note>💡 Always test the camera before heading into the field to avoid wasted trips.</Note>
@@ -266,7 +266,7 @@ export function ResourcesPage() {
                 },
                 {
                   issue: 'SD card not detected',
-                  fix: 'Remove and reinsert the microSD card. Ensure it is formatted as FAT32 or exFAT and contacts are facing opposite from the batteries. Try formatting the card via the app settings.',
+                  fix: 'Remove and reinsert the microSD card. Ensure it is formatted as FAT32 and the contacts are facing opposite from the batteries. Try formatting the card via the app settings.',
                 },
               ].map(({ issue, fix }) => (
                 <div key={issue} style={{ padding: '1rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)' }}>
@@ -278,7 +278,8 @@ export function ResourcesPage() {
 
             <H3>Still need help?</H3>
             <p style={{ lineHeight: 1.7 }}>
-              Visit our <a href="/support" style={{ color: 'var(--primary)' }}>Support page</a> for FAQs
+              Browse our <a href="/guides" style={{ color: 'var(--primary)' }}>step-by-step guides</a>,
+              visit the <a href="/support" style={{ color: 'var(--primary)' }}>Support page</a> for FAQs,
               or contact us at <a href="mailto:contact@wildlife.ai" style={{ color: 'var(--primary)' }}>contact@wildlife.ai</a>.
             </p>
           </Section>

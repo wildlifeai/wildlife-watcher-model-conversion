@@ -173,14 +173,18 @@ async def import_camtrapdp(
             )
         else:
             try:
-                from app.services.google_drive import GoogleDriveService, sanitize_filename, slugify
+                from app.services.google_drive import (
+                    GoogleDriveService,
+                    build_deployment_folder_name,
+                    sanitize_filename,
+                    slugify,
+                )
 
                 drive = GoogleDriveService()
 
                 # Build the file list in the format upload_analysis_images expects
                 drive_files = []
                 for p in result.pending_drive_uploads:
-                    dep_date = p.deployment_start[:10] if p.deployment_start else "unknown-date"
                     drive_files.append({
                         "file_bytes": p.file_bytes,
                         "filename": p.filename,
@@ -190,11 +194,14 @@ async def import_camtrapdp(
                         "project": {"id": p.project_id, "name": p.project_name},
                         "deployment": {
                             "id": p.deployment_id,
-                            "date": dep_date,
+                            "deployment_start": p.deployment_start,
+                            "deployment_end": p.deployment_end,
                             "location_name": p.location_name or "",
                         },
                         "_project_folder": f"{slugify(p.project_name)}_{p.project_id[:8]}",
-                        "_deployment_folder": f"{dep_date}_{p.deployment_id[:8]}",
+                        "_deployment_folder": build_deployment_folder_name(
+                            p.deployment_start, p.deployment_end, p.deployment_id
+                        ),
                         "drive_filename": sanitize_filename(p.deployment_start, p.filename),
                     })
 

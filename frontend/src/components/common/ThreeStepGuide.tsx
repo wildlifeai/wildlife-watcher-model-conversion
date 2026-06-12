@@ -23,7 +23,7 @@ export const DEFAULT_SIGNED_IN_STEPS: GuideStep[] = [
     title: '1. Upload photos',
     description:
       'Drop a Wildlife Watcher SD card folder or a CamtrapDP ZIP. The system auto-detects deployments and routes images through the analysis pipeline.',
-    linkTo: '/upload',
+    linkTo: '/upload-data',
     linkLabel: 'Upload now →',
   },
   {

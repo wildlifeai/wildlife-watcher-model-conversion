@@ -1,12 +1,16 @@
-import React from 'react'
 import { Link } from 'react-router-dom'
+import { FaqItem } from '../components/common/FaqItem'
 
 export function SupportPage() {
   return (
     <div className="container" style={{ maxWidth: '800px', margin: '0 auto', padding: '2rem 0', lineHeight: '1.6' }}>
       <h1 style={{ marginBottom: '1.5rem' }}>Support</h1>
 
-      <p>Need help with the Wildlife Watcher mobile app or website? Browse our frequently asked questions below or contact our team directly.</p>
+      <p>
+        Need help with the Wildlife Watcher mobile app or website? Browse our frequently asked
+        questions below or contact our team directly. New to Wildlife Watcher? Start with the{' '}
+        <Link to="/faq" style={{ color: 'var(--primary)' }}>general FAQ</Link>.
+      </p>
 
       <h2 style={{ marginTop: '2rem', marginBottom: '1rem' }}>Frequently Asked Questions</h2>
 
@@ -124,42 +128,5 @@ export function SupportPage() {
         Last updated: May 18, 2026
       </p>
     </div>
-  )
-}
-
-
-/* ── FAQ accordion item ───────────────────────────────────────────── */
-
-function FaqItem({ q, children }: { q: string; children: React.ReactNode }) {
-  return (
-    <details style={{
-      marginBottom: '0.75rem',
-      border: '1px solid var(--border)',
-      borderRadius: 'var(--radius)',
-      backgroundColor: 'var(--surface)',
-    }}>
-      <summary style={{
-        padding: '0.875rem 1rem',
-        cursor: 'pointer',
-        fontWeight: 600,
-        fontSize: '0.9375rem',
-        listStyle: 'none',
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.5rem',
-      }}>
-        <span style={{ fontSize: '0.75rem', opacity: 0.5 }}>▶</span>
-        {q}
-      </summary>
-      <div style={{
-        padding: '0 1rem 1rem',
-        fontSize: '0.9375rem',
-        lineHeight: 1.7,
-        color: 'var(--text-color)',
-        opacity: 0.85,
-      }}>
-        {children}
-      </div>
-    </details>
   )
 }

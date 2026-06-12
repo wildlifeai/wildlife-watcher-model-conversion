@@ -12,6 +12,16 @@ Folder structure::
     ├── {slug(project_name)}_{project_id[:8]}
     │   └── {YYYY-MM-DD}_{deployment_id[:8]}
     │       └── {timestamp}_{original_filename}
+
+One folder per deployment, holding all of its photos. The date prefix is
+the deployment **end** date (start date while the deployment is still
+active), so folders sort chronologically by when the deployment finished;
+the id suffix distinguishes deployments that ended on the same day.
+
+Deployment folders carry ``appProperties.deployment_id`` so the folder can
+be found again by identity, not name: when new photos arrive for a
+deployment whose folder was created while it was still active, the folder
+is reused (and renamed to the end date) instead of a second one appearing.
 """
 
 import asyncio
@@ -51,6 +61,28 @@ def slugify(name: str, max_length: int = 50) -> str:
     return slug[:max_length]
 
 
+def build_deployment_folder_name(
+    deployment_start: Optional[str],
+    deployment_end: Optional[str],
+    deployment_id: str,
+) -> str:
+    """Canonical deployment folder name: ``{YYYY-MM-DD}_{deployment_id[:8]}``.
+
+    The date is the deployment **end** date; while the deployment is still
+    active (no end date) the start date is used, falling back to today (UTC)
+    when both are missing. The ISO date prefix makes folders sort by when the
+    deployment finished; the id suffix disambiguates same-day deployments.
+    """
+    date_source = deployment_end or deployment_start
+    if date_source:
+        date_part = str(date_source)[:10]
+    else:
+        from datetime import datetime, timezone
+
+        date_part = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+    return f"{date_part}_{deployment_id[:8]}"
+
+
 def compute_file_hash(file_bytes: bytes, deployment_id: str) -> str:
     """SHA-256 hash of file content + deployment ID for dedup."""
     h = hashlib.sha256()
@@ -86,6 +118,9 @@ class GoogleDriveService:
         self._credentials = creds
         self._service = build("drive", "v3", credentials=creds, cache_discovery=False)
         self._api_lock = asyncio.Lock()
+        # Per-instance deployment-folder memo (instances are per-job): the
+        # find/rename/create resolution runs once per deployment per batch.
+        self._dep_folder_memo: Dict[str, str] = {}
 
     # ── Auth ─────────────────────────────────────────────────────
 
@@ -159,15 +194,45 @@ class GoogleDriveService:
         files = results.get("files", [])
         return files[0]["id"] if files else None
 
-    def _create_folder(self, parent_id: str, name: str) -> str:
+    def _create_folder(self, parent_id: str, name: str, app_properties: Optional[Dict[str, str]] = None) -> str:
         """Create a new folder and return its ID."""
         metadata: Dict[str, Any] = {
             "name": name,
             "mimeType": "application/vnd.google-apps.folder",
             "parents": [parent_id],
         }
+        if app_properties:
+            metadata["appProperties"] = app_properties
         folder = self._service.files().create(body=metadata, fields="id", supportsAllDrives=True).execute()
         return folder["id"]
+
+    def _find_folder_by_deployment_id(self, parent_id: str, deployment_id: str) -> Optional[Dict[str, str]]:
+        """Find a deployment folder by its ``appProperties.deployment_id`` tag.
+
+        Returns ``{"id": ..., "name": ...}`` or None. Identity-based lookup —
+        immune to the folder's date prefix changing when the deployment ends.
+        """
+        query = (
+            f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' "
+            f"and appProperties has {{ key='deployment_id' and value='{deployment_id}' }} and trashed = false"
+        )
+        results = (
+            self._service.files()
+            .list(q=query, fields="files(id, name)", spaces="drive", pageSize=1, supportsAllDrives=True, includeItemsFromAllDrives=True)
+            .execute()
+        )
+        files = results.get("files", [])
+        return files[0] if files else None
+
+    def _patch_folder(self, folder_id: str, *, name: Optional[str] = None, app_properties: Optional[Dict[str, str]] = None) -> None:
+        """Update a folder's name and/or appProperties."""
+        body: Dict[str, Any] = {}
+        if name:
+            body["name"] = name
+        if app_properties:
+            body["appProperties"] = app_properties
+        if body:
+            self._service.files().update(fileId=folder_id, body=body, supportsAllDrives=True).execute()
 
     async def ensure_folder(self, parent_id: str, name: str, cache_key: Optional[str] = None) -> str:
         """Find or create a folder, with optional Redis caching.
@@ -187,6 +252,57 @@ class GoogleDriveService:
 
         if cache_key:
             await self._set_cached_folder(cache_key, folder_id)
+
+        return folder_id
+
+    async def ensure_deployment_folder(self, parent_id: str, deployment_id: str, desired_name: str) -> str:
+        """Find or create the single folder for a deployment, by identity.
+
+        Resolution order:
+        1. Folder tagged ``appProperties.deployment_id`` — the deployment's
+           existing folder, even if its date prefix is stale (created while
+           the deployment was active). Renamed to *desired_name* so the
+           prefix reflects the end date once the deployment finishes.
+        2. Folder with the desired name (created before tagging existed) —
+           adopted by tagging it with the deployment id.
+        3. Otherwise created, tagged with the deployment id.
+
+        No Redis cache here (unlike :meth:`ensure_folder`): resolving through
+        Drive once per job is what keeps the rename-on-end behaviour working.
+        """
+        memoised = self._dep_folder_memo.get(deployment_id)
+        if memoised:
+            return memoised
+
+        async with self._api_lock:
+            # Re-check under the lock — another file of the same deployment
+            # may have resolved the folder while we waited.
+            memoised = self._dep_folder_memo.get(deployment_id)
+            if memoised:
+                return memoised
+
+            existing = await asyncio.to_thread(self._find_folder_by_deployment_id, parent_id, deployment_id)
+            if existing:
+                folder_id = existing["id"]
+                if existing.get("name") != desired_name:
+                    await asyncio.to_thread(self._patch_folder, folder_id, name=desired_name)
+                    logger.info(
+                        "drive_deployment_folder_renamed",
+                        deployment_id=deployment_id,
+                        old_name=existing.get("name"),
+                        new_name=desired_name,
+                    )
+            else:
+                folder_id = await asyncio.to_thread(self._find_folder, parent_id, desired_name)
+                if folder_id:
+                    await asyncio.to_thread(self._patch_folder, folder_id, app_properties={"deployment_id": deployment_id})
+                else:
+                    folder_id = await asyncio.to_thread(
+                        self._create_folder, parent_id, desired_name, {"deployment_id": deployment_id}
+                    )
+                    logger.info("drive_folder_created", name=desired_name, folder_id=folder_id)
+
+            self._dep_folder_memo[deployment_id] = folder_id
 
         return folder_id
 
@@ -344,14 +460,17 @@ class GoogleDriveService:
                                 folder_name=project_folder_name,
                             )
 
-                    # 2. Ensure deployment folder
-                    # Use preprocessed name if available, else fall back to date_id
-                    dep_date = deployment.get("date", "unknown-date")
-                    dep_folder_name = file_info.get("_deployment_folder") or f"{dep_date}_{deployment['id'][:8]}"
-                    dep_folder_id = await self.ensure_folder(
+                    # 2. Ensure deployment folder (one per deployment, found by
+                    # identity so re-uploads reuse it even after a rename)
+                    dep_folder_name = file_info.get("_deployment_folder") or build_deployment_folder_name(
+                        deployment.get("deployment_start") or deployment.get("date"),
+                        deployment.get("deployment_end"),
+                        deployment["id"],
+                    )
+                    dep_folder_id = await self.ensure_deployment_folder(
                         project_folder_id,
+                        deployment["id"],
                         dep_folder_name,
-                        cache_key=f"drive:deployment:{deployment['id']}",
                     )
                     df_key = f"deployment:{deployment['id']}"
                     if df_key not in seen_folders:

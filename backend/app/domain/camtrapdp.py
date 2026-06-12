@@ -445,6 +445,7 @@ def import_package(
                     media_id=ww_id,
                     deployment_id=ww_dep_id,
                     deployment_start=_str(dep_row.get("deploymentStart")),
+                    deployment_end=_str(dep_row.get("deploymentEnd")),
                     location_name=_str(dep_row.get("locationName")),
                     project_id=project_id,
                     project_name=project_title,

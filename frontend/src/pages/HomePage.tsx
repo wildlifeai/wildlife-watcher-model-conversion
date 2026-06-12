@@ -196,11 +196,15 @@ function MarketingHero() {
       {/* ── Hero ────────────────────────────────────────────────────────── */}
       <div style={{ textAlign: 'center', maxWidth: '800px', margin: '0 auto', padding: '0 0 3rem 0' }}>
         <h1 style={{ fontSize: '3rem', color: 'var(--primary)', marginBottom: '1rem' }}>
-          Monitor wildlife the right way!
+          Smart monitoring of small animals
         </h1>
-        <p style={{ fontSize: '1.25rem', opacity: 0.8, marginBottom: '2rem' }}>
-          Analyse photos from your Wildlife Watchers, visualise your data, and share
-          results — all in one place.
+        <p style={{ fontSize: '1.25rem', opacity: 0.8, marginBottom: '1rem' }}>
+          The Wildlife Watcher is a compact camera designed to monitor invertebrates and
+          small animals that traditional camera traps miss. On-device AI flags your target
+          species in the field, and an open-source website makes analysis and reporting easy.
+        </p>
+        <p style={{ fontSize: '0.9375rem', opacity: 0.6, marginBottom: '2rem', fontWeight: 600, letterSpacing: '0.01em' }}>
+          Smart monitoring of small animals · on-device AI · open-source web analysis
         </p>
         <div style={{ display: 'flex', gap: '1rem', justifyContent: 'center', alignItems: 'flex-start', flexWrap: 'wrap' }}>
           <Link
@@ -261,7 +265,7 @@ function MarketingHero() {
           </p>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(200px, 1fr))', gap: '1rem', marginBottom: '1.75rem' }}>
             {[
-              { icon: '📷', title: 'The hardware', body: 'Solar-powered, LoRa-connected camera traps that auto-tag images with deployment metadata.', anchor: '#watchers' },
+              { icon: '📷', title: 'The hardware', body: 'Compact, weatherproof AI cameras built for small wildlife, auto-tagging images with deployment metadata.', anchor: '#watchers' },
               { icon: '📱', title: 'The app',      body: 'Configure devices and manage projects from the field on iOS or Android.',               anchor: '#app' },
               { icon: '🌐', title: 'The web',      body: 'Upload images, review AI detections, and export publication-ready reports.',            anchor: '#web' },
             ].map(item => (
@@ -292,16 +296,22 @@ function MarketingHero() {
         <div style={{ maxWidth: '760px', margin: '0 auto', padding: '0 1rem' }}>
           <h2 style={SECTION_HEADING}>The Wildlife Watchers</h2>
           <p style={{ opacity: 0.75, fontSize: '1rem', lineHeight: 1.65, marginBottom: '1.25rem' }}>
-            Wildlife Watchers are open-hardware camera traps designed for conservation science.
-            Each device is solar-powered, weatherproof, and embeds a deployment ID and GPS
-            coordinates directly in every image — so the web platform knows exactly where and
-            when each photo was taken without any manual matching.
+            Wildlife Watchers are open-hardware camera traps designed for conservation science —
+            specifically for the invertebrates and small cold-blooded animals (skinks, frogs,
+            wētā) that conventional thermal-trigger cameras miss. Each device is weatherproof,
+            runs about a month in the field on 4× AA batteries, and embeds a deployment ID and
+            GPS coordinates directly in every image — so the web platform knows exactly where
+            and when each photo was taken without any manual matching.
           </p>
           <ul style={{ paddingLeft: '1.25rem', opacity: 0.8, lineHeight: 1.85, marginBottom: '1.5rem' }}>
-            <li>On-device AI inference (SpeciesNet) flags animal detections in real time.</li>
-            <li>LoRaWAN telemetry sends battery and SD-card status back to the dashboard.</li>
+            <li>A lightweight on-device AI model flags your target species in real time; the more powerful SpeciesNet model assists with full identification when you upload to the web platform.</li>
+            <li>LoRaWAN telemetry (in development) will send battery and SD-card status back to the dashboard.</li>
             <li>Fully open hardware — schematics and firmware published on GitHub.</li>
           </ul>
+          <p style={{ opacity: 0.7, fontSize: '0.9rem', lineHeight: 1.6, marginBottom: '1rem' }}>
+            Wildlife Watcher is currently in a prototype phase — devices are available to Beta
+            testers. <Link to="/faq#buy" style={{ color: 'var(--primary)' }}>How to get one →</Link>
+          </p>
           <a
             href="https://wildlife.ai/wildlife-watcher"
             target="_blank"
@@ -309,7 +319,7 @@ function MarketingHero() {
             className="btn"
             style={{ textDecoration: 'none', display: 'inline-block' }}
           >
-            Learn more & order →
+            Learn more →
           </a>
         </div>
       </div>
@@ -320,15 +330,15 @@ function MarketingHero() {
           <h2 style={SECTION_HEADING}>The Wildlife Watcher App</h2>
           <p style={{ opacity: 0.75, fontSize: '1rem', lineHeight: 1.65, marginBottom: '1.25rem' }}>
             The companion mobile app (iOS &amp; Android) is your field tool.
-            Use it to create projects, define deployments, pair devices over Bluetooth, and check
-            live LoRaWAN telemetry — all without a laptop.
+            Use it to create projects, define deployments, and pair and control devices over
+            Bluetooth — all without a laptop.
             Projects and deployments created in the app are immediately available on the web.
           </p>
           <ul style={{ paddingLeft: '1.25rem', opacity: 0.8, lineHeight: 1.85, marginBottom: '1.75rem' }}>
             <li>Create and manage projects with team role management (admin, field worker, analyst, viewer).</li>
             <li>Define deployment locations and configure camera settings.</li>
-            <li>Pair and provision Wildlife Watcher devices over Bluetooth.</li>
-            <li>Monitor battery, SD usage, and last-seen timestamps in real time.</li>
+            <li>Pair and provision Wildlife Watcher devices over Bluetooth, with a live preview while monitoring.</li>
+            <li>Remote battery and SD-card telemetry over LoRaWAN is in development.</li>
           </ul>
           {/* Reuse app-store badges inline */}
           <div style={{ display: 'flex', gap: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
