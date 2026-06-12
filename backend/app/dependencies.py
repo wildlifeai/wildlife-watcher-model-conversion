@@ -26,7 +26,13 @@ async def get_current_user(authorization: str = Header(...)):
 
     token = authorization.replace("Bearer ", "")
     client = supabase_client.create_anon_client()
-    user_response = await asyncio.to_thread(client.auth.get_user, token)
+    try:
+        user_response = await asyncio.to_thread(client.auth.get_user, token)
+    except Exception as exc:
+        # Supabase raises AuthApiError for an invalid/expired token or a session
+        # that no longer exists (e.g. after a DB reset). That's a 401, not a 500 —
+        # let the client know to re-authenticate instead of surfacing a server error.
+        raise HTTPException(status_code=401, detail="Invalid or expired token") from exc
 
     if not user_response or not user_response.user:
         raise HTTPException(status_code=401, detail="Invalid or expired token")
@@ -59,6 +65,7 @@ async def get_user_client(authorization: str = Header(...)):
     token = authorization.replace("Bearer ", "")
     client = supabase_client.create_anon_client()
     client.auth.set_session(access_token=token, refresh_token="")
+    client.postgrest.auth(token)
     return client
 
 

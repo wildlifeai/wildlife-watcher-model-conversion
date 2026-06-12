@@ -2,8 +2,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """Supabase Storage adapter with retries.
 
-Handles download/upload to Supabase Storage buckets with the same
-two-step fallback strategy as the Streamlit app (SDK → public URL).
+Handles download/upload to Supabase Storage buckets with a
+two-step fallback strategy (SDK → public URL).
 """
 
 from typing import Optional
@@ -73,6 +73,33 @@ async def upload_to_storage(bucket: str, path: str, content: bytes, content_type
     except Exception as e:
         logger.error("storage_upload_failed", bucket=bucket, path=path, error=str(e))
         return False
+
+
+async def upload_rendition(path: str, content: bytes, content_type: str = "image/jpeg", bucket: Optional[str] = None) -> Optional[str]:
+    """Upload a public CDN rendition (thumbnail/preview/animal crop).
+
+    Writes to the public media bucket and returns the stable public URL served by
+    Supabase's CDN, or None on failure. Upserts so re-runs (backfill / reprocess)
+    overwrite the existing object. Originals stay in Google Drive — only these
+    small derivatives live here.
+    """
+    import asyncio
+
+    bucket = bucket or settings.SUPABASE_MEDIA_BUCKET
+    client = create_service_client()
+    try:
+        await asyncio.to_thread(
+            client.storage.from_(bucket).upload,
+            path,
+            content,
+            file_options={"content-type": content_type, "upsert": "true"},
+        )
+    except Exception as e:
+        logger.error("rendition_upload_failed", bucket=bucket, path=path, error=str(e))
+        return None
+
+    base_url = settings.SUPABASE_URL.rstrip("/")
+    return f"{base_url}/storage/v1/object/public/{bucket}/{path}"
 
 
 async def delete_from_storage(bucket: str, paths: list[str]) -> bool:

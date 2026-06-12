@@ -1,20 +1,91 @@
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
+import { useNavigate } from 'react-router-dom'
 import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
+import { useProjectSelection } from '../hooks/useProjectSelection'
 import { DeploymentMap } from '../components/data/DeploymentMap'
 import { ObservationReports } from '../components/data/ObservationReports'
 import { MediaBrowser } from '../components/data/MediaBrowser'
+import { useClusters } from '../hooks/useBrain'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Types
+// Shared button style (lifecycle nav + overflow)
 // ─────────────────────────────────────────────────────────────────────────────
 
-interface Project {
-  id: string
-  name: string
-  description: string | null
-  created_at: string
+const NAV_BTN: React.CSSProperties = {
+  padding: '0.25rem 0.5rem',
+  fontSize: '0.75rem',
+  border: '1px solid var(--border)',
+  borderRadius: 'var(--radius)',
+  backgroundColor: 'transparent',
+  color: 'var(--primary)',
+  cursor: 'pointer',
+  whiteSpace: 'nowrap',
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// OverflowMenu — secondary actions hidden behind a "⋯" button
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface OverflowItem { label: string; onClick: () => void; title?: string }
+
+function OverflowMenu({ items }: { items: OverflowItem[] }) {
+  const [open, setOpen] = useState(false)
+  const ref = useRef<HTMLDivElement>(null)
+
+  // Close on outside click
+  useEffect(() => {
+    if (!open) return
+    const handler = (e: MouseEvent) => {
+      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+    }
+    document.addEventListener('mousedown', handler)
+    return () => document.removeEventListener('mousedown', handler)
+  }, [open])
+
+  return (
+    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+      <button
+        onClick={e => { e.stopPropagation(); setOpen(v => !v) }}
+        style={{ ...NAV_BTN, letterSpacing: '0.05em' }}
+        title="More actions"
+      >
+        ⋯
+      </button>
+      {open && (
+        <div style={{
+          position: 'absolute', right: 0, top: '110%', zIndex: 40,
+          backgroundColor: 'var(--surface)', border: '1px solid var(--border)',
+          borderRadius: 'var(--radius)', boxShadow: '0 4px 16px rgba(0,0,0,0.18)',
+          minWidth: '140px', padding: '0.25rem 0',
+        }}>
+          {items.map(item => (
+            <button
+              key={item.label}
+              title={item.title}
+              onClick={e => { e.stopPropagation(); setOpen(false); item.onClick() }}
+              style={{
+                display: 'block', width: '100%', textAlign: 'left',
+                padding: '0.4rem 0.75rem', fontSize: '0.8125rem',
+                border: 'none', backgroundColor: 'transparent',
+                color: 'var(--text-color)', cursor: 'pointer',
+              }}
+              onMouseEnter={e => (e.currentTarget.style.backgroundColor = 'rgba(76,175,80,0.08)')}
+              onMouseLeave={e => (e.currentTarget.style.backgroundColor = 'transparent')}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// DeploymentActionRow — v4 lifecycle nav with live cluster badge
+// Each row is its own component so useClusters can be called at the top level.
+// ─────────────────────────────────────────────────────────────────────────────
 
 interface Deployment {
   id: string
@@ -27,8 +98,70 @@ interface Deployment {
   deployment_start: string | null
   deployment_end: string | null
   created_at: string
+  timezone?: string | null
   observation_count?: number
 }
+
+function DeploymentActionRow({ d, navigate }: { d: Deployment; navigate: ReturnType<typeof useNavigate> }) {
+  const { data: brainData } = useClusters(d.id)
+
+  const clusters      = brainData?.clusters ?? []
+  const total         = clusters.length
+  const confirmed     = clusters.filter(c => c.review_state === 'confirmed').length
+  const openCount     = clusters.filter(c => c.review_state === 'open').length
+  const hasRun        = !!brainData?.embedding_run_id
+
+  return (
+    <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', alignItems: 'center' }}>
+      {/* Primary lifecycle steps */}
+      <button style={NAV_BTN} title="Browse images in this deployment"
+        onClick={e => { e.stopPropagation(); navigate(`/explore/${d.id}`) }}>
+        🖼 Explore
+      </button>
+
+      <button
+        style={{ ...NAV_BTN, ...(hasRun && confirmed < total ? { fontWeight: 600 } : {}) }}
+        title={hasRun ? `${confirmed} of ${total} clusters confirmed` : 'Run Wildlife Brain to generate clusters'}
+        onClick={e => { e.stopPropagation(); navigate(`/clusters/${d.id}`) }}
+      >
+        ◧ Clusters{hasRun ? ` (${confirmed}/${total})` : ''}
+      </button>
+
+      <button
+        style={{ ...NAV_BTN, ...(openCount > 0 ? { color: 'var(--warning, #f59e0b)', borderColor: 'var(--warning, #f59e0b)' } : {}) }}
+        title={openCount > 0 ? `${openCount} items pending review` : 'Active-learning review queue'}
+        onClick={e => { e.stopPropagation(); navigate(`/review/${d.id}`) }}
+      >
+        ▶ Review{openCount > 0 ? ` (${openCount})` : ''}
+      </button>
+
+      <button style={NAV_BTN} title="Visualise embedding space"
+        onClick={e => { e.stopPropagation(); navigate(`/umap/${d.id}`) }}>
+        ✦ UMAP
+      </button>
+
+      {/* Secondary actions in overflow */}
+      <OverflowMenu items={[
+        { label: '📂 Events', title: 'Group observation events', onClick: () => navigate(`/events/${d.id}`) },
+        { label: '📊 Analyse', title: 'Analyse science data', onClick: () => navigate(`/analysis/${d.id}`) },
+        { label: '📦 Report', title: 'Generate reports', onClick: () => navigate(`/reporting/${d.id}`) },
+      ]} />
+    </div>
+  )
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Types
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface Project {
+  id: string
+  name: string
+  description: string | null
+  created_at: string
+}
+
+// Deployment is declared above (needed by DeploymentActionRow)
 
 interface Observation {
   id: string
@@ -46,6 +179,8 @@ type Tab = 'projects' | 'deployments' | 'map' | 'reports' | 'media'
 
 export function MyDataPage() {
   const { user } = useAuth()
+  const { selectedProjectIds, clearAll, toggleProject } = useProjectSelection()
+  const navigate = useNavigate()
   const [tab, setTab] = useState<Tab>('projects')
   const [projects, setProjects] = useState<Project[]>([])
   const [deployments, setDeployments] = useState<Deployment[]>([])
@@ -53,7 +188,6 @@ export function MyDataPage() {
   const [loading, setLoading] = useState(true)
   const [obsLoading, setObsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [selectedProject, setSelectedProject] = useState<string | null>(null)
   const [selectedDeploymentId, setSelectedDeploymentId] = useState<string | null>(null)
   const [sortCol, setSortCol] = useState<string>('')
   const [sortAsc, setSortAsc] = useState(true)
@@ -83,15 +217,21 @@ export function MyDataPage() {
     setLoading(true)
     setError(null)
 
-    let query = supabase
-      .from('deployments')
-      .select('id, project_id, location_name, latitude, longitude, deployment_start, deployment_end, created_at, projects(name), devices(name)')
-      .is('deleted_at', null)
-      .order('created_at', { ascending: false })
+    // `timezone` may not be deployed yet → retry without it so the page still loads.
+    const baseCols = 'id, project_id, location_name, latitude, longitude, deployment_start, deployment_end, created_at, projects(name), devices(name)'
+    const runQuery = (cols: string) => {
+      let q = supabase
+        .from('deployments')
+        .select(cols)
+        .is('deleted_at', null)
+        .order('created_at', { ascending: false })
+      if (selectedProjectIds.length > 0) q = q.in('project_id', selectedProjectIds)
+      return q
+    }
 
-    if (selectedProject) query = query.eq('project_id', selectedProject)
-
-    query.then(({ data, error: err }) => {
+    ;(async () => {
+      let { data, error: err } = await runQuery(`${baseCols}, timezone`)
+      if (err) ({ data, error: err } = await runQuery(baseCols))
       if (err) { setError(err.message); setLoading(false); return }
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
       const rows = (data || []).map((d: any) => ({
@@ -103,8 +243,8 @@ export function MyDataPage() {
       })) as Deployment[]
       setDeployments(rows)
       setLoading(false)
-    })
-  }, [user, tab, selectedProject])
+    })()
+  }, [user, tab, selectedProjectIds])
 
   // ── Fetch observations for Map + Reports tabs ───────────────────────────────
   useEffect(() => {
@@ -133,15 +273,16 @@ export function MyDataPage() {
 
   // ── Download CamtrapDP ZIP ──────────────────────────────────────────────────
   const downloadCamtrapDP = async () => {
-    if (!selectedProject) {
-      setExportError('Select a project first to download its CamtrapDP package.')
+    if (selectedProjectIds.length !== 1) {
+      setExportError('Please select exactly one project from the global filter to download its CamtrapDP package.')
       return
     }
+    const projectId = selectedProjectIds[0]
     setIsExporting(true)
     setExportError(null)
     try {
       const { data, error: fnErr } = await supabase.functions.invoke('export-camtrap-dp', {
-        body: { project_id: selectedProject },
+        body: { project_id: projectId },
       })
       if (fnErr) throw new Error(fnErr.message)
 
@@ -150,7 +291,7 @@ export function MyDataPage() {
       const url = URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `camtrapdp-${selectedProject}-${new Date().toISOString().slice(0, 10)}.zip`
+      a.download = `camtrapdp-${projectId}-${new Date().toISOString().slice(0, 10)}.zip`
       a.click()
       URL.revokeObjectURL(url)
     } catch (err: unknown) {
@@ -272,16 +413,6 @@ export function MyDataPage() {
       {/* Project filter (shared across non-projects tabs) */}
       {tab !== 'projects' && (
         <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '1rem', flexWrap: 'wrap', alignItems: 'center' }}>
-          <select
-            id="project-filter"
-            value={selectedProject || ''}
-            onChange={e => setSelectedProject(e.target.value || null)}
-            style={{ padding: '0.5rem', borderRadius: 'var(--radius)', border: '1px solid var(--border)', backgroundColor: 'var(--surface)', color: 'var(--text-color)' }}
-          >
-            <option value="">All projects</option>
-            {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-          </select>
-
           {tab === 'deployments' && (
             <>
               <input
@@ -296,9 +427,9 @@ export function MyDataPage() {
                 id="download-camtrapdp-btn"
                 className="btn"
                 onClick={downloadCamtrapDP}
-                disabled={isExporting || !selectedProject}
-                title={!selectedProject ? 'Select a project to download CamtrapDP' : 'Download CamtrapDP package (ZIP)'}
-                style={{ padding: '0.5rem 1rem', whiteSpace: 'nowrap', opacity: !selectedProject ? 0.5 : 1 }}
+                disabled={isExporting || selectedProjectIds.length !== 1}
+                title={selectedProjectIds.length !== 1 ? 'Select exactly one project from the top right to download CamtrapDP' : 'Download CamtrapDP package (ZIP)'}
+                style={{ padding: '0.5rem 1rem', whiteSpace: 'nowrap', opacity: selectedProjectIds.length !== 1 ? 0.5 : 1 }}
               >
                 {isExporting ? '⏳ Exporting…' : '📦 Download CamtrapDP'}
               </button>
@@ -352,13 +483,18 @@ export function MyDataPage() {
                     <td style={{ ...tdStyle, fontSize: '0.75rem' }}>{new Date(p.created_at).toLocaleDateString()}</td>
                     <td style={tdStyle}>
                       <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap' }}>
-                        <button onClick={() => { setSelectedProject(p.id); setTab('deployments') }}
-                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}>
-                          Deployments →
+                        <button onClick={() => { clearAll(); toggleProject(p.id); setTab('deployments') }}
+                          style={NAV_BTN}>
+                          📍 Deployments
                         </button>
-                        <button onClick={() => { setSelectedProject(p.id); setTab('map') }}
-                          style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', backgroundColor: 'transparent', color: 'var(--primary)', cursor: 'pointer' }}>
-                          Map →
+                        <button onClick={() => { clearAll(); toggleProject(p.id); setTab('map') }}
+                          style={NAV_BTN}>
+                          🗺 Map
+                        </button>
+                        <button onClick={() => navigate(`/intelligence/${p.id}`)}
+                          style={NAV_BTN}
+                          title="Dataset health dashboard">
+                          📊 Health
                         </button>
                       </div>
                     </td>
@@ -382,11 +518,12 @@ export function MyDataPage() {
                 <th style={thStyle} onClick={() => handleSort('latitude')}>GPS {renderSortIcon('latitude')}</th>
                 <th style={thStyle} onClick={() => handleSort('deployment_start')}>Start {renderSortIcon('deployment_start')}</th>
                 <th style={thStyle} onClick={() => handleSort('deployment_end')}>End {renderSortIcon('deployment_end')}</th>
+                <th style={{ ...thStyle, cursor: 'default' }}>Actions</th>
               </tr>
             </thead>
             <tbody>
               {sortedDeployments.length === 0 && (
-                <tr><td colSpan={6} style={{ ...tdStyle, textAlign: 'center', opacity: 0.5, padding: '2rem' }}>No deployments found</td></tr>
+                <tr><td colSpan={7} style={{ ...tdStyle, textAlign: 'center', opacity: 0.5, padding: '2rem' }}>No deployments found</td></tr>
               )}
               {sortedDeployments.map(d => (
                 <tr key={d.id}
@@ -403,6 +540,9 @@ export function MyDataPage() {
                   </td>
                   <td style={{ ...tdStyle, fontSize: '0.75rem' }}>{d.deployment_start ? new Date(d.deployment_start).toLocaleDateString() : '—'}</td>
                   <td style={{ ...tdStyle, fontSize: '0.75rem' }}>{d.deployment_end ? new Date(d.deployment_end).toLocaleDateString() : '—'}</td>
+                  <td style={tdStyle} onClick={e => e.stopPropagation()}>
+                    <DeploymentActionRow d={d} navigate={navigate} />
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -435,8 +575,7 @@ export function MyDataPage() {
       {/* ── Media tab ──────────────────────────────────────────────────────── */}
       {tab === 'media' && (
         <MediaBrowser
-          projectId={selectedProject}
-          deployments={deployments.map(d => ({ id: d.id, location_name: d.location_name, project_id: d.project_id }))}
+          deployments={deployments.map(d => ({ id: d.id, location_name: d.location_name, project_id: d.project_id, timezone: d.timezone }))}
         />
       )}
     </div>

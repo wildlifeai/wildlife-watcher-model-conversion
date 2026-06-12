@@ -28,7 +28,35 @@ from dotenv import load_dotenv
 project_root = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(project_root))
 
-from db_utils import fetch_all_rows
+def fetch_all_rows(client, table: str, select: str, order_by: str = "created_at", include_deleted: bool = False):
+    """Fetch all rows from a table, handling Supabase's 1000-row limit."""
+    all_rows = []
+    offset = 0
+    page_size = 1000
+
+    while True:
+        query = client.table(table).select(select)
+        if not include_deleted:
+            query = query.is_("deleted_at", "null")
+
+        response = (
+            query.order(order_by, desc=True)
+            .range(offset, offset + page_size - 1)
+            .execute()
+        )
+
+        if not response.data:
+            break
+
+        all_rows.extend(response.data)
+
+        if len(response.data) < page_size:
+            break
+
+        offset += page_size
+
+    return all_rows
+
 from supabase import create_client
 
 # Resolve paths relative to repo root (parent of scripts/)

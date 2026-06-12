@@ -106,6 +106,7 @@ function deriveSectionTitle(state: PipelineState, phase: string): string {
     case 'download':     return `📥 Downloading ${state.totalFiles} images from Azure…`
     case 'drive_upload': return `☁️ Uploading ${state.totalFiles} images to Google Drive…`
     case 'cleanup':      return `🧹 Cleaning up temporary files…`
+    case 'ai_pipeline':  return `🤖 Running AI analysis…`
     default:             return `🔄 Processing ${state.totalFiles} images…`
   }
 }

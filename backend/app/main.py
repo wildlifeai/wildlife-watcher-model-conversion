@@ -17,7 +17,24 @@ from app.config import settings
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import limiter
 from app.middleware.request_id import RequestIDMiddleware
-from app.routers import camtrapdp, clustering, exif, inaturalist, jobs, lorawan, manifest, media, models, public_api
+from app.routers import (
+    auth,
+    brain,
+    camtrapdp,
+    clustering,
+    deployments,
+    exif,
+    inaturalist,
+    intelligence,
+    jobs,
+    lorawan,
+    manifest,
+    media,
+    models,
+    pipeline,
+    public_api,
+    qa,
+)
 
 logger = structlog.get_logger()
 
@@ -79,7 +96,9 @@ app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # ── Routers ──────────────────────────────────────────────────────────
+app.include_router(auth.router)
 app.include_router(jobs.router)
+app.include_router(deployments.router)
 app.include_router(exif.router)
 app.include_router(lorawan.router)
 app.include_router(manifest.router)
@@ -90,6 +109,14 @@ app.include_router(inaturalist.router)
 app.include_router(clustering.router)
 if settings.FF_CAMTRAPDP_IMPORT_ENABLED:
     app.include_router(camtrapdp.router)
+if settings.FF_PIPELINE_ENABLED:
+    app.include_router(pipeline.router)
+if settings.FF_WILDLIFE_BRAIN_ENABLED:
+    app.include_router(brain.router)
+if settings.FF_ACTIVE_LEARNING_ENABLED:
+    app.include_router(qa.router)
+if settings.FF_INTELLIGENCE_ENABLED:
+    app.include_router(intelligence.router)
 
 
 # ── Health check ─────────────────────────────────────────────────────

@@ -7,7 +7,7 @@
 
 /* ── Enums (as union types) ───────────────────────────────────────── */
 
-export type ProgressPhase = 'upload' | 'download' | 'drive_upload' | 'cleanup'
+export type ProgressPhase = 'upload' | 'download' | 'drive_upload' | 'cleanup' | 'ai_pipeline'
 
 export type EventType =
   | 'job_started'

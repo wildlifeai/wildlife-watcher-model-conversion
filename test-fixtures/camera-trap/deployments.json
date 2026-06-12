@@ -1,0 +1,32 @@
+{
+  "_comment": "Seed deployment UUIDs + coordinates from ww-backend/supabase/seeds/dev/data.sql (NZ monitoring org c0000000-0000-0000-0000-000000000005). These are deterministic across every `supabase db reset`, so the stamped images always bind to the same deployments. prepare.py writes the deployment_id into EXIF UserComment (exact match) and the GPS coords (proximity fallback).",
+  "fixtures": [
+    {
+      "label": "zealandia-kiwi",
+      "name": "Zealandia Kiwi Watch",
+      "deployment_id": "e0000000-0000-0000-0000-000000000010",
+      "latitude": -41.2903,
+      "longitude": 174.7530,
+      "base_timestamp": "2026-05-02T20:00:00",
+      "interval_minutes": 7
+    },
+    {
+      "label": "abel-tasman-weka",
+      "name": "Abel Tasman Weka Survey",
+      "deployment_id": "e0000000-0000-0000-0000-000000000011",
+      "latitude": -41.0050,
+      "longitude": 173.0200,
+      "base_timestamp": "2026-05-03T09:30:00",
+      "interval_minutes": 11
+    },
+    {
+      "label": "milford-kea",
+      "name": "Milford Kea Lookout",
+      "deployment_id": "e0000000-0000-0000-0000-000000000012",
+      "latitude": -44.8948,
+      "longitude": 167.6261,
+      "base_timestamp": "2026-05-04T12:00:00",
+      "interval_minutes": 5
+    }
+  ]
+}

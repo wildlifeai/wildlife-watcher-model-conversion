@@ -6,16 +6,32 @@ GET /api/media/{media_id}/image?size=thumb → low-res thumbnail (grid)
 GET /api/media/{media_id}/image?size=full  → full resolution (detail panel)
 """
 
+import asyncio
+from datetime import datetime, timezone
 from typing import Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
+from pydantic import BaseModel, Field
 
-from app.dependencies import get_current_user
+from app.config import settings
+from app.dependencies import get_current_user, get_user_client
+from app.domain.media_registry import resolve_url, with_resolved_urls
 from app.domain.media_resolver import resolve_media
+from app.schemas.common import ApiError, ApiMeta, ApiResponse
 from app.services import supabase_client
 
 router = APIRouter(prefix="/api/media", tags=["media"])
+
+# Columns the grid + resolver need (media + its 1:1 media_assets renditions).
+_REGISTRY_SELECT = "id, file_path, file_name, timestamp, deployment_id, media_assets(thumbnail_url, preview_url, animal_crop_url, storage_provider)"
+
+
+def _registry_disabled(req_id: str | None) -> ApiResponse:
+    return ApiResponse(
+        error=ApiError(code="FEATURE_DISABLED", message="Media Registry is disabled (FF_MEDIA_REGISTRY_ENABLED)."),
+        meta=ApiMeta(request_id=req_id),
+    )
 
 
 @router.get("/{media_id}/image")
@@ -63,4 +79,175 @@ async def get_media_image(
         content=image_bytes,
         media_type=content_type,
         headers={"Cache-Control": f"private, max-age={cache_ttl}"},
+    )
+
+
+# ── Media Registry (Phase 6) ─────────────────────────────────────────
+
+
+@router.get("/{media_id}/resolve")
+async def resolve_media_url(
+    request: Request,
+    media_id: str,
+    size: Literal["thumbnail", "preview", "original"] = Query("thumbnail"),
+    user=Depends(get_current_user),
+):
+    """Return a display URL for a media item regardless of storage provider."""
+    req_id = getattr(request.state, "request_id", None)
+    if not settings.FF_MEDIA_REGISTRY_ENABLED:
+        return _registry_disabled(req_id)
+
+    client = supabase_client.create_anon_client()
+    result = client.table("media").select(_REGISTRY_SELECT).eq("id", media_id).maybe_single().execute()
+    if not result.data:
+        return ApiResponse(error=ApiError(code="NOT_FOUND", message="Media not found"), meta=ApiMeta(request_id=req_id))
+
+    return ApiResponse(
+        data={"media_id": media_id, "size": size, "url": resolve_url(result.data, size)},
+        meta=ApiMeta(request_id=req_id),
+    )
+
+
+@router.get("/registry/{deployment_id}")
+async def media_registry(
+    request: Request,
+    deployment_id: str,
+    page: int = Query(1, ge=1),
+    page_size: int = Query(200, ge=1, le=500),
+    user=Depends(get_current_user),
+):
+    """Paginated media list with pre-resolved URLs — primary source for the grid."""
+    req_id = getattr(request.state, "request_id", None)
+    if not settings.FF_MEDIA_REGISTRY_ENABLED:
+        return _registry_disabled(req_id)
+
+    offset = (page - 1) * page_size
+    client = supabase_client.create_anon_client()
+    result = (
+        client.table("media")
+        .select(_REGISTRY_SELECT)
+        .eq("deployment_id", deployment_id)
+        .is_("deleted_at", "null")
+        .order("timestamp", desc=False)
+        .range(offset, offset + page_size - 1)
+        .execute()
+    )
+    rows = [with_resolved_urls(r) for r in (result.data or [])]
+    return ApiResponse(
+        data={"media": rows, "page": page, "page_size": page_size, "count": len(rows)},
+        meta=ApiMeta(request_id=req_id),
+    )
+
+
+@router.post("/thumbnails/{deployment_id}")
+async def enqueue_thumbnail_backfill(
+    request: Request,
+    deployment_id: str,
+    user=Depends(get_current_user),
+):
+    """Enqueue an async job to generate thumbnails/previews for existing media."""
+    req_id = getattr(request.state, "request_id", None)
+    if not settings.FF_MEDIA_REGISTRY_ENABLED:
+        return _registry_disabled(req_id)
+
+    from app.jobs.definitions import backfill_thumbnails_job
+    from app.jobs.runner import enqueue_local_job
+    from app.jobs.store import create_job
+
+    job_id = await create_job()
+    enqueue_local_job(backfill_thumbnails_job(job_id, deployment_id))
+    return ApiResponse(
+        data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id},
+        meta=ApiMeta(request_id=req_id),
+    )
+
+
+# ── Batch operations ─────────────────────────────────────────────────────────
+
+
+class BatchDeleteRequest(BaseModel):
+    """Soft-delete multiple media records."""
+
+    media_ids: list[str] = Field(..., max_length=500)
+
+
+@router.delete("/batch")
+async def batch_delete_media(
+    request: Request,
+    body: BatchDeleteRequest,
+    user=Depends(get_current_user),
+    user_client=Depends(get_user_client),
+):
+    """Soft-delete multiple media records (sets deleted_at).
+
+    Idempotent: already-deleted media are silently skipped. Runs as the
+    requesting user (not the service role) so RLS restricts the update to
+    media in projects where they hold project_member — IDs outside their
+    projects are silently ignored, never deleted.
+    """
+    req_id = getattr(request.state, "request_id", None)
+    now = datetime.now(timezone.utc).isoformat()
+
+    def _delete():
+        result = user_client.table("media").update({"deleted_at": now}).in_("id", body.media_ids).is_("deleted_at", "null").execute()
+        return len(result.data or [])
+
+    deleted = await asyncio.to_thread(_delete)
+    return ApiResponse(
+        data={"deleted": deleted, "requested": len(body.media_ids)},
+        meta=ApiMeta(request_id=req_id),
+    )
+
+
+class RunSelectedRequest(BaseModel):
+    """Queue a pipeline run for specific media IDs."""
+
+    media_ids: list[str] = Field(..., max_length=200)
+    steps: list[str] = Field(default=["speciesnet"], description="Pipeline step types to run")
+    confidence_threshold: float = Field(0.2, ge=0.0, le=1.0)
+
+
+@router.post("/run-selected")
+async def run_pipeline_selected(
+    request: Request,
+    body: RunSelectedRequest,
+    user=Depends(get_current_user),
+    user_client=Depends(get_user_client),
+):
+    """Queue a pipeline run for specific media IDs (not the full deployment).
+
+    Looks up the deployment_id from the first media record, then runs the
+    pipeline with a media_ids filter. The lookup runs as the requesting user
+    so RLS limits it to media in their own projects.
+    """
+    req_id = getattr(request.state, "request_id", None)
+    if not body.media_ids:
+        return ApiResponse(
+            error=ApiError(code="VALIDATION_ERROR", message="media_ids cannot be empty."),
+            meta=ApiMeta(request_id=req_id),
+        )
+
+    def _lookup():
+        resp = user_client.table("media").select("deployment_id").in_("id", body.media_ids[:1]).limit(1).execute()
+        return resp.data[0]["deployment_id"] if resp.data else None
+
+    deployment_id = await asyncio.to_thread(_lookup)
+    if not deployment_id:
+        return ApiResponse(
+            error=ApiError(code="NOT_FOUND", message="No media found for the given IDs."),
+            meta=ApiMeta(request_id=req_id),
+        )
+
+    # TODO: run_pipeline_job does not exist in app/jobs/definitions.py yet —
+    # enqueueing it raised at runtime. Surface NOT_IMPLEMENTED honestly until
+    # the per-media pipeline job lands, then restore:
+    #   job_id = await create_job()
+    #   await enqueue_job("run_pipeline_job", job_id, deployment_id,
+    #                     body.steps, body.confidence_threshold, body.media_ids)
+    return ApiResponse(
+        error=ApiError(
+            code="NOT_IMPLEMENTED",
+            message="Running the pipeline on selected media is not available yet.",
+        ),
+        meta=ApiMeta(request_id=req_id),
     )

@@ -51,3 +51,33 @@ class INatBatchPollRequest(BaseModel):
     """Request to poll multiple observation IDs."""
 
     observation_ids: List[int] = Field(..., max_length=200, description="Up to 200 observation IDs")
+
+
+class INatAddTaxonBody(BaseModel):
+    """Request body to add a taxon from iNaturalist to the local database."""
+
+    taxon_id: int = Field(..., description="The iNaturalist taxon ID")
+
+
+class INatPublishRequest(BaseModel):
+    """Request to publish selected WW media to the user's iNaturalist account."""
+
+    media_ids: List[str] = Field(..., min_length=1, max_length=200, description="WW media ids to publish")
+    gap_seconds: int = Field(
+        60,
+        ge=1,
+        le=3600,
+        description="Temporal gap to consolidate images into observation bursts (one iNat observation per burst).",
+    )
+    geoprivacy: str = Field("obscured", description="'open', 'obscured', or 'private'")
+
+
+class INatPublishResult(BaseModel):
+    """Summary of an iNaturalist publish run."""
+
+    observations_created: int = 0
+    photos_uploaded: int = 0
+    skipped_bycatch: int = 0
+    skipped_already_published: int = 0
+    errors: int = 0
+    observations: List[Dict[str, Any]] = Field(default_factory=list)

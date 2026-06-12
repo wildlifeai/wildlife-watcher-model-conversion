@@ -4,6 +4,7 @@ import { Auth } from '@supabase/auth-ui-react'
 import { ThemeSupa } from '@supabase/auth-ui-shared'
 import { supabase } from '../config/supabase'
 import { useAuth } from '../hooks/useAuth'
+import { DemoLoginButton } from '../components/common/DemoLoginButton'
 import type { ViewType } from '@supabase/auth-ui-shared'
 
 export function LoginPage() {
@@ -69,6 +70,14 @@ export function LoginPage() {
           </button>
         )}
       </div>
+      {view === 'sign_in' && (
+        <div style={{ textAlign: 'center', marginTop: '1.5rem', paddingTop: '1.5rem', borderTop: '1px solid var(--border)' }}>
+          <div style={{ fontSize: '0.8125rem', opacity: 0.6, marginBottom: '0.625rem' }}>
+            No account? Explore with sample data:
+          </div>
+          <DemoLoginButton />
+        </div>
+      )}
     </div>
   )
 }

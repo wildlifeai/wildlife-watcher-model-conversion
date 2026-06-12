@@ -293,3 +293,43 @@ async def get_api_jwt(access_token: str) -> str:
         raise INatOAuthError("Failed to obtain iNat API JWT")
 
     return response.json().get("api_token", "")
+
+
+async def resolve_api_jwt(token_data: Dict[str, Any]) -> str:
+    """Return the api.inaturalist.org JWT for a stored token bundle.
+
+    Pathway 2 (manually-pasted personal token) stores the JWT directly as
+    ``api_token``; the OAuth path stores an ``access_token`` that must be
+    exchanged at /users/api_token. Used by every write/read against the Node API.
+    """
+    jwt = token_data.get("api_token")
+    if jwt:
+        return jwt
+    return await get_api_jwt(token_data["access_token"])
+
+
+async def validate_api_token(api_jwt: str) -> str:
+    """Validate a manually-pasted iNaturalist API JWT (Pathway 2).
+
+    Calls ``GET /v1/users/me`` with the JWT and returns the account login, so we
+    confirm the token works AND capture a username for display before storing it.
+
+    Raises:
+        INatOAuthError: if the token is missing, invalid, or expired.
+    """
+    if not api_jwt:
+        raise INatOAuthError("No token provided")
+
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(
+            f"{INAT_API_BASE}/users/me",
+            headers={"Authorization": api_jwt},
+        )
+
+    if response.status_code != 200:
+        raise INatOAuthError("Invalid or expired iNaturalist token")
+
+    results = response.json().get("results") or []
+    if not results:
+        raise INatOAuthError("Could not read your iNaturalist profile from this token")
+    return results[0].get("login") or results[0].get("name") or ""
