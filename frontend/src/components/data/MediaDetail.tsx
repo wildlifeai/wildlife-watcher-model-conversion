@@ -380,13 +380,26 @@ export function MediaDetail({ media, timezone, onClose, onUpdated, onNext, onPre
         </div>
 
         {/* ── Observations ─────────────────────────────────── */}
+        {/* The AI pipeline writes one observation per detection box, so a single
+            animal often arrives as several near-identical rows. To keep review
+            simple, show ONE primary observation (human-reviewed first, then the
+            highest-confidence AI row); the rest stay editable in a collapsed
+            "Other detections" section. All boxes still render on the image. */}
         <div style={{ padding: '0.75rem 1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
-          <strong style={{ fontSize: '0.8125rem' }}>Observations ({media.observations.length})</strong>
+          <strong style={{ fontSize: '0.8125rem' }}>Observation</strong>
           {saveMsg && <span style={{ fontSize: '0.75rem', color: saveMsg.startsWith('Error') ? 'var(--error)' : 'var(--success, #4caf50)' }}>{saveMsg}</span>}
         </div>
 
-        {media.observations.map(obs => {
+        {(() => {
+        const ranked = [...media.observations].sort((a, b) =>
+          ((isHumanReviewed(b) ? 1 : 0) - (isHumanReviewed(a) ? 1 : 0)) ||
+          ((b.classification_probability ?? 0) - (a.classification_probability ?? 0))
+        )
+        const primaryObs = ranked[0] ?? null
+        const otherObs   = ranked.slice(1)
+
+        const renderObsCard = (obs: ObservationRecord) => {
           const reviewed    = isHumanReviewed(obs)
           const obsStatus   = reviewed ? 'reviewed' : isAiLabel(obs) ? 'ai' : 'issue'
           const needsReview = isAiLabel(obs) && !reviewed
@@ -484,7 +497,27 @@ export function MediaDetail({ media, timezone, onClose, onUpdated, onNext, onPre
             </div>
           </div>
           )
-        })}
+        }
+
+        return (
+          <>
+            {primaryObs && renderObsCard(primaryObs)}
+            {otherObs.length > 0 && (
+              <details style={{ marginBottom: '0.5rem' }}>
+                <summary style={{
+                  cursor: 'pointer', fontSize: '0.75rem', opacity: 0.65,
+                  padding: '0.25rem 0', userSelect: 'none',
+                }}>
+                  Other detections ({otherObs.length}) — same image, lower confidence
+                </summary>
+                <div style={{ marginTop: '0.5rem' }}>
+                  {otherObs.map(obs => renderObsCard(obs))}
+                </div>
+              </details>
+            )}
+          </>
+        )
+        })()}
 
         <button
           onClick={addObservation}

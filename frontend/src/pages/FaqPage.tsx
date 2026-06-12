@@ -1,10 +1,11 @@
 /**
- * FaqPage — prospect-facing FAQ (/faq).
+ * FaqPage — FAQ for prospects and existing users (/faq).
  *
- * Answers the questions someone *considering* Wildlife Watcher asks: what it
- * is, how it differs from other camera traps, how the AI works, and how to
- * get one. Questions from *existing users* (troubleshooting, account, export)
- * live on the Support page — keep the two audiences separate.
+ * The top half answers the questions someone *considering* Wildlife Watcher
+ * asks: what it is, how it differs from other camera traps, how the AI works,
+ * and how to get one. The "Already using Wildlife Watcher?" half absorbs the
+ * former Support page (/support redirects here): troubleshooting, account,
+ * and export questions, grouped by topic.
  */
 import { useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
@@ -107,14 +108,17 @@ export function FaqPage() {
 
       <FaqItem q="What SD card should I use?">
         We recommend a <strong>FAT32-formatted</strong> microSD card, <strong>32–64 GB</strong>{' '}
-        (Class 10 or higher).
+        (Class 10 or higher). The mobile app includes a "Format SD Card" option (accessible from
+        the Engineer Console) if you need to reformat in the field.
       </FaqItem>
 
       <FaqItem q="Is it free to use?">
-        The web platform is free for conservation projects — Wildlife.ai is a charity whose
-        mission is to accelerate conservation using AI, open source, and community-driven tools.
-        See the <Link to="/support" style={{ color: 'var(--primary)' }}>Support page</Link> for
-        details on plans as the platform grows.
+        Yes. Wildlife.ai is a charity whose mission is to accelerate conservation using AI, open
+        source, and community-driven tools, and the platform is free for conservation projects.
+        As more projects join the movement, we may introduce a paid tier for users with
+        large-scale requirements (thousands of photos, custom ML algorithms, heavy cloud usage),
+        but we are committed to always offering affordable or free services for most conservation
+        projects.
       </FaqItem>
 
       <FaqItem q="Where can I buy one?" id="buy">
@@ -125,12 +129,107 @@ export function FaqPage() {
         <a href="https://wildlife.ai/wildlife-watcher" target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>wildlife.ai</a>.
       </FaqItem>
 
-      <h2 style={{ marginTop: '2.5rem', marginBottom: '0.75rem', fontSize: '1.25rem' }}>Already using Wildlife Watcher?</h2>
+      {/* ── Existing users (formerly the Support page) ───────────────────── */}
+      <h2 style={{ marginTop: '2.5rem', marginBottom: '0.75rem' }}>Already using Wildlife Watcher?</h2>
       <p>
-        Questions about monitoring sessions, Bluetooth, data export, or your account are answered
-        on the <Link to="/support" style={{ color: 'var(--primary)' }}>Support page</Link>, and
-        step-by-step guides live under{' '}
+        Questions about monitoring sessions, Bluetooth, data export, and your account are answered
+        below. Step-by-step setup instructions live under{' '}
         <Link to="/resources" style={{ color: 'var(--primary)' }}>Resources</Link>.
+      </p>
+
+      <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Getting Started</h3>
+
+      <FaqItem q="How do I start a monitoring session?">
+        To start a monitoring session, ensure your camera has batteries and a microSD card installed.
+        Open the Wildlife Watcher mobile app, tap "Search for devices" in the app, and physically press the button at the bottom of the device to connect to it.
+        Once connected, you can configure the project and start the monitoring session. When you are done, you can stop the monitoring through the app.
+        See our <Link to="/resources" style={{ color: 'var(--primary)' }}>Resources</Link> page for a detailed step-by-step guide.
+      </FaqItem>
+
+      <FaqItem q="What is an organisation?">
+        Every user currently belongs to a single default organisation. As we expand the platform, we will roll out a full
+        organisations feature where users can create their own organisation, manage members, and share AI models and data across
+        projects within that organisation.
+      </FaqItem>
+
+      <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Camera & Hardware</h3>
+
+      <FaqItem q="Can I use Wildlife Watcher photos with other software?">
+        Yes. The Wildlife Watcher is built for an end-to-end approach — all information collected in the field
+        (GPS coordinates, timestamps, AI detections) is embedded with the images to save time during data analysis
+        and preparation. We also provide APIs so you can retrieve your field data programmatically and use it with
+        any analysis software you prefer.
+      </FaqItem>
+
+      <FaqItem q="Does the camera support LoRaWAN?">
+        LoRaWAN connectivity is currently a work in progress. At the moment, images are stored on the SD card
+        and retrieved when you visit the camera in the field. We will announce LoRaWAN support when it is ready.
+      </FaqItem>
+
+      <FaqItem q="How do I update the AI model on my camera?">
+        You can prepare an SD card with the latest software and AI model via the "Prepare SD Card" option on the website.
+        Download the package, extract it to the root of your SD card, and insert it into your camera before powering on.
+        Alternatively, you can transfer models via Bluetooth from the mobile app.
+      </FaqItem>
+
+      <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Mobile App</h3>
+
+      <FaqItem q="Does the app work offline?">
+        Yes. The mobile app works without an internet connection using the data it has from the last time it was online.
+        You can view projects, monitoring sessions, and cached data while offline. Any new data or changes made offline will be
+        automatically uploaded to the cloud when an internet connection becomes available.
+      </FaqItem>
+
+      <FaqItem q="The app can't connect to my camera via Bluetooth. What should I do?">
+        <ol style={{ paddingLeft: '1.5rem', margin: '0.5rem 0' }}>
+          <li>Make sure you physically tap the button at the bottom of the device to activate Bluetooth advertising, and ensure the blue light is flashing.</li>
+          <li>Ensure Bluetooth is enabled on your phone and you are within range (a few metres).</li>
+          <li>If the app is scanning but not finding the device, <strong>close the app completely and reopen it</strong>.</li>
+          <li>If the issue persists, restart both the camera and your phone.</li>
+        </ol>
+      </FaqItem>
+
+      <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Data & Export</h3>
+
+      <FaqItem q="What data formats can I export?">
+        You can export your data as <strong>CSV files</strong> or in <strong>CamtrapDP format</strong> — a standardised
+        camera trap data package used by biodiversity databases worldwide. CamtrapDP exports include monitoring sessions,
+        media records, and observations in a single ZIP file.
+      </FaqItem>
+
+      <FaqItem q="Can I upload data from other cameras?">
+        The site currently accepts external data if it is labelled and in <a href="https://camtrap-dp.tdwg.org/" target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>CamtrapDP format</a>.
+        We are actively building support for uploading unlabelled footage from other cameras — users will be able to
+        upload their images and manually add the missing metadata (location, species, timestamps) through the web interface.
+      </FaqItem>
+
+      <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Account</h3>
+
+      <FaqItem q="How do I reset my password?">
+        On the login screen, tap "Forgot Password" and enter your email address. You will receive a password reset link
+        via email. Follow the link to set a new password.
+      </FaqItem>
+
+      <FaqItem q="How do I delete my account?">
+        You can request account deletion at any time by filling out our{' '}
+        <a href="https://forms.gle/aasjsW5N26giYDk96" target="_blank" rel="noreferrer" style={{ color: 'var(--primary)' }}>Account Deletion Request Form</a>{' '}
+        or by emailing <a href="mailto:contact@wildlife.ai" style={{ color: 'var(--primary)' }}>contact@wildlife.ai</a>.
+        Your request will be processed within 7–14 business days. Personal data is deleted; anonymised wildlife
+        observation data is retained for research purposes.
+        See our <Link to="/privacy#account-deletion" style={{ color: 'var(--primary)' }}>Privacy Policy</Link> for full details.
+      </FaqItem>
+
+      {/* ── Contact ───────────────────────────────────────────────────────── */}
+      <h2 style={{ marginTop: '2.5rem', marginBottom: '1rem' }}>Still Need Help?</h2>
+      <p>If you cannot find the answer to your question, or need further technical assistance, please reach out to our team:</p>
+
+      <ul style={{ paddingLeft: '1.5rem', marginBottom: '1rem' }}>
+        <li><strong>Email:</strong> <a href="mailto:contact@wildlife.ai" style={{ color: 'var(--primary)' }}>contact@wildlife.ai</a></li>
+        <li><strong>Resources:</strong> Visit our <Link to="/resources" style={{ color: 'var(--primary)' }}>Resources & How-To Guides</Link> for detailed setup and troubleshooting instructions.</li>
+      </ul>
+
+      <p style={{ marginTop: '2rem', fontStyle: 'italic', color: 'var(--text-muted, #666)' }}>
+        Our support team is available Monday through Friday during standard New Zealand business hours.
       </p>
     </div>
   )

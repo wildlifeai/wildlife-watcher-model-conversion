@@ -15,7 +15,6 @@ import { UploadModelPage } from './pages/UploadModelPage'
 import { UploadDataPage } from './pages/UploadDataPage'
 import { ResetPasswordPage } from './pages/ResetPasswordPage'
 import { PrivacyPolicyPage } from './pages/PrivacyPolicyPage'
-import { SupportPage } from './pages/SupportPage'
 import { TermsOfServicePage } from './pages/TermsOfServicePage'
 import { ResourcesPage } from './pages/ResourcesPage'
 import { FaqPage } from './pages/FaqPage'
@@ -331,17 +330,9 @@ function Layout({ children }: { children: React.ReactNode }) {
           {/* Right-side controls */}
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.625rem', flexShrink: 0 }}>
             {!user && (
-              <>
-                <Link to="/faq" style={{ textDecoration: 'none', color: 'var(--text-color)', fontSize: '0.875rem', opacity: 0.8 }}>
-                  FAQ
-                </Link>
-                <Link to="/resources" style={{ textDecoration: 'none', color: 'var(--text-color)', fontSize: '0.875rem', opacity: 0.8 }}>
-                  Resources
-                </Link>
-                <Link to="/login" className="btn" style={{ padding: '0.375rem 0.875rem', textDecoration: 'none', fontSize: '0.875rem' }}>
-                  Login
-                </Link>
-              </>
+              <Link to="/login" className="btn" style={{ padding: '0.375rem 0.875rem', textDecoration: 'none', fontSize: '0.875rem' }}>
+                Login
+              </Link>
             )}
 
             {user && (
@@ -403,13 +394,11 @@ function Layout({ children }: { children: React.ReactNode }) {
             {' | '}
             <Link to="/resources" style={{ color: 'inherit', textDecoration: 'underline' }}>Resources</Link>
             {' | '}
-            <Link to="/guides" style={{ color: 'inherit', textDecoration: 'underline' }}>Guides</Link>
+            <Link to="/guides" style={{ color: 'inherit', textDecoration: 'underline' }}>Advanced Guides</Link>
             {' | '}
             <Link to="/privacy" style={{ color: 'inherit', textDecoration: 'underline' }}>Privacy Policy</Link>
             {' | '}
             <Link to="/terms" style={{ color: 'inherit', textDecoration: 'underline' }}>Terms of Service</Link>
-            {' | '}
-            <Link to="/support" style={{ color: 'inherit', textDecoration: 'underline' }}>Support</Link>
           </div>
         </div>
       </footer>
@@ -436,7 +425,8 @@ export default function App() {
               <Route path="/login"          element={<LoginPage />} />
               <Route path="/reset-password" element={<ResetPasswordPage />} />
               <Route path="/privacy"        element={<PrivacyPolicyPage />} />
-              <Route path="/support"        element={<SupportPage />} />
+              {/* Support page merged into /faq + /resources; redirect old bookmarks */}
+              <Route path="/support"        element={<Navigate to="/faq" replace />} />
               <Route path="/terms"          element={<TermsOfServicePage />} />
               <Route path="/resources"      element={<ResourcesPage />} />
               <Route path="/faq"            element={<FaqPage />} />

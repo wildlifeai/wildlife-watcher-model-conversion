@@ -1,9 +1,8 @@
 /**
  * FaqItem — collapsible question/answer accordion row.
  *
- * Shared by the prospect-facing FAQ page (/faq) and the user-facing
- * Support page (/support). Pass `id` to make a question deep-linkable
- * (e.g. /faq#buy).
+ * Used by the FAQ page (/faq), which serves both prospects and existing
+ * users. Pass `id` to make a question deep-linkable (e.g. /faq#buy).
  */
 export function FaqItem({ q, id, children }: { q: string; id?: string; children: React.ReactNode }) {
   return (
