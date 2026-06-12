@@ -144,13 +144,7 @@ async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depen
         run_ids = [r["id"] for r in latest_runs]
 
         # 2. Fetch cluster assignments for all runs.
-        clusters_resp = (
-            svc.table("cluster_assignments")
-            .select("*")
-            .in_("embedding_run_id", run_ids)
-            .order("image_count", desc=True)
-            .execute()
-        )
+        clusters_resp = svc.table("cluster_assignments").select("*").in_("embedding_run_id", run_ids).order("image_count", desc=True).execute()
         clusters = clusters_resp.data or []
 
         # 3. Fetch member media per cluster (with optional confidence filter).

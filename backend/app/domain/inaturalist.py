@@ -291,19 +291,11 @@ async def search_and_fetch_inat_taxon(scientific_name: str) -> Optional[Dict[str
         taxon = detail_res.json()["results"][0]
 
     rank = taxon.get("rank")
-    allowed_ranks = {'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'subspecies'}
+    allowed_ranks = {"kingdom", "phylum", "class", "order", "family", "genus", "species", "subspecies"}
     if rank not in allowed_ranks:
         return None
 
-    lineage = {
-        "kingdom": None,
-        "phylum": None,
-        "class": None,
-        "order_name": None,
-        "family": None,
-        "genus": None,
-        "species": None
-    }
+    lineage = {"kingdom": None, "phylum": None, "class": None, "order_name": None, "family": None, "genus": None, "species": None}
 
     for ancestor in taxon.get("ancestors", []):
         a_rank = ancestor.get("rank")

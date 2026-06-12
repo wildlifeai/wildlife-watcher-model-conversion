@@ -9,6 +9,7 @@ inat_observation_media for status tracking + community-ID sync.
 
 Pure orchestration over the lower-level helpers in ``domain/inaturalist.py``.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -75,11 +76,8 @@ def _best_species(burst: List[dict]) -> Optional[str]:
     """Most-common animal scientific name in a burst (human-reviewed preferred)."""
     names: List[str] = []
     for m in burst:
-        human = [
-            o for o in m["_animal_obs"]
-            if o.get("source_type") == "human" or o.get("review_status") in _HUMAN_REVIEWED
-        ]
-        for o in (human or m["_animal_obs"]):
+        human = [o for o in m["_animal_obs"] if o.get("source_type") == "human" or o.get("review_status") in _HUMAN_REVIEWED]
+        for o in human or m["_animal_obs"]:
             if o.get("scientific_name"):
                 names.append(o["scientific_name"])
     if not names:
@@ -131,25 +129,11 @@ async def publish_media_to_inat(
         )
         dep_ids = sorted({m["deployment_id"] for m in media})
         deps = (
-            (
-                svc.table("deployments")
-                .select("id, name, location_name, latitude, longitude")
-                .in_("id", dep_ids)
-                .execute()
-                .data
-                or []
-            )
+            (svc.table("deployments").select("id, name, location_name, latitude, longitude").in_("id", dep_ids).execute().data or [])
             if dep_ids
             else []
         )
-        published = (
-            svc.table("inat_observation_media")
-            .select("media_id")
-            .in_("media_id", media_ids)
-            .execute()
-            .data
-            or []
-        )
+        published = svc.table("inat_observation_media").select("media_id").in_("media_id", media_ids).execute().data or []
         return media, obs, deps, {p["media_id"] for p in published}
 
     media, observations, deployments, already = await asyncio.to_thread(_load)
@@ -231,16 +215,18 @@ async def _publish_one_burst(svc, user_id, dep, burst, geoprivacy, result) -> No
     def _insert_obs():
         return (
             svc.table("inat_observations")
-            .insert({
-                "deployment_id": dep["id"],
-                "user_id": user_id,
-                "inat_observation_id": inat_id,
-                "inat_uuid": str(inat_uuid) if inat_uuid else None,
-                "inat_uri": inat_uri,
-                "species_guess": species,
-                "geoprivacy": geoprivacy,
-                "sync_status": "uploaded",
-            })
+            .insert(
+                {
+                    "deployment_id": dep["id"],
+                    "user_id": user_id,
+                    "inat_observation_id": inat_id,
+                    "inat_uuid": str(inat_uuid) if inat_uuid else None,
+                    "inat_uri": inat_uri,
+                    "species_guess": species,
+                    "geoprivacy": geoprivacy,
+                    "sync_status": "uploaded",
+                }
+            )
             .execute()
             .data[0]
         )
@@ -264,12 +250,14 @@ async def _publish_one_burst(svc, user_id, dep, burst, geoprivacy, result) -> No
             )
 
             def _link(photo=photo, m=m):
-                svc.table("inat_observation_media").insert({
-                    "inat_observation_id": row["id"],
-                    "media_id": m["id"],
-                    "inat_photo_id": photo.get("id") if isinstance(photo, dict) else None,
-                    "original_filename": m["id"],
-                }).execute()
+                svc.table("inat_observation_media").insert(
+                    {
+                        "inat_observation_id": row["id"],
+                        "media_id": m["id"],
+                        "inat_photo_id": photo.get("id") if isinstance(photo, dict) else None,
+                        "original_filename": m["id"],
+                    }
+                ).execute()
 
             await asyncio.to_thread(_link)
             result["photos_uploaded"] += 1
@@ -278,18 +266,23 @@ async def _publish_one_burst(svc, user_id, dep, burst, geoprivacy, result) -> No
             photo_errors += 1
 
     if photo_errors:
+
         def _mark():
-            svc.table("inat_observations").update({
-                "sync_status": "failed",
-                "error_message": f"{photo_errors} photo upload(s) failed",
-            }).eq("id", row["id"]).execute()
+            svc.table("inat_observations").update(
+                {
+                    "sync_status": "failed",
+                    "error_message": f"{photo_errors} photo upload(s) failed",
+                }
+            ).eq("id", row["id"]).execute()
 
         await asyncio.to_thread(_mark)
 
-    result["observations"].append({
-        "inat_observation_id": inat_id,
-        "uri": inat_uri,
-        "species_guess": species,
-        "media_count": len(burst),
-        "photo_errors": photo_errors,
-    })
+    result["observations"].append(
+        {
+            "inat_observation_id": inat_id,
+            "uri": inat_uri,
+            "species_guess": species,
+            "media_count": len(burst),
+            "photo_errors": photo_errors,
+        }
+    )

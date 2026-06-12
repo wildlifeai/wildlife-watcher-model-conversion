@@ -134,10 +134,7 @@ async def recompute_scores(deployment_id: str, progress=None) -> int:
         # fetched from this table moments ago; if one vanished mid-run the
         # insert path fails loudly on the deployment_id NOT NULL constraint
         # (deliberately not supplied — never resurrect a deleted row).
-        payload = [
-            {"media_id": media_id, "active_learning_score": score, "al_score_updated_at": now}
-            for media_id, score in scored
-        ]
+        payload = [{"media_id": media_id, "active_learning_score": score, "al_score_updated_at": now} for media_id, score in scored]
         for i in range(0, len(payload), _PERSIST_CHUNK):
             svc.table("media_embeddings").upsert(payload[i : i + _PERSIST_CHUNK]).execute()
 

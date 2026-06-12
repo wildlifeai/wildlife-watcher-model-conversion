@@ -618,7 +618,7 @@ async def embed_and_cluster_scope(
                 "image_count": 0,
                 "clusters": 0,
                 "deployments": len(deployment_ids),
-                "message": "no animal crops in scope"
+                "message": "no animal crops in scope",
             }
 
         await _tick(0.2, f"Downloading {len(crops)} crops…")
@@ -648,10 +648,7 @@ async def embed_and_cluster_scope(
         await _tick(0.8, "Upserting vectors to Qdrant…")
         qdrant = get_qdrant_service(resolved_model)
         await qdrant.ensure_collection()
-        payloads = [
-            build_payload(deployment_id=kept_deps[i], embedding_run_id=run_id, cluster_id=int(labels[i]))
-            for i in range(len(kept_ids))
-        ]
+        payloads = [build_payload(deployment_id=kept_deps[i], embedding_run_id=run_id, cluster_id=int(labels[i])) for i in range(len(kept_ids))]
         await qdrant.upsert(kept_ids, embeddings, payloads)
 
         await _tick(0.9, "Writing results…")

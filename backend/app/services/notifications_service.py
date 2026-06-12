@@ -24,8 +24,18 @@ logger = structlog.get_logger()
 # Default watch set for users with no explicit rule (case-insensitive substring match).
 # Superseded per-user by notification_rules.
 WATCHED_KEYWORDS = [
-    "rat", "rattus", "stoat", "weasel", "mustela", "ferret",
-    "possum", "trichosurus", "cat", "felis", "hedgehog", "erinaceus",
+    "rat",
+    "rattus",
+    "stoat",
+    "weasel",
+    "mustela",
+    "ferret",
+    "possum",
+    "trichosurus",
+    "cat",
+    "felis",
+    "hedgehog",
+    "erinaceus",
 ]
 
 
@@ -39,9 +49,14 @@ def _is_watched(name: str | None) -> bool:
 def _project_member_ids(svc, project_id: str) -> list[str]:
     try:
         rows = (
-            svc.table("user_roles").select("user_id")
-            .eq("scope_type", "project").eq("scope_id", project_id)
-            .eq("is_active", True).is_("deleted_at", "null").execute().data
+            svc.table("user_roles")
+            .select("user_id")
+            .eq("scope_type", "project")
+            .eq("scope_id", project_id)
+            .eq("is_active", True)
+            .is_("deleted_at", "null")
+            .execute()
+            .data
             or []
         )
     except Exception:
@@ -55,8 +70,11 @@ def _species_rules(svc, project_id: str) -> dict:
         rows = (
             svc.table("notification_rules")
             .select("user_id, species_filter, channels, digest")
-            .eq("project_id", project_id).eq("event_type", "species_detection")
-            .eq("is_active", True).execute().data
+            .eq("project_id", project_id)
+            .eq("event_type", "species_detection")
+            .eq("is_active", True)
+            .execute()
+            .data
             or []
         )
     except Exception:
@@ -84,10 +102,7 @@ async def emit_detection_notifications(deployment_id: str, recent_minutes: int =
 
     def _gather() -> tuple[list[tuple[str, str, str]], int]:
         svc = create_service_client()
-        dep = (
-            svc.table("deployments").select("project_id, location_name")
-            .eq("id", deployment_id).limit(1).execute().data
-        )
+        dep = svc.table("deployments").select("project_id, location_name").eq("id", deployment_id).limit(1).execute().data
         if not dep or not dep[0].get("project_id"):
             return [], 0
         project_id = dep[0]["project_id"]
@@ -97,8 +112,11 @@ async def emit_detection_notifications(deployment_id: str, recent_minutes: int =
         obs = (
             svc.table("observations")
             .select("scientific_name, vernacular_name")
-            .eq("deployment_id", deployment_id).eq("source_type", "ai")
-            .gte("created_at", since).execute().data
+            .eq("deployment_id", deployment_id)
+            .eq("source_type", "ai")
+            .gte("created_at", since)
+            .execute()
+            .data
             or []
         )
         detected: Counter = Counter()
@@ -136,11 +154,17 @@ async def emit_detection_notifications(deployment_id: str, recent_minutes: int =
             body = f"{summary} in your latest upload."
 
             if "web" in channels:
-                web_rows.append({
-                    "user_id": uid, "project_id": project_id, "deployment_id": deployment_id,
-                    "type": "species_detection", "title": title, "body": body,
-                    "data": {"species": matching, "count": sum(matching.values()), "link": link},
-                })
+                web_rows.append(
+                    {
+                        "user_id": uid,
+                        "project_id": project_id,
+                        "deployment_id": deployment_id,
+                        "type": "species_detection",
+                        "title": title,
+                        "body": body,
+                        "data": {"species": matching, "count": sum(matching.values()), "link": link},
+                    }
+                )
             if "email" in channels and (rule or {}).get("digest", "immediate") == "immediate":
                 to = emails.get(uid)
                 if to:

@@ -415,23 +415,12 @@ async def add_inat_taxon(
     taxon = results[0]
     rank = taxon.get("rank")
 
-    allowed_ranks = {'kingdom', 'phylum', 'class', 'order', 'family', 'genus', 'species', 'subspecies'}
+    allowed_ranks = {"kingdom", "phylum", "class", "order", "family", "genus", "species", "subspecies"}
     if rank not in allowed_ranks:
-        raise HTTPException(
-            400,
-            detail=f"Taxon rank '{rank}' is not supported. Supported ranks are {allowed_ranks}"
-        )
+        raise HTTPException(400, detail=f"Taxon rank '{rank}' is not supported. Supported ranks are {allowed_ranks}")
 
     # Extract lineage
-    lineage = {
-        "kingdom": None,
-        "phylum": None,
-        "class": None,
-        "order_name": None,
-        "family": None,
-        "genus": None,
-        "species": None
-    }
+    lineage = {"kingdom": None, "phylum": None, "class": None, "order_name": None, "family": None, "genus": None, "species": None}
 
     for ancestor in taxon.get("ancestors", []):
         a_rank = ancestor.get("rank")
@@ -518,4 +507,3 @@ async def add_inat_taxon(
         data=insert_res.data[0],
         meta=ApiMeta(request_id=getattr(request.state, "request_id", None)),
     )
-

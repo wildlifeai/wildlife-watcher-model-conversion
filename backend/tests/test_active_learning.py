@@ -62,10 +62,7 @@ async def test_recompute_scores_bulk_upserts_in_chunks(monkeypatch):
 
     from app.domain.active_learning import recompute_scores
 
-    embeddings = [
-        {"media_id": f"m{i}", "cluster_confidence": 0.5, "is_outlier": False}
-        for i in range(1200)
-    ]
+    embeddings = [{"media_id": f"m{i}", "cluster_confidence": 0.5, "is_outlier": False} for i in range(1200)]
     upsert_payloads = []
 
     me_table = MagicMock()

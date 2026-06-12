@@ -297,9 +297,7 @@ class GoogleDriveService:
                 if folder_id:
                     await asyncio.to_thread(self._patch_folder, folder_id, app_properties={"deployment_id": deployment_id})
                 else:
-                    folder_id = await asyncio.to_thread(
-                        self._create_folder, parent_id, desired_name, {"deployment_id": deployment_id}
-                    )
+                    folder_id = await asyncio.to_thread(self._create_folder, parent_id, desired_name, {"deployment_id": deployment_id})
                     logger.info("drive_folder_created", name=desired_name, folder_id=folder_id)
 
             self._dep_folder_memo[deployment_id] = folder_id
@@ -504,15 +502,17 @@ class GoogleDriveService:
                         # Record EVERY present file (new OR pre-existing duplicate) with its
                         # hash, so callers can register a media row — including for files that
                         # are already in Drive but have no media row yet (Guard 1 self-heal).
-                        uploaded_files.append({
-                            "file_id": file_id,
-                            "media_id": file_info.get("media_id"),
-                            "deployment_id": (file_info.get("deployment") or {}).get("id"),
-                            "filename": drive_name,
-                            "timestamp": file_info.get("timestamp"),
-                            "file_hash": file_hash,
-                            "was_new": was_new,
-                        })
+                        uploaded_files.append(
+                            {
+                                "file_id": file_id,
+                                "media_id": file_info.get("media_id"),
+                                "deployment_id": (file_info.get("deployment") or {}).get("id"),
+                                "filename": drive_name,
+                                "timestamp": file_info.get("timestamp"),
+                                "file_hash": file_hash,
+                                "was_new": was_new,
+                            }
+                        )
                         if file_callback:
                             await file_callback(
                                 action="uploaded" if was_new else "skipped",

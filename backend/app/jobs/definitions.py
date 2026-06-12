@@ -810,10 +810,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
 
         uploaded = stats.get("files", []) or []
         # The exif-upload path (no media_id) registers media; CamtrapDP (media_id) patches.
-        candidates = [
-            uf for uf in uploaded
-            if uf.get("deployment_id") and uf.get("file_id") and not uf.get("media_id")
-        ]
+        candidates = [uf for uf in uploaded if uf.get("deployment_id") and uf.get("file_id") and not uf.get("media_id")]
         svc = create_service_client()
 
         # ── Guard 1: dedup. Skip files that already have a media row, by file_hash
@@ -824,10 +821,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         existing_keys: set = set()
         for dep in sorted({uf["deployment_id"] for uf in candidates}):
             try:
-                rows = (
-                    svc.table("media").select("file_hash, file_path")
-                    .eq("deployment_id", dep).execute().data or []
-                )
+                rows = svc.table("media").select("file_hash, file_path").eq("deployment_id", dep).execute().data or []
             except Exception:
                 rows = []
             for r in rows:
@@ -848,13 +842,12 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                 "file_hash": uf.get("file_hash"),
             }
             for uf in candidates
-            if ("hash", uf.get("file_hash")) not in existing_keys
-            and ("path", f"gdrive://{uf['file_id']}") not in existing_keys
+            if ("hash", uf.get("file_hash")) not in existing_keys and ("path", f"gdrive://{uf['file_id']}") not in existing_keys
         ]
         media_created = 0
         if media_rows:
             for i in range(0, len(media_rows), 100):
-                chunk = [{k: v for k, v in r.items() if v is not None} for r in media_rows[i:i + 100]]
+                chunk = [{k: v for k, v in r.items() if v is not None} for r in media_rows[i : i + 100]]
                 try:
                     svc.table("media").insert(chunk).execute()
                     media_created += len(chunk)
@@ -936,11 +929,9 @@ async def upload_drive_images_job(job_id: str, payload: dict):
 
         _user_id = payload.get("user_id")
         # Unique deployment IDs present in this upload batch
-        _dep_ids: list[str] = list({
-            entry.get("deployment", {}).get("id")
-            for entry in file_entries
-            if entry.get("deployment") and entry.get("deployment", {}).get("id")
-        })
+        _dep_ids: list[str] = list(
+            {entry.get("deployment", {}).get("id") for entry in file_entries if entry.get("deployment") and entry.get("deployment", {}).get("id")}
+        )
 
         # Step set from the enabled flags (same source as auto_annotate_deployments),
         # so this single inline run includes SpeciesNet/BioCLIP/etc. when enabled.
@@ -955,6 +946,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
             _ai_done = 0
 
             for _dep_id in _dep_ids:
+
                 async def _on_step(step_name: str, _i: int, _n: int, _dep=_dep_id) -> None:
                     nonlocal _ai_done
                     await emit_event(
@@ -982,10 +974,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                         ProgressEvent(
                             type=EventType.FILE_SUCCESS,
                             phase=ProgressPhase.AI_PIPELINE,
-                            message=(
-                                f"✅ AI analysis complete — deployment {_dep_id[:8]}: "
-                                f"{_result.total_observations} observation(s) created"
-                            ),
+                            message=(f"✅ AI analysis complete — deployment {_dep_id[:8]}: {_result.total_observations} observation(s) created"),
                         ),
                     )
                 except Exception as _pipeline_err:
@@ -1013,11 +1002,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         uploaded_count = summary.uploaded if summary else 0
         skipped_count = summary.skipped if summary else 0
 
-        final_status = (
-            JobStatus.COMPLETED_WITH_ERRORS
-            if (failed_count > 0 or pipeline_errors > 0)
-            else JobStatus.COMPLETED
-        )
+        final_status = JobStatus.COMPLETED_WITH_ERRORS if (failed_count > 0 or pipeline_errors > 0) else JobStatus.COMPLETED
 
         if final_status == JobStatus.COMPLETED_WITH_ERRORS:
             issue_parts = []
@@ -1025,10 +1010,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                 issue_parts.append(f"{failed_count} Drive error(s)")
             if pipeline_errors > 0:
                 issue_parts.append(f"{pipeline_errors} AI error(s)")
-            final_msg = (
-                f"⚠️ Done with issues — {uploaded_count} uploaded, "
-                f"{skipped_count} skipped, {', '.join(issue_parts)}"
-            )
+            final_msg = f"⚠️ Done with issues — {uploaded_count} uploaded, {skipped_count} skipped, {', '.join(issue_parts)}"
         else:
             final_msg = f"✅ Done — {drive_total} images synced to Drive, AI analysis complete"
 

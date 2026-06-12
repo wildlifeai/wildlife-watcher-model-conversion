@@ -15,12 +15,9 @@ from app.services.bioclip_service import (
 
 # Tree-of-Life style rows: one per (image, candidate), each with file_name + score.
 _TOL_ROWS = [
-    {"file_name": "/tmp/a.jpg", "genus": "Vulpes", "species": "vulpes",
-     "common_name": "Red Fox", "score": 0.81, "kingdom": "Animalia"},
-    {"file_name": "/tmp/a.jpg", "genus": "Canis", "species": "lupus",
-     "common_name": "Gray Wolf", "score": 0.12},
-    {"file_name": "/tmp/b.jpg", "genus": "Ardea", "species": "Ardea cinerea",
-     "common_name": "Grey Heron", "score": 0.74},
+    {"file_name": "/tmp/a.jpg", "genus": "Vulpes", "species": "vulpes", "common_name": "Red Fox", "score": 0.81, "kingdom": "Animalia"},
+    {"file_name": "/tmp/a.jpg", "genus": "Canis", "species": "lupus", "common_name": "Gray Wolf", "score": 0.12},
+    {"file_name": "/tmp/b.jpg", "genus": "Ardea", "species": "Ardea cinerea", "common_name": "Grey Heron", "score": 0.74},
 ]
 
 # Custom-label style rows: single classification string + score.
@@ -53,12 +50,13 @@ def test_parse_custom_label_rows():
 
 def test_build_observation_row():
     pred = CropPrediction(
-        filepath="/tmp/a.jpg", scientific_name="Vulpes vulpes",
-        common_name="Red Fox", score=0.81, rank="species",
+        filepath="/tmp/a.jpg",
+        scientific_name="Vulpes vulpes",
+        common_name="Red Fox",
+        score=0.81,
+        rank="species",
     )
-    rows = build_bioclip_observations(
-        {"id": "m1"}, "dep1", pred, "bioclip-2", "2026-01-01T00:00:00Z", 0.2
-    )
+    rows = build_bioclip_observations({"id": "m1"}, "dep1", pred, "bioclip-2", "2026-01-01T00:00:00Z", 0.2)
     assert len(rows) == 1
     r = rows[0]
     assert r["observation_type"] == "animal"

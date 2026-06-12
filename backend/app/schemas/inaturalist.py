@@ -64,7 +64,9 @@ class INatPublishRequest(BaseModel):
 
     media_ids: List[str] = Field(..., min_length=1, max_length=200, description="WW media ids to publish")
     gap_seconds: int = Field(
-        60, ge=1, le=3600,
+        60,
+        ge=1,
+        le=3600,
         description="Temporal gap to consolidate images into observation bursts (one iNat observation per burst).",
     )
     geoprivacy: str = Field("obscured", description="'open', 'obscured', or 'private'")
@@ -79,4 +81,3 @@ class INatPublishResult(BaseModel):
     skipped_already_published: int = 0
     errors: int = 0
     observations: List[Dict[str, Any]] = Field(default_factory=list)
-

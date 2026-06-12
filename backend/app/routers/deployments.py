@@ -8,14 +8,14 @@ from app.services.supabase_client import create_service_client
 
 router = APIRouter(prefix="/api/deployments", tags=["deployments"])
 
+
 class ValidateDeploymentsRequest(BaseModel):
     deployment_ids: List[str]
 
+
 @router.post("/validate")
 async def validate_deployments(
-    request: ValidateDeploymentsRequest,
-    user: Any = Depends(get_current_user),
-    user_client: Any = Depends(get_user_client)
+    request: ValidateDeploymentsRequest, user: Any = Depends(get_current_user), user_client: Any = Depends(get_user_client)
 ) -> Dict[str, str]:
     """
     Given a list of deployment IDs (or 8-char prefixes), determine their state:

@@ -183,9 +183,7 @@ def _map_feature_type(val: Optional[str]) -> Optional[str]:
     return _FEATURE_TYPE_MAP.get(s, "other")
 
 
-def _derive_import_provenance(
-    cls_method: Optional[str], annotation_mode: str
-) -> tuple[str, str]:
+def _derive_import_provenance(cls_method: Optional[str], annotation_mode: str) -> tuple[str, str]:
     """Map a CamtrapDP observation's classificationMethod to WW provenance.
 
     Returns ``(source_type, review_status)`` so the annotation badge renders
@@ -338,9 +336,7 @@ def import_package(
         # Check if a deployment already exists for this device + start time.
         # This makes re-imports idempotent: reuse the existing row's ID so that
         # subsequent media and observations can still be linked correctly.
-        existing_dep = svc.table("deployments").select("id").eq(
-            "device_id", device_uuid
-        ).eq("deployment_start", dep_start).limit(1).execute()
+        existing_dep = svc.table("deployments").select("id").eq("device_id", device_uuid).eq("deployment_start", dep_start).limit(1).execute()
 
         if existing_dep.data:
             existing_id = existing_dep.data[0]["id"]
@@ -433,23 +429,21 @@ def import_package(
             zip_bytes = pkg.zip_files.get(file_path) or pkg.zip_files.get(file_path.split("/")[-1])
             if zip_bytes:
                 # Resolve deployment context for Drive folder naming
-                dep_row = next(
-                    (d for d in pkg.deployments
-                     if dep_id_map.get(d.get("deploymentID", "").strip()) == ww_dep_id),
-                    {}
+                dep_row = next((d for d in pkg.deployments if dep_id_map.get(d.get("deploymentID", "").strip()) == ww_dep_id), {})
+                pending_drive_uploads.append(
+                    PendingDriveUpload(
+                        filename=file_name,
+                        mime_type=mime,
+                        file_bytes=zip_bytes,
+                        media_id=ww_id,
+                        deployment_id=ww_dep_id,
+                        deployment_start=_str(dep_row.get("deploymentStart")),
+                        deployment_end=_str(dep_row.get("deploymentEnd")),
+                        location_name=_str(dep_row.get("locationName")),
+                        project_id=project_id,
+                        project_name=project_title,
+                    )
                 )
-                pending_drive_uploads.append(PendingDriveUpload(
-                    filename=file_name,
-                    mime_type=mime,
-                    file_bytes=zip_bytes,
-                    media_id=ww_id,
-                    deployment_id=ww_dep_id,
-                    deployment_start=_str(dep_row.get("deploymentStart")),
-                    deployment_end=_str(dep_row.get("deploymentEnd")),
-                    location_name=_str(dep_row.get("locationName")),
-                    project_id=project_id,
-                    project_name=project_title,
-                ))
                 # stored_path will be updated by the router after Drive upload
                 # For now leave as the relative path; router patches it afterward
 
@@ -506,6 +500,7 @@ def import_package(
 
     # Group observations by (eventID, deploymentID) to derive timestamps
     from collections import defaultdict
+
     event_groups: dict[tuple[str, str], list[dict]] = defaultdict(list)
     for o in pkg.observations:
         cdp_event_id = _str(o.get("eventID"))
@@ -540,8 +535,7 @@ def import_package(
         else:
             # Fall back: use deployment start as placeholder
             dep_row_start = next(
-                (d.get("deploymentStart") for d in pkg.deployments
-                 if dep_id_map.get(d.get("deploymentID", "").strip()) == ww_dep_id),
+                (d.get("deploymentStart") for d in pkg.deployments if dep_id_map.get(d.get("deploymentID", "").strip()) == ww_dep_id),
                 None,
             )
             start_time = dep_row_start or "1970-01-01T00:00:00Z"
@@ -550,6 +544,7 @@ def import_package(
         # Compute duration in seconds (best-effort; 0 if same time)
         try:
             from datetime import datetime
+
             # Try parsing with fractional seconds too
             def _parse_dt(s: str):
                 # fromisoformat (3.11+) handles all ISO 8601 flavours external
@@ -558,25 +553,28 @@ def import_package(
                     return datetime.fromisoformat(s.replace("Z", "+00:00"))
                 except (ValueError, TypeError):
                     return None
+
             dt_start = _parse_dt(start_time)
             dt_end = _parse_dt(end_time)
             duration = max(0, int((dt_end - dt_start).total_seconds())) if dt_start and dt_end else 0
         except Exception:
             duration = 0
 
-        obs_event_batch.append({
-            "id": ww_event_uuid,
-            "deployment_id": ww_dep_id,
-            "start_time": start_time,
-            "end_time": end_time,
-            "event_duration_seconds": duration,
-            "media_count": max(1, len(obs_in_event)),
-            "created_by": user_id,
-        })
+        obs_event_batch.append(
+            {
+                "id": ww_event_uuid,
+                "deployment_id": ww_dep_id,
+                "start_time": start_time,
+                "end_time": end_time,
+                "event_duration_seconds": duration,
+                "media_count": max(1, len(obs_in_event)),
+                "created_by": user_id,
+            }
+        )
 
     # Insert observation_events in chunks (reuse same BULK_CHUNK)
     for i in range(0, len(obs_event_batch), BULK_CHUNK):
-        chunk = obs_event_batch[i:i + BULK_CHUNK]
+        chunk = obs_event_batch[i : i + BULK_CHUNK]
         try:
             # Upsert so re-imports don't fail on duplicate event UUIDs
             svc.table("observation_events").upsert(chunk, on_conflict="id").execute()
@@ -693,7 +691,7 @@ def import_package(
             if mid not in media_with_obs
         ]
         for i in range(0, len(empty_batch), BULK_CHUNK):
-            chunk = empty_batch[i:i + BULK_CHUNK]
+            chunk = empty_batch[i : i + BULK_CHUNK]
             try:
                 svc.table("observations").insert(chunk).execute()
                 obs_inserted += len(chunk)

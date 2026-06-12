@@ -94,13 +94,10 @@ async def import_camtrapdp(
     )
 
     # ── Register missing taxa ──────────────────────────────────────────
-    unique_names = {
-        obs.get("scientificName", "").strip()
-        for obs in pkg.observations
-        if obs.get("scientificName", "").strip()
-    }
+    unique_names = {obs.get("scientificName", "").strip() for obs in pkg.observations if obs.get("scientificName", "").strip()}
 
     if unique_names:
+
         def get_existing_taxa():
             return svc.table("taxa").select("scientific_name").in_("scientific_name", list(unique_names)).execute()
 
@@ -116,11 +113,13 @@ async def import_camtrapdp(
                     new_taxon = await search_and_fetch_inat_taxon(name)
                     if new_taxon:
                         resolved_name = new_taxon.get("scientific_name", "")
+
                         # iNat may resolve a synonym to a different accepted name that
                         # already exists in the DB (e.g. Anas strepera → Mareca strepera).
                         # Re-check with the resolved name to avoid a duplicate key error.
                         def check_resolved(rn=resolved_name):
                             return svc.table("taxa").select("scientific_name").eq("scientific_name", rn).limit(1).execute()
+
                         resolved_res = await asyncio.to_thread(check_resolved)
                         if resolved_res.data:
                             logger.info(
@@ -129,8 +128,10 @@ async def import_camtrapdp(
                                 resolved=resolved_name,
                             )
                         else:
+
                             def insert_taxon(t=new_taxon):
                                 return svc.table("taxa").insert(t).execute()
+
                             await asyncio.to_thread(insert_taxon)
                             logger.info(
                                 "camtrapdp_import_registered_taxon",
@@ -150,9 +151,7 @@ async def import_camtrapdp(
 
     # ── Run import (blocking I/O — run in thread) ──────────────────────
     try:
-        result: CamtrapImportResult = await asyncio.to_thread(
-            domain.import_package, pkg, user.id, org_id, svc, user_client, annotation_mode
-        )
+        result: CamtrapImportResult = await asyncio.to_thread(domain.import_package, pkg, user.id, org_id, svc, user_client, annotation_mode)
     except Exception as exc:
         logger.error("camtrapdp_import_failed", error=str(exc))
         raise HTTPException(
@@ -165,6 +164,7 @@ async def import_camtrapdp(
     # were physically inside the zip need uploading to Drive.
     if result.pending_drive_uploads:
         from app.config import settings as app_settings
+
         if not app_settings.GOOGLE_DRIVE_ENABLED:
             result.warnings.append(
                 f"{len(result.pending_drive_uploads)} image(s) found in zip but "
@@ -185,25 +185,25 @@ async def import_camtrapdp(
                 # Build the file list in the format upload_analysis_images expects
                 drive_files = []
                 for p in result.pending_drive_uploads:
-                    drive_files.append({
-                        "file_bytes": p.file_bytes,
-                        "filename": p.filename,
-                        "media_id": p.media_id,
-                        "timestamp": p.deployment_start,
-                        "mime_type": p.mime_type,
-                        "project": {"id": p.project_id, "name": p.project_name},
-                        "deployment": {
-                            "id": p.deployment_id,
-                            "deployment_start": p.deployment_start,
-                            "deployment_end": p.deployment_end,
-                            "location_name": p.location_name or "",
-                        },
-                        "_project_folder": f"{slugify(p.project_name)}_{p.project_id[:8]}",
-                        "_deployment_folder": build_deployment_folder_name(
-                            p.deployment_start, p.deployment_end, p.deployment_id
-                        ),
-                        "drive_filename": sanitize_filename(p.deployment_start, p.filename),
-                    })
+                    drive_files.append(
+                        {
+                            "file_bytes": p.file_bytes,
+                            "filename": p.filename,
+                            "media_id": p.media_id,
+                            "timestamp": p.deployment_start,
+                            "mime_type": p.mime_type,
+                            "project": {"id": p.project_id, "name": p.project_name},
+                            "deployment": {
+                                "id": p.deployment_id,
+                                "deployment_start": p.deployment_start,
+                                "deployment_end": p.deployment_end,
+                                "location_name": p.location_name or "",
+                            },
+                            "_project_folder": f"{slugify(p.project_name)}_{p.project_id[:8]}",
+                            "_deployment_folder": build_deployment_folder_name(p.deployment_start, p.deployment_end, p.deployment_id),
+                            "drive_filename": sanitize_filename(p.deployment_start, p.filename),
+                        }
+                    )
 
                 stats = await drive.upload_analysis_images(drive_files)
 
@@ -216,9 +216,7 @@ async def import_camtrapdp(
                     if not uf.get("media_id"):
                         continue  # only the CamtrapDP path pre-creates media to patch
                     try:
-                        svc.table("media").update(
-                            {"file_path": f"gdrive://{uf['file_id']}", "file_public": False}
-                        ).eq("id", uf["media_id"]).execute()
+                        svc.table("media").update({"file_path": f"gdrive://{uf['file_id']}", "file_public": False}).eq("id", uf["media_id"]).execute()
                         patched += 1
                     except Exception as exc:
                         logger.warning(

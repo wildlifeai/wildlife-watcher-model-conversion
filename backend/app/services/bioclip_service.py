@@ -100,9 +100,7 @@ def _score_of(row: dict[str, Any]) -> float:
     return 0.0
 
 
-def parse_bioclip_output(
-    rows: Sequence[dict[str, Any]], rank: Optional[str] = None
-) -> list[CropPrediction]:
+def parse_bioclip_output(rows: Sequence[dict[str, Any]], rank: Optional[str] = None) -> list[CropPrediction]:
     """Convert raw pybioclip prediction rows into ``CropPrediction`` list.
 
     pybioclip returns one row per (image, candidate) pair, each with a
@@ -164,9 +162,7 @@ class BioCLIPService:
             from bioclip import CustomLabelsClassifier  # heavy
 
             logger.info("bioclip_loading", model="custom_labels", labels=len(key))
-            self._custom_models[key] = CustomLabelsClassifier(
-                list(labels), device=self._resolve_device()
-            )
+            self._custom_models[key] = CustomLabelsClassifier(list(labels), device=self._resolve_device())
         return self._custom_models[key]
 
     async def predict(

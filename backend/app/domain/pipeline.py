@@ -389,9 +389,7 @@ class BioCLIPStep(PipelineStep):
         start = time.monotonic()
         if not settings.FF_BIOCLIP_ENABLED:
             logger.info("bioclip_step_skipped_disabled", deployment_id=deployment_id)
-            return PipelineStepResult(
-                step=self.step_type, media_processed=0, model_version=self.model_version
-            )
+            return PipelineStepResult(step=self.step_type, media_processed=0, model_version=self.model_version)
 
         threshold = config.get("confidence_threshold", 0.0)
         labels = config.get("bioclip_labels")
@@ -404,17 +402,8 @@ class BioCLIPStep(PipelineStep):
         media_ids = [m["id"] for m in media]
 
         def _fetch_crops() -> dict[str, str]:
-            resp = (
-                svc.table("media_assets")
-                .select("media_id, animal_crop_url")
-                .in_("media_id", media_ids)
-                .execute()
-            )
-            return {
-                r["media_id"]: r["animal_crop_url"]
-                for r in (resp.data or [])
-                if r.get("animal_crop_url")
-            }
+            resp = svc.table("media_assets").select("media_id, animal_crop_url").in_("media_id", media_ids).execute()
+            return {r["media_id"]: r["animal_crop_url"] for r in (resp.data or []) if r.get("animal_crop_url")}
 
         crop_map = await asyncio.to_thread(_fetch_crops)
 
@@ -439,9 +428,7 @@ class BioCLIPStep(PipelineStep):
                     logger.warning("bioclip_resolve_error", media_id=m.get("id"), error=str(exc))
                     errors += 1
 
-            predictions = await get_bioclip_service().predict(
-                list(path_to_media.keys()), labels=labels, rank=rank
-            )
+            predictions = await get_bioclip_service().predict(list(path_to_media.keys()), labels=labels, rank=rank)
 
             timestamp = datetime.now(timezone.utc).isoformat()
             obs_batch: list[dict] = []
@@ -449,11 +436,7 @@ class BioCLIPStep(PipelineStep):
                 m = path_to_media.get(pred.filepath)
                 if not m:
                     continue
-                obs_batch.extend(
-                    build_bioclip_observations(
-                        m, deployment_id, pred, self.model_version, timestamp, threshold
-                    )
-                )
+                obs_batch.extend(build_bioclip_observations(m, deployment_id, pred, self.model_version, timestamp, threshold))
 
             if obs_batch:
 

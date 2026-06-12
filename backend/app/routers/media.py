@@ -189,13 +189,7 @@ async def batch_delete_media(
     now = datetime.now(timezone.utc).isoformat()
 
     def _delete():
-        result = (
-            user_client.table("media")
-            .update({"deleted_at": now})
-            .in_("id", body.media_ids)
-            .is_("deleted_at", "null")
-            .execute()
-        )
+        result = user_client.table("media").update({"deleted_at": now}).in_("id", body.media_ids).is_("deleted_at", "null").execute()
         return len(result.data or [])
 
     deleted = await asyncio.to_thread(_delete)
@@ -234,13 +228,7 @@ async def run_pipeline_selected(
         )
 
     def _lookup():
-        resp = (
-            user_client.table("media")
-            .select("deployment_id")
-            .in_("id", body.media_ids[:1])
-            .limit(1)
-            .execute()
-        )
+        resp = user_client.table("media").select("deployment_id").in_("id", body.media_ids[:1]).limit(1).execute()
         return resp.data[0]["deployment_id"] if resp.data else None
 
     deployment_id = await asyncio.to_thread(_lookup)

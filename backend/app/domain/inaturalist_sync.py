@@ -15,6 +15,7 @@ via inat_observation_media), so no scraping or original_filename guesswork is
 needed. Runs with the service role (bypasses RLS) — intended to be triggered by
 POST /api/inat/sync or a scheduled job.
 """
+
 from __future__ import annotations
 
 import asyncio
@@ -65,8 +66,11 @@ async def sync_inat_identifications(user_id: Optional[str] = None, limit: int = 
 
     rows = await asyncio.to_thread(_load_rows)
     result: Dict[str, Any] = {
-        "checked": len(rows), "updated": 0, "research": 0,
-        "disagreement": 0, "observations_written": 0,
+        "checked": len(rows),
+        "updated": 0,
+        "research": 0,
+        "disagreement": 0,
+        "observations_written": 0,
     }
     if not rows:
         return result
@@ -85,12 +89,14 @@ async def sync_inat_identifications(user_id: Optional[str] = None, limit: int = 
         new_status = _derive_status(quality, community, r.get("species_guess"))
 
         def _update(r=r, new_status=new_status, quality=quality, community=community):
-            svc.table("inat_observations").update({
-                "sync_status": new_status,
-                "quality_grade": quality,
-                "community_taxon": community,
-                "last_synced_at": now,
-            }).eq("id", r["id"]).execute()
+            svc.table("inat_observations").update(
+                {
+                    "sync_status": new_status,
+                    "quality_grade": quality,
+                    "community_taxon": community,
+                    "last_synced_at": now,
+                }
+            ).eq("id", r["id"]).execute()
 
         await asyncio.to_thread(_update)
         result["updated"] += 1
@@ -101,7 +107,11 @@ async def sync_inat_identifications(user_id: Optional[str] = None, limit: int = 
 
         if community:
             result["observations_written"] += await _write_consensus(
-                svc, r, community, research=(quality == "research"), now=now,
+                svc,
+                r,
+                community,
+                research=(quality == "research"),
+                now=now,
             )
 
     logger.info("inat_sync_complete", user_id=user_id, **result)
@@ -110,15 +120,9 @@ async def sync_inat_identifications(user_id: Optional[str] = None, limit: int = 
 
 async def _write_consensus(svc, row, community: str, research: bool, now: str) -> int:
     """Write/refresh a consensus observation per photo in the burst (idempotent)."""
+
     def _media_ids() -> List[str]:
-        data = (
-            svc.table("inat_observation_media")
-            .select("media_id")
-            .eq("inat_observation_id", row["id"])
-            .execute()
-            .data
-            or []
-        )
+        data = svc.table("inat_observation_media").select("media_id").eq("inat_observation_id", row["id"]).execute().data or []
         return [d["media_id"] for d in data]
 
     def _resolve_taxon() -> Optional[str]:
@@ -130,6 +134,7 @@ async def _write_consensus(svc, row, community: str, research: bool, now: str) -
     review_status = "consensus_approved" if research else "ai_reviewed"
 
     for media_id in media_ids:
+
         def _upsert(media_id=media_id):
             existing = (
                 svc.table("observations")

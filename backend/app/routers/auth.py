@@ -35,9 +35,7 @@ async def create_demo_session(request: Request):
     endpoint self-disables when DEMO_EMAIL/DEMO_PASSWORD are not configured.
     """
     if not settings.DEMO_EMAIL or not settings.DEMO_PASSWORD:
-        return ApiResponse(
-            error=ApiError(code="DEMO_DISABLED", message="The demo account is not configured on this server.")
-        )
+        return ApiResponse(error=ApiError(code="DEMO_DISABLED", message="The demo account is not configured on this server."))
 
     client = supabase_client.create_anon_client()
     try:
@@ -47,16 +45,12 @@ async def create_demo_session(request: Request):
         )
     except Exception as exc:
         logger.error("demo_session_sign_in_failed", error=str(exc))
-        return ApiResponse(
-            error=ApiError(code="DEMO_UNAVAILABLE", message="The demo is temporarily unavailable.", retryable=True)
-        )
+        return ApiResponse(error=ApiError(code="DEMO_UNAVAILABLE", message="The demo is temporarily unavailable.", retryable=True))
 
     session = auth_response.session if auth_response else None
     if not session:
         logger.error("demo_session_no_session_returned")
-        return ApiResponse(
-            error=ApiError(code="DEMO_UNAVAILABLE", message="The demo is temporarily unavailable.", retryable=True)
-        )
+        return ApiResponse(error=ApiError(code="DEMO_UNAVAILABLE", message="The demo is temporarily unavailable.", retryable=True))
 
     return ApiResponse(
         data={

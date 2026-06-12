@@ -35,9 +35,7 @@ def test_demo_session_returns_tokens(client):
     body = response.json()
     assert body["error"] is None
     assert body["data"] == {"access_token": "demo-access", "refresh_token": "demo-refresh"}
-    mock_client.auth.sign_in_with_password.assert_called_once_with(
-        {"email": "demo@wildlife.ai", "password": "secret"}
-    )
+    mock_client.auth.sign_in_with_password.assert_called_once_with({"email": "demo@wildlife.ai", "password": "secret"})
 
 
 def test_demo_session_sign_in_failure_is_retryable_error(client):
