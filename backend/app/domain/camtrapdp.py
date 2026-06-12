@@ -552,12 +552,12 @@ def import_package(
             from datetime import datetime
             # Try parsing with fractional seconds too
             def _parse_dt(s: str):
-                for fmt in ("%Y-%m-%dT%H:%M:%S%z", "%Y-%m-%dT%H:%M:%S.%f%z", "%Y-%m-%d %H:%M:%S%z"):
-                    try:
-                        return datetime.strptime(s, fmt)
-                    except ValueError:
-                        continue
-                return None
+                # fromisoformat (3.11+) handles all ISO 8601 flavours external
+                # CamtrapDP packages produce — offsets, fractional seconds, Z.
+                try:
+                    return datetime.fromisoformat(s.replace("Z", "+00:00"))
+                except (ValueError, TypeError):
+                    return None
             dt_start = _parse_dt(start_time)
             dt_end = _parse_dt(end_time)
             duration = max(0, int((dt_end - dt_start).total_seconds())) if dt_start and dt_end else 0

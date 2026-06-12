@@ -15,7 +15,7 @@ from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
 from app.config import settings
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_user_client
 from app.domain.media_registry import resolve_url, with_resolved_urls
 from app.domain.media_resolver import resolve_media
 from app.schemas.common import ApiError, ApiMeta, ApiResponse
@@ -176,18 +176,21 @@ async def batch_delete_media(
     request: Request,
     body: BatchDeleteRequest,
     user=Depends(get_current_user),
+    user_client=Depends(get_user_client),
 ):
     """Soft-delete multiple media records (sets deleted_at).
 
-    Idempotent: already-deleted media are silently skipped.
+    Idempotent: already-deleted media are silently skipped. Runs as the
+    requesting user (not the service role) so RLS restricts the update to
+    media in projects where they hold project_member — IDs outside their
+    projects are silently ignored, never deleted.
     """
     req_id = getattr(request.state, "request_id", None)
-    svc = supabase_client.create_service_client()
     now = datetime.now(timezone.utc).isoformat()
 
     def _delete():
         result = (
-            svc.table("media")
+            user_client.table("media")
             .update({"deleted_at": now})
             .in_("id", body.media_ids)
             .is_("deleted_at", "null")
@@ -215,11 +218,13 @@ async def run_pipeline_selected(
     request: Request,
     body: RunSelectedRequest,
     user=Depends(get_current_user),
+    user_client=Depends(get_user_client),
 ):
     """Queue a pipeline run for specific media IDs (not the full deployment).
 
     Looks up the deployment_id from the first media record, then runs the
-    pipeline with a media_ids filter.
+    pipeline with a media_ids filter. The lookup runs as the requesting user
+    so RLS limits it to media in their own projects.
     """
     req_id = getattr(request.state, "request_id", None)
     if not body.media_ids:
@@ -228,11 +233,9 @@ async def run_pipeline_selected(
             meta=ApiMeta(request_id=req_id),
         )
 
-    svc = supabase_client.create_service_client()
-
     def _lookup():
         resp = (
-            svc.table("media")
+            user_client.table("media")
             .select("deployment_id")
             .in_("id", body.media_ids[:1])
             .limit(1)
@@ -247,25 +250,16 @@ async def run_pipeline_selected(
             meta=ApiMeta(request_id=req_id),
         )
 
-    from app.jobs.dispatch import enqueue_job
-    from app.jobs.store import create_job
-
-    job_id = await create_job()
-    await enqueue_job(
-        "run_pipeline_job",
-        job_id,
-        deployment_id,
-        body.steps,
-        body.confidence_threshold,
-        body.media_ids,
-    )
+    # TODO: run_pipeline_job does not exist in app/jobs/definitions.py yet —
+    # enqueueing it raised at runtime. Surface NOT_IMPLEMENTED honestly until
+    # the per-media pipeline job lands, then restore:
+    #   job_id = await create_job()
+    #   await enqueue_job("run_pipeline_job", job_id, deployment_id,
+    #                     body.steps, body.confidence_threshold, body.media_ids)
     return ApiResponse(
-        data={
-            "job_id": job_id,
-            "status": "queued",
-            "deployment_id": deployment_id,
-            "media_count": len(body.media_ids),
-            "steps": body.steps,
-        },
+        error=ApiError(
+            code="NOT_IMPLEMENTED",
+            message="Running the pipeline on selected media is not available yet.",
+        ),
         meta=ApiMeta(request_id=req_id),
     )
