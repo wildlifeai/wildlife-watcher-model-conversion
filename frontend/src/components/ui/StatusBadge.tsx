@@ -3,17 +3,17 @@
 // StatusBadge — annotation lifecycle state for a media item
 //
 // States
-//   issue       red   ✕   No observations exist (default / unprocessed)
+//   pending     grey  ⧗   No observations yet (unprocessed / pipeline running)
+//   issue       red   ✕   Explicit pipeline error (reserved for BE-2)
 //   ai          teal  AI  Identified by the ML model only
 //   reviewed    green ✓   A human has reviewed / annotated this image
 //
-// Note: 'ml-pending' has been removed. Images with no observations default to
-// 'issue' (✕) so that users know action is required, rather than implying the
-// pipeline is still running. When BE-2 lands (explicit per-media status field)
-// the 'issue' state can be narrowed to genuine pipeline errors.
+// Images with no observations show the colourless 'pending' badge so the grid
+// reads as "still being processed" rather than alarming red errors. When BE-2
+// lands (explicit per-media status field) genuine failures surface as 'issue'.
 // ─────────────────────────────────────────────────────────────────────────────
 
-export type AnnotationStatus = 'issue' | 'ai' | 'reviewed'
+export type AnnotationStatus = 'pending' | 'issue' | 'ai' | 'reviewed'
 
 export interface StatusBadgeProps {
   status: AnnotationStatus
@@ -32,6 +32,13 @@ interface BadgeStyle {
 }
 
 const STYLES: Record<AnnotationStatus, BadgeStyle> = {
+  pending: {
+    bg:           'rgba(107,114,128,0.55)',
+    border:       'rgba(107,114,128,0.35)',
+    color:        '#ffffff',
+    icon:         '⧗',
+    defaultLabel: 'Processing',
+  },
   issue: {
     bg:           'rgba(239,68,68,0.88)',
     border:       'rgba(239,68,68,0.4)',
@@ -100,9 +107,10 @@ export function StatusBadge({ status, size = 'sm', label }: StatusBadgeProps) {
  *   - `hasAi`       — any observation carrying an AI-produced label
  *   - `hasError`    — an explicit pipeline error flag (reserved for BE-2)
  *
- * Precedence: reviewed (✓) ▸ ai (teal) ▸ issue (✕).
- * Fallback (no observations at all) → 'issue', making unprocessed images
- * visually actionable rather than implying the pipeline is still running.
+ * Precedence: error (✕) ▸ reviewed (✓) ▸ ai (teal) ▸ pending (⧗).
+ * Fallback (no observations at all) → 'pending': the image is still working
+ * its way through the pipeline, so show a neutral colourless badge instead of
+ * a red error.
  *
  * Callers should derive `hasReviewed` / `hasAi` with `isHumanReviewed` /
  * `isAiLabel` from lib/observations.ts so every surface agrees.
@@ -119,6 +127,6 @@ export function deriveAnnotationStatus({
   if (hasError)    return 'issue'
   if (hasReviewed) return 'reviewed'
   if (hasAi)       return 'ai'
-  return 'issue'   // no observations / unreviewed → treat as issue
+  return 'pending' // no observations yet → still processing
 }
 

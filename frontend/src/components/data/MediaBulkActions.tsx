@@ -1,15 +1,17 @@
 // Copyright (c) 2026
 // SPDX-License-Identifier: GPL-3.0-or-later
 //
-// MediaBulkActions — unified floating selection toolbar for the Annotations grid.
-// Replaces the old iNat-only selection mode. Supports:
+// MediaBulkActions — selection action bar for the Annotations grid, rendered
+// inline at the left of the KPI row once at least one image is selected.
+// Supports:
 //  - Upload to iNaturalist (with connect/progress modals)
+//  - Sync community IDs from iNaturalist
 //  - Batch delete (with confirmation modal)
 //  - Run AI models (with model picker + pipeline log modal)
 
 import { useState, useRef, useEffect } from 'react'
 
-export type BulkAction = 'inat' | 'delete' | 'ai'
+export type BulkAction = 'inat' | 'inat-sync' | 'delete' | 'ai'
 
 interface Props {
   selectedCount: number
@@ -52,10 +54,9 @@ export function MediaBulkActions({
 
   return (
     <div style={{
-      display: 'flex', alignItems: 'center', gap: '0.75rem',
-      padding: '0.5rem 0.75rem', borderRadius: 'var(--radius)',
+      display: 'flex', alignItems: 'center', gap: '0.5rem',
+      padding: '0.25rem 0.625rem', borderRadius: 'var(--radius)',
       background: 'rgba(76,175,80,0.08)', border: '1px solid rgba(76,175,80,0.3)',
-      marginBottom: '0.75rem',
     }}>
       {/* Selection count */}
       <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>
@@ -114,6 +115,17 @@ export function MediaBulkActions({
               style={item}
               onMouseEnter={e => (e.currentTarget.style.background = itemHover)}
               onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              onClick={() => run('inat-sync')}
+            >
+              <span>↻</span>
+              <span>Sync iNaturalist IDs</span>
+              {!inatConnected && <span style={{ fontSize: '0.65rem', opacity: 0.5 }}>(connect first)</span>}
+            </button>
+
+            <button
+              style={item}
+              onMouseEnter={e => (e.currentTarget.style.background = itemHover)}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
               onClick={() => run('delete')}
             >
               <span>🗑</span>
@@ -135,16 +147,6 @@ export function MediaBulkActions({
         )}
       </div>
 
-      {/* Close selection mode */}
-      <button
-        onClick={onClearSelection}
-        style={{
-          marginLeft: 'auto', background: 'transparent', border: 'none',
-          cursor: 'pointer', fontSize: '0.78rem', opacity: 0.65,
-        }}
-      >
-        ✕ Clear
-      </button>
     </div>
   )
 }

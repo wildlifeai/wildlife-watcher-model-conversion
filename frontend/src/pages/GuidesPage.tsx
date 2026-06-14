@@ -1,6 +1,8 @@
 /**
- * GuidesPage — public index of all guides (/guides), grouped by category.
- * Content comes from src/content/guides/*.md via the build-time loader.
+ * GuidesPage — public index of all advanced guides (/guides), grouped by
+ * category. Content comes from src/content/guides/*.md via the build-time
+ * loader. Everyday setup lives under /resources; these guides target users
+ * pushing past the defaults (custom models, novel device setups).
  */
 import { Link } from 'react-router-dom'
 import { guidesByCategory } from '../lib/guides'
@@ -11,10 +13,11 @@ export function GuidesPage() {
   return (
     <div style={{ maxWidth: '800px', margin: '0 auto' }}>
       <div style={{ marginBottom: '2rem' }}>
-        <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📖 Guides</h1>
+        <h1 style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📖 Advanced Guides</h1>
         <p style={{ opacity: 0.7, maxWidth: '640px', lineHeight: 1.6 }}>
-          Step-by-step guides from the Wildlife Watcher team — from camera setup to AI-assisted
-          analysis. Looking for the basics? Start with{' '}
+          Guidance and best practices from the Wildlife Watcher team for taking the platform
+          further — developing and training your own AI models, and setting up devices in novel
+          ways for your monitoring goals. Looking for the basics? Start with{' '}
           <Link to="/resources" style={{ color: 'var(--primary)' }}>Resources</Link>.
         </p>
       </div>

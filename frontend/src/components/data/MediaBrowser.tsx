@@ -1,5 +1,5 @@
  
-import { useState, useEffect, useMemo, useCallback } from 'react'
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { supabase } from '../../config/supabase'
 import { useAuth } from '../../hooks/useAuth'
 import { useINat } from '../../hooks/useINat'
@@ -86,13 +86,6 @@ interface Props {
 type TimeOfDay = 'all' | 'day' | 'night'
 type GroupBy = 'none' | 'cluster' | 'species' | 'sex' | 'life_stage' | 'annotation_type' | 'deployment' | 'model' | 'annotator'
 
-const INAT_BTN: React.CSSProperties = {
-  padding: '0.3rem 0.6rem', fontSize: '0.75rem', cursor: 'pointer', whiteSpace: 'nowrap',
-  border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-  backgroundColor: 'transparent', color: 'var(--text-color)',
-}
-const INAT_BTN_ACTIVE: React.CSSProperties = { ...INAT_BTN, backgroundColor: '#74ac00', color: '#fff', borderColor: '#74ac00' }
-
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -173,9 +166,12 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   const [inatBusy, setInatBusy]         = useState(false)
   const [inatMsg, setInatMsg]           = useState<string | null>(null)
 
-  // ── Phase 4: Unified selection mode (replaces separate iNat selection) ─────
-  const [selectionMode, setSelectionMode] = useState(false)
+  // ── Phase 4: Unified selection (click = select, double-click = open) ───────
+  // Selection is implicit: it's "on" whenever at least one image is selected.
   const [selectedIds, setSelectedIds]     = useState<Set<string>>(new Set())
+  // Pending single-click timer, so a fast double-click opens the detail modal
+  // without toggling selection first.
+  const clickTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const [showDeleteModal, setShowDeleteModal]   = useState(false)
   const [showAiPicker, setShowAiPicker]         = useState(false)
   const [pipelineLogs, setPipelineLogs]         = useState<string[] | null>(null)
@@ -224,11 +220,34 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     return next
   }), [])
 
+  // Single click toggles selection (after a short delay); a second click within
+  // the window cancels the toggle and opens the full-screen detail instead.
+  const handleCardClick = useCallback((id: string) => {
+    if (clickTimer.current) {
+      clearTimeout(clickTimer.current)
+      clickTimer.current = null
+      setSelectedMediaId(id)
+    } else {
+      clickTimer.current = setTimeout(() => {
+        clickTimer.current = null
+        toggleSelect(id)
+      }, 250)
+    }
+  }, [toggleSelect])
+
+  useEffect(() => () => { if (clickTimer.current) clearTimeout(clickTimer.current) }, [])
+
   const handleBulkAction = useCallback(async (action: BulkAction) => {
     if (action === 'delete') {
       setShowDeleteModal(true)
     } else if (action === 'ai') {
       setShowAiPicker(true)
+    } else if (action === 'inat-sync') {
+      if (!inat.connected) {
+        connectInat()
+        return
+      }
+      syncFromInat()
     } else if (action === 'inat') {
       if (!inat.connected) {
         connectInat()
@@ -240,6 +259,9 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
       // Trigger upload immediately since photos are already selected
       uploadToInat()
     }
+    // syncFromInat/uploadToInat are plain (unmemoised) functions declared below;
+    // including them would just defeat the memo without changing behaviour.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [inat.connected, connectInat, selectedIds])
 
   const handleBatchDelete = useCallback(async (ids: string[]) => {
@@ -252,7 +274,6 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     // Remove deleted media from local state
     setMedia(prev => prev.filter(m => !ids.includes(m.id)))
     setSelectedIds(new Set())
-    setSelectionMode(false)
   }, [])
 
   const handleRunAi = useCallback(async (models: string[]) => {
@@ -468,16 +489,15 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e: KeyboardEvent) => {
-      // Ctrl/Cmd+A: select all visible media (only when in selection mode)
-      if ((e.ctrlKey || e.metaKey) && e.key === 'a' && selectionMode) {
+      // Ctrl/Cmd+A: select all visible media (once a selection has started)
+      if ((e.ctrlKey || e.metaKey) && e.key === 'a' && selectedIds.size > 0) {
         e.preventDefault()
         setSelectedIds(new Set(filtered.map(m => m.id)))
       }
-      // Escape: exit selection mode or close detail modal
+      // Escape: clear selection or close detail modal
       if (e.key === 'Escape') {
-        if (selectionMode) {
+        if (selectedIds.size > 0) {
           setSelectedIds(new Set())
-          setSelectionMode(false)
         } else if (selectedMediaId) {
           setSelectedMediaId(null)
         }
@@ -485,7 +505,7 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     }
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
-  }, [selectionMode, filtered, selectedMediaId])
+  }, [selectedIds.size, filtered, selectedMediaId])
 
   // ── Cluster data (only fetched when groupBy === 'cluster') ─────────────────
   const activeDeploymentIds = useMemo(() => {
@@ -639,20 +659,22 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     const lowestConf = aiConfs.length ? Math.min(...aiConfs) : null
     const isSelected = selectedMediaId === m.id
     const inatSt  = inatStates.get(m.id)
-    const sel = selectionMode && selectedIds.has(m.id)
+    const sel = selectedIds.has(m.id)
 
     return (
       <div
         key={m.id}
-        onClick={() => (selectionMode ? toggleSelect(m.id) : setSelectedMediaId(isSelected ? null : m.id))}
+        onClick={() => handleCardClick(m.id)}
+        title="Click to select · double-click to open"
         style={{
-          border: isSelected ? '2px solid var(--primary)' : sel ? '2px solid #74ac00' : '1px solid var(--border)',
+          border: sel ? '2px solid var(--primary)' : isSelected ? '2px solid var(--primary)' : '1px solid var(--border)',
           borderRadius: 'var(--radius)',
           overflow: 'hidden',
           cursor: 'pointer',
           backgroundColor: 'var(--surface)',
           transition: 'border-color 0.15s, transform 0.15s',
           transform: isSelected ? 'scale(1.02)' : undefined,
+          userSelect: 'none',
         }}
       >
         {/* Thumbnail area */}
@@ -696,13 +718,13 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
             </span>
           )}
 
-          {/* Selection checkbox — bottom-left, only in select mode */}
-          {selectionMode && (
+          {/* Selection checkmark — bottom-left, shown while a selection is active */}
+          {(sel || selectedIds.size > 0) && (
             <span style={{
               position: 'absolute', bottom: 4, left: 4, width: 18, height: 18,
               borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center',
               fontSize: '0.7rem', fontWeight: 700,
-              backgroundColor: sel ? '#74ac00' : 'rgba(0,0,0,0.45)',
+              backgroundColor: sel ? 'var(--primary)' : 'rgba(0,0,0,0.45)',
               color: '#fff', boxShadow: '0 0 0 1.5px rgba(255,255,255,0.85)',
             }}>
               {sel ? '✓' : ''}
@@ -755,6 +777,7 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
                   options={[
                     { value: 'ai',       label: 'AI identified' },
                     { value: 'reviewed', label: '✓ Reviewed'    },
+                    { value: 'pending',  label: '⧗ Processing'  },
                     { value: 'issue',    label: '✕ Issue'       },
                   ]} />
               ) },
@@ -833,48 +856,6 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
               ) }] : []),
             ],
           },
-
-          {
-            id: 'select', label: 'Select', icon: '☑',
-            groups: [
-              { id: 'select-toggle', title: 'Mode', content: (
-                <button
-                  onClick={() => { setSelectionMode(v => !v); if (selectionMode) setSelectedIds(new Set()) }}
-                  style={selectionMode ? INAT_BTN_ACTIVE : INAT_BTN}
-                  title="Toggle selecting photos for bulk actions"
-                >
-                  {selectionMode ? '☑ Selecting' : '☐ Select photos'}
-                </button>
-              ) },
-              ...(selectionMode ? [{ id: 'select-count', title: 'Count', content: (
-                <span style={{ fontSize: '0.75rem', opacity: 0.7 }}>{selectedIds.size} selected</span>
-              ) }] : []),
-            ],
-          },
-          ...(inat.enabled ? [{
-            id: 'inat', label: 'iNaturalist', icon: '🕊',
-            groups: [
-              {
-                id: 'inat-account', title: 'Account',
-                content: inat.connected
-                  ? <span style={{ fontSize: '0.75rem', color: '#16a34a', fontWeight: 600 }}>✓ {inat.username || 'Connected'}</span>
-                  : <button onClick={connectInat} style={INAT_BTN}>🔗 Connect</button>,
-              },
-              {
-                id: 'inat-sync', title: 'Community IDs',
-                content: (
-                  <button
-                    onClick={syncFromInat}
-                    disabled={!inat.connected || inatBusy}
-                    style={(!inat.connected || inatBusy) ? { ...INAT_BTN, opacity: 0.45, cursor: 'not-allowed' } : INAT_BTN}
-                    title="Pull the latest community identifications from iNaturalist and update badges"
-                  >
-                    {inatBusy ? '⏳…' : '↻ Sync IDs'}
-                  </button>
-                ),
-              },
-            ],
-          }] : []),
         ]}
       />
 
@@ -891,8 +872,17 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
         </div>
       )}
 
-      {/* ── KPI row ───────────────────────────────────────────────── */}
+      {/* ── KPI row (selection actions slot in on the left) ────────── */}
       <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', fontSize: '0.8125rem', flexWrap: 'wrap', alignItems: 'center' }}>
+        {selectedIds.size > 0 && (
+          <MediaBulkActions
+            selectedCount={selectedIds.size}
+            onSelectAll={() => setSelectedIds(new Set(filtered.map(m => m.id)))}
+            onClearSelection={() => setSelectedIds(new Set())}
+            onAction={handleBulkAction}
+            inatConnected={!!inat.connected}
+          />
+        )}
         <span>
           <strong>{totalCount ?? stats.total}</strong> media
           {totalCount !== null && totalCount > PAGE_SIZE && (
@@ -927,17 +917,6 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
 
       {loading && <p style={{ opacity: 0.6 }}>Loading media…</p>}
       {error && <p style={{ color: 'var(--error)' }}>⚠ {error}</p>}
-
-      {/* ── Bulk action toolbar (unified selection mode) ──────────── */}
-      {selectionMode && (
-        <MediaBulkActions
-          selectedCount={selectedIds.size}
-          onSelectAll={() => setSelectedIds(new Set(filtered.map(m => m.id)))}
-          onClearSelection={() => { setSelectedIds(new Set()); setSelectionMode(false) }}
-          onAction={handleBulkAction}
-          inatConnected={!!inat.connected}
-        />
-      )}
 
       {/* ── No-image guidance banner ──────────────────────────────── */}
       {!loading && stats.noImage > 0 && stats.noImage === stats.total && (

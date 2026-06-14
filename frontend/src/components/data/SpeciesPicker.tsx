@@ -54,10 +54,14 @@ export function SpeciesPicker({ onSelect, placeholder, autoFocus, initialQuery =
   const [open, setOpen] = useState(false)
   const [loading, setLoading] = useState(false)
   const [registering, setRegistering] = useState(false)
+  // Only search (and open the dropdown) once the user has actually typed —
+  // otherwise mounting with an initialQuery pops the suggestions unprompted.
+  const [touched, setTouched] = useState(false)
   const blurTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // ── Debounced search: local taxa + iNaturalist ────────────────────────────
   useEffect(() => {
+    if (!touched) return
     const q = query.trim()
     if (q.length < 2) { setSuggestions([]); return }
 
@@ -105,7 +109,7 @@ export function SpeciesPicker({ onSelect, placeholder, autoFocus, initialQuery =
     }, 250)
 
     return () => { cancelled = true; clearTimeout(t); setLoading(false) }
-  }, [query])
+  }, [query, touched])
 
   const choose = useCallback(async (s: Suggestion) => {
     if (s.isLocal) {
@@ -145,7 +149,7 @@ export function SpeciesPicker({ onSelect, placeholder, autoFocus, initialQuery =
         autoFocus={autoFocus}
         disabled={disabled || registering}
         placeholder={registering ? 'Registering taxon…' : (placeholder ?? 'Search species…')}
-        onChange={e => setQuery(e.target.value)}
+        onChange={e => { setTouched(true); setQuery(e.target.value) }}
         onFocus={() => { if (suggestions.length) setOpen(true) }}
         onBlur={() => { blurTimer.current = setTimeout(() => setOpen(false), 150) }}
         style={INPUT}

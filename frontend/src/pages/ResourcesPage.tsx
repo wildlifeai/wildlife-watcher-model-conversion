@@ -278,9 +278,10 @@ export function ResourcesPage() {
 
             <H3>Still need help?</H3>
             <p style={{ lineHeight: 1.7 }}>
-              Browse our <a href="/guides" style={{ color: 'var(--primary)' }}>step-by-step guides</a>,
-              visit the <a href="/support" style={{ color: 'var(--primary)' }}>Support page</a> for FAQs,
+              Check the <a href="/faq" style={{ color: 'var(--primary)' }}>FAQ</a> for common questions,
+              browse our <a href="/guides" style={{ color: 'var(--primary)' }}>advanced guides</a>,
               or contact us at <a href="mailto:contact@wildlife.ai" style={{ color: 'var(--primary)' }}>contact@wildlife.ai</a>.
+              Our support team is available Monday through Friday during standard New Zealand business hours.
             </p>
           </Section>
 

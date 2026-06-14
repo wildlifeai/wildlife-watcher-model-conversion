@@ -206,6 +206,27 @@ class GoogleDriveService:
         folder = self._service.files().create(body=metadata, fields="id", supportsAllDrives=True).execute()
         return folder["id"]
 
+    def _find_folder_by_id_suffix(self, parent_id: str, deployment_id: str) -> Optional[str]:
+        """Find an untagged legacy deployment folder by its ``*_{id[:8]}`` name suffix.
+
+        Folders created before appProperties tagging are named with a date prefix
+        that may since have changed (start date → end date), so a lookup by the
+        current desired name misses them. The 8-char deployment-id suffix is
+        stable across renames, so match on that instead.
+        """
+        suffix = f"_{deployment_id[:8]}"
+        query = f"'{parent_id}' in parents and mimeType = 'application/vnd.google-apps.folder' and name contains '{suffix}' and trashed = false"
+        results = (
+            self._service.files()
+            .list(q=query, fields="files(id, name)", spaces="drive", pageSize=10, supportsAllDrives=True, includeItemsFromAllDrives=True)
+            .execute()
+        )
+        # `contains` matches anywhere in the name — keep only true suffix matches.
+        for f in results.get("files", []):
+            if f.get("name", "").endswith(suffix):
+                return f["id"]
+        return None
+
     def _find_folder_by_deployment_id(self, parent_id: str, deployment_id: str) -> Optional[Dict[str, str]]:
         """Find a deployment folder by its ``appProperties.deployment_id`` tag.
 
@@ -265,7 +286,12 @@ class GoogleDriveService:
            prefix reflects the end date once the deployment finishes.
         2. Folder with the desired name (created before tagging existed) —
            adopted by tagging it with the deployment id.
-        3. Otherwise created, tagged with the deployment id.
+        3. Untagged folder whose name ends in ``_{deployment_id[:8]}`` — a
+           legacy folder whose date prefix is stale (e.g. created with the
+           start date while the deployment was active). Adopted by tagging it
+           and renaming to *desired_name*; without this, the rename-on-end
+           name change made a second folder appear for the same deployment.
+        4. Otherwise created, tagged with the deployment id.
 
         No Redis cache here (unlike :meth:`ensure_folder`): resolving through
         Drive once per job is what keeps the rename-on-end behaviour working.
@@ -297,8 +323,19 @@ class GoogleDriveService:
                 if folder_id:
                     await asyncio.to_thread(self._patch_folder, folder_id, app_properties={"deployment_id": deployment_id})
                 else:
-                    folder_id = await asyncio.to_thread(self._create_folder, parent_id, desired_name, {"deployment_id": deployment_id})
-                    logger.info("drive_folder_created", name=desired_name, folder_id=folder_id)
+                    # Legacy folder with a stale date prefix (pre-tagging) — adopt and rename.
+                    folder_id = await asyncio.to_thread(self._find_folder_by_id_suffix, parent_id, deployment_id)
+                    if folder_id:
+                        await asyncio.to_thread(self._patch_folder, folder_id, name=desired_name, app_properties={"deployment_id": deployment_id})
+                        logger.info(
+                            "drive_legacy_folder_adopted",
+                            deployment_id=deployment_id,
+                            folder_id=folder_id,
+                            new_name=desired_name,
+                        )
+                    else:
+                        folder_id = await asyncio.to_thread(self._create_folder, parent_id, desired_name, {"deployment_id": deployment_id})
+                        logger.info("drive_folder_created", name=desired_name, folder_id=folder_id)
 
             self._dep_folder_memo[deployment_id] = folder_id
 
