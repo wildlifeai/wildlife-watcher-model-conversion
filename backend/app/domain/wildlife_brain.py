@@ -264,6 +264,9 @@ def prepare_cluster_input(embeddings: list[list[float]]) -> list[tuple[float, ..
     distance on those is equivalent to cosine, which is what we want.
     """
     n = len(embeddings)
+    if n == 0:
+        # _l2_normalize would index axis=1 of a 1-D empty array and raise.
+        return []
     if n >= MIN_UMAP_POINTS:
         return reduce_umap(embeddings, 50, UMAP_CLUSTER_PARAMS)
     normalized = _l2_normalize(np.asarray(embeddings, dtype=np.float32))

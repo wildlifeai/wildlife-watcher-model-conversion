@@ -15,7 +15,7 @@ import structlog
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.config import settings
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_verified_user
 from app.middleware.rate_limit import limiter
 from app.schemas.brain import ConfirmClusterRequest, EmbedRequest, MultiClusterRequest, ReprocessAllRequest, ReprocessRequest, ReviewDecisionRequest
 from app.schemas.common import ApiError, ApiMeta, ApiResponse
@@ -42,7 +42,7 @@ def _al_disabled(req_id):
 
 @router.post("/embed/{deployment_id}")
 @limiter.limit("10/minute")
-async def embed_deployment(request: Request, deployment_id: str, body: EmbedRequest | None = None, user=Depends(get_current_user)):
+async def embed_deployment(request: Request, deployment_id: str, body: EmbedRequest | None = None, user=Depends(get_verified_user)):
     """Embed + cluster a deployment. Server mode enqueues a GPU job."""
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
@@ -343,7 +343,7 @@ async def embedding_runs(request: Request, deployment_id: str, user=Depends(get_
 
 
 @router.post("/reprocess/deployment/{deployment_id}")
-async def reprocess_deployment_endpoint(request: Request, deployment_id: str, body: ReprocessRequest | None = None, user=Depends(get_current_user)):
+async def reprocess_deployment_endpoint(request: Request, deployment_id: str, body: ReprocessRequest | None = None, user=Depends(get_verified_user)):
     """Supersede current runs and re-embed a deployment (new embedding_run)."""
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
@@ -359,7 +359,7 @@ async def reprocess_deployment_endpoint(request: Request, deployment_id: str, bo
 
 
 @router.post("/reprocess/project/{project_id}")
-async def reprocess_project_endpoint(request: Request, project_id: str, body: ReprocessRequest | None = None, user=Depends(get_current_user)):
+async def reprocess_project_endpoint(request: Request, project_id: str, body: ReprocessRequest | None = None, user=Depends(get_verified_user)):
     """Reprocess all deployments in a project."""
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
@@ -375,7 +375,7 @@ async def reprocess_project_endpoint(request: Request, project_id: str, body: Re
 
 
 @router.post("/reprocess/all")
-async def reprocess_all_endpoint(request: Request, body: ReprocessAllRequest | None = None, user=Depends(get_current_user)):
+async def reprocess_all_endpoint(request: Request, body: ReprocessAllRequest | None = None, user=Depends(get_verified_user)):
     """Platform-wide re-embed. Default dry-run returns a cost estimate; executing requires confirm=true."""
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:

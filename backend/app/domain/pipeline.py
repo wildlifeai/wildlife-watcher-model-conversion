@@ -144,16 +144,33 @@ class AnimalCropStep(PipelineStep):
         deployment_id: str,
         config: dict[str, Any],
     ) -> PipelineStepResult:
-        from app.domain.media_registry import generate_animal_crop
+        from app.config import settings
+        from app.domain.media_registry import generate_animal_crop, generate_motion_roi_crops
 
         start = time.monotonic()
         errors = 0
+        cropped_ids: set[str] = set()
         for m in media:
             try:
-                await generate_animal_crop(m["id"])
+                if await generate_animal_crop(m["id"]):
+                    cropped_ids.add(m["id"])
             except Exception as exc:
                 logger.warning("animal_crop_error", media_id=m.get("id"), error=str(exc))
                 errors += 1
+
+        # SpeciesNet-free fallback: for frames with no detection crop, crop the motion ROI
+        # across each burst so DINOv3 still gets an animal region (e.g. on the lean dev-cloud
+        # image where SpeciesNet can't load). Gated, off by default.
+        if settings.FF_MOTION_ROI_FALLBACK_ENABLED and len(cropped_ids) < len(media):
+            try:
+                await generate_motion_roi_crops(
+                    deployment_id,
+                    media,
+                    skip_media_ids=cropped_ids,
+                    burst_gap_seconds=settings.MOTION_ROI_BURST_GAP_SECONDS,
+                )
+            except Exception as exc:
+                logger.warning("motion_roi_fallback_error", deployment_id=deployment_id, error=str(exc))
 
         return PipelineStepResult(
             step=self.step_type,

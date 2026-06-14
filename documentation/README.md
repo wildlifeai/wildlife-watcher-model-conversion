@@ -36,6 +36,7 @@ Current hand-offs; kept up to date until the work ships, then moved to `_archive
 | [dual-camera-rpi-analysis](development%20reports/dual-camera-rpi-analysis.md) | firmware/hardware | HM0360 (night/IR) ↔ Raspberry Pi (day/colour) camera swap + dual-write interaction |
 | [exif-telemetry-firmware-spec](development%20reports/exif-telemetry-firmware-spec.md) | firmware | Add temperature/battery to EXIF via UserComment (smallest change) |
 | [access-test-seed-spec](development%20reports/access-test-seed-spec.md) | ww-backend | Seed rows for the access-scenario upload fixtures (valid / no-access / not-found) |
+| [storage-quota-spec](development%20reports/storage-quota-spec.md) | ww-backend + website | Per-org storage quota: `organisation_usage` schema + trigger + enforcement hook |
 | [inaturalist-integration](development%20reports/inaturalist-integration.md) | website | iNaturalist publish + community-ID sync integration |
 
 ## Archive — `development reports/_archive/` (frozen history)

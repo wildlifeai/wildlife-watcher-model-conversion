@@ -979,7 +979,11 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         # folder prefixes like "00000000" (unconfigured camera) are dropped — they're
         # not real deployments and would crash the pipeline's Postgres queries.
         _dep_ids: list[str] = list(
-            {entry["deployment"]["id"] for entry in file_entries if entry.get("deployment") and _is_uuid(entry.get("deployment", {}).get("id"))}
+            {
+                entry["deployment"]["id"]
+                for entry in file_entries
+                if isinstance(entry.get("deployment"), dict) and _is_uuid(entry["deployment"].get("id"))
+            }
         )
 
         # Step set from the enabled flags (same source as auto_annotate_deployments),

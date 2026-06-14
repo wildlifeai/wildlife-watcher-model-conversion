@@ -26,7 +26,7 @@ from fastapi import APIRouter, File, Form, Header, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.dependencies import get_optional_user
+from app.dependencies import get_optional_user, is_email_confirmed
 from app.domain.exif import parse_exif_from_bytes
 from app.jobs.definitions import upload_drive_images_job
 from app.jobs.runner import enqueue_local_job
@@ -108,6 +108,20 @@ async def parse_exif(
     MAX_ANON_IMAGES = 50
     MAX_AUTH_IMAGES = settings.MAX_UPLOAD_IMAGES_PER_REQUEST
     user = await get_optional_user(authorization)
+
+    # Block storage-consuming uploads for authenticated-but-unverified accounts
+    # (anonymous EXIF-only parsing without Drive is still allowed up to the cap).
+    if user and upload_to_drive and not is_email_confirmed(user):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": {
+                    "code": "EMAIL_NOT_CONFIRMED",
+                    "message": "Please confirm your email address before uploading images.",
+                }
+            },
+        )
+
     cap = MAX_ANON_IMAGES if not user else MAX_AUTH_IMAGES
     if len(files) > cap:
         who = "Unauthenticated users" if not user else "Each upload request"

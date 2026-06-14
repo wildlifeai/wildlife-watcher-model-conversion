@@ -15,7 +15,7 @@ import asyncio
 import structlog
 from fastapi import APIRouter, Depends, Request
 
-from app.dependencies import get_current_user, get_privileged_client
+from app.dependencies import get_current_user, get_privileged_client, get_verified_user
 from app.domain.events import cluster_deployment_events, compute_deployment_effort
 from app.domain.pipeline import run_pipeline
 from app.middleware.rate_limit import limiter
@@ -35,7 +35,7 @@ router = APIRouter(prefix="/api/pipeline", tags=["pipeline"])
 async def run_inference_pipeline(
     request: Request,
     body: PipelineRunRequest,
-    user=Depends(get_current_user),
+    user=Depends(get_verified_user),
 ):
     """Run an AI inference pipeline on a deployment.
 

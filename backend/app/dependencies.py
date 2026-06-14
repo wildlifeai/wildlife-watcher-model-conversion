@@ -40,6 +40,30 @@ async def get_current_user(authorization: str = Header(...)):
     return user_response.user
 
 
+def is_email_confirmed(user) -> bool:
+    """True when the Supabase user has a confirmed email.
+
+    The gotrue user object exposes ``email_confirmed_at`` (and legacy
+    ``confirmed_at``); either being set means the address is verified.
+    """
+    return bool(getattr(user, "email_confirmed_at", None) or getattr(user, "confirmed_at", None))
+
+
+async def get_verified_user(user=Depends(get_current_user)):
+    """Authenticated user **with a confirmed email**.
+
+    Gates write / resource-consuming actions (uploads, AI inference, embedding,
+    model conversion) so an unverified throwaway account can't abuse them. This
+    is defence-in-depth alongside Supabase's "Confirm email" auth setting.
+    """
+    if not is_email_confirmed(user):
+        raise HTTPException(
+            status_code=403,
+            detail="Please confirm your email address before uploading images or running analysis.",
+        )
+    return user
+
+
 async def get_optional_user(
     authorization: Optional[str] = Header(None),
 ):
