@@ -17,7 +17,7 @@ ww-website/
 
 ```
 src/
-├── App.tsx                 # Router, signed-in Layout (3-tab nav), auth guard, UploadProvider
+├── App.tsx                 # Router, signed-in Layout (Toolkit·Annotations·Insights nav), auth guard, UploadProvider
 ├── main.tsx                # React entry
 ├── pages/                  # route-level components
 ├── components/
@@ -35,28 +35,31 @@ src/
 └── styles/index.css        # CSS variables + base styles
 ```
 
-### Signed-in navigation (3 tabs)
+### Signed-in navigation
 
 Defined as `USER_TABS` in `App.tsx`. The active tab is highlighted, so pages no longer repeat
-their own title.
+their own title. Lifecycle order: **prepare → collect → analyse**. The 📡 **Field** tab appears only
+when the user has an active deployment.
 
 | Tab | Route | Page |
 |-----|-------|------|
+| 🧰 Toolkit | `/toolkit` | `ToolkitPage` (upload, SD-card prep, manifest, model upload) |
+| 📡 Field | `/field` | `FieldPage` (active-deployment view; shown only with a live deployment) |
 | 🏷️ Annotations | `/annotations` | `AnnotationsPage` → `MediaBrowser` (+ full-screen modal) |
-| 📊 Results | `/results` | `ResultsPage` (Projects · Deployments · Map · Reports ribbon) |
-| ⚙ Other | `/other` | `OtherPage` (export, SD-card prep, model upload) |
+| 📈 Insights | `/insights` | `InsightsPage` (projects, deployments, charts, maps) |
 
 ### Routes
 
-**Public**: `/`, `/login`, `/reset-password`, `/privacy`, `/terms`, `/support`, `/resources`.
+**Public**: `/`, `/login`, `/reset-password`, `/privacy`, `/terms`, `/resources`, `/faq`, `/guides`.
 
 **Protected (`RequireAuth`)**
 
 | Route | Page | Purpose |
 |-------|------|---------|
+| `/toolkit` | `ToolkitPage` | Upload, SD-card prep, manifest, privileged model upload |
 | `/annotations` | `AnnotationsPage` | Filter/browse media; click a photo → full-screen labeling modal |
-| `/results` | `ResultsPage` | Projects/Deployments tables, Map, Reports — under one ribbon |
-| `/other` | `OtherPage` | CamtrapDP export, SD-card prep, privileged model upload |
+| `/insights` | `InsightsPage` | Projects/Deployments, charts, maps |
+| `/field` | `FieldPage` | Active-deployment view (LoRaWAN heartbeats) |
 | `/upload-data`, `/upload/logs` | `UploadDataPage`, `UploadLogsPage` | Image upload + log view |
 | `/manifest` | `ManifestPage` | Firmware `MANIFEST.zip` builder |
 | `/upload-model` | `UploadModelPage` | Edge Impulse → Vela model upload (org managers) |
@@ -67,9 +70,10 @@ their own title.
 | `/intelligence/:id` | `DatasetHealthPage` | Dataset health + QA agreement (per project) |
 | `/analysis/:id`, `/reporting/:id` | `AnalysisPage`, `ReportingPage` | Diel activity, CamtrapDP / Darwin Core exports |
 
-**Redirects / legacy**: `/my-data` → `/results`, `/analyse-images` → `/upload-data`. The old
-`MyDataPage` is retained only at `/my-data-legacy`. `LabelingPage` was **removed** — its rich
-editor now lives in the Annotations full-screen modal (see [05-ANNOTATION-WORKFLOW](./05-ANNOTATION-WORKFLOW.md)).
+**Redirects / legacy**: `/results` → `/insights`, `/other` → `/toolkit`, `/my-data` → `/insights`,
+`/analyse-images` → `/upload-data` (query strings preserved). The old `MyDataPage` is retained only at
+`/my-data-legacy`. `LabelingPage` was **removed** — its rich editor now lives in the Annotations
+full-screen modal (see [05-ANNOTATION-WORKFLOW](./05-ANNOTATION-WORKFLOW.md)).
 
 ## Backend (`backend/app/`)
 

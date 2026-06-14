@@ -25,13 +25,108 @@ CamtrapDP / Darwin Core datasets.
 - **Database / Auth / Storage**: Supabase (PostgreSQL + RLS, Auth, Storage)
 - **AI**: SpeciesNet ensemble (detector + species classifier); DINOv3 "Wildlife Brain" embeddings → HDBSCAN clustering → active-learning review
 - **Charts / Maps**: Vega-Lite (`vega-embed`), Leaflet (`react-leaflet`)
-- **External services**: Google Drive (image archive), Azure Blob (temp buffer), iNaturalist, Sentry
+- **Hosting**: Cloudflare Pages (frontend) + Azure Container Apps (backend)
+- **External services**: Google Drive (image archive), Azure Blob (temp buffer), Qdrant (embedding vectors), iNaturalist, Sentry
 - **Schema owner**: the database schema is owned by the [`ww-backend`](https://github.com/wildlifeai/wildlife-watcher-backend) repo (see [Database Migrations](#database-migrations))
 
 > For the complete dependency reference with versions and rationale, see the
 > [Technology Stack Guide](./documentation/onboarding/01-TECHNOLOGY-STACK.md).
 
-## Prerequisites
+## Architecture at a Glance
+
+How the services fit together. Each owns one job; the topology is identical in dev
+and production — only the instances and scale differ (see the
+[Deployment Guide](./documentation/resources/deployment-guide.md)).
+
+```
+                            ┌──────────────────────────┐
+          Browser  ───────▶ │  Cloudflare Pages         │   static React/Vite bundle
+                            │  (frontend, CDN, DNS)     │   + per-branch previews
+                            └──────────────────────────┘
+              │                              │
+              │ direct reads + observation   │ heavy / privileged work
+              │ writes (RLS, user JWT)       │ (VITE_API_BASE_URL)
+              ▼                              ▼
+   ┌────────────────────┐        ┌──────────────────────────────┐
+   │  Supabase          │◀──────▶│  FastAPI backend             │
+   │  • Postgres + RLS  │ service│  (Azure Container Apps + ACR)│
+   │  • Auth (JWT)      │  role  │  • in-process asyncio jobs   │
+   │  • Storage:        │        │  • EXIF, AI pipeline,        │
+   │    media-renditions│        │    LoRaWAN, model convert    │
+   │    (public bucket) │        └──────────────────────────────┘
+   │  • api_jobs        │            │        │          │
+   └────────────────────┘            │        │          │
+                                     ▼        ▼          ▼
+                          ┌─────────────┐ ┌──────────┐ ┌────────────────┐
+                          │ Azure Blob  │ │ Google   │ │ Qdrant         │
+                          │ (TEMP buffer│ │ Drive    │ │ (DINOv3 vectors│
+                          │  during     │ │ (PERMANENT│ │  similarity /  │
+                          │  upload;    │ │  original │ │  clustering)   │
+                          │  deleted    │ │  archive) │ │  ⚠ local only  │
+                          │  after)     │ │           │ │  today         │
+                          └─────────────┘ └──────────┘ └────────────────┘
+
+   iNaturalist ──▶ taxa autocomplete + lineage, observation publish + community-ID sync
+   TTN/Chirpstack ──▶ LoRaWAN uplink webhooks ──▶ FastAPI ──▶ Supabase
+```
+
+**One image upload, end to end** (detail in
+[03-DATA-AND-SYNC](./documentation/onboarding/03-DATA-AND-SYNC.md)):
+
+1. Browser (Cloudflare) drags images in → `POST /api/exif/parse` on the Azure backend.
+2. Backend parses EXIF, matches the deployment, **buffers bytes to Azure Blob** (temporary), enqueues a job.
+3. Job downloads from the buffer → **uploads originals to Google Drive** (content-hash dedup) → **inserts `media` rows in Supabase** (`file_path = gdrive://…`).
+4. Thumbnails/previews are generated and stored in the **public Supabase `media-renditions` bucket** — that's what the grid displays (Drive is never on the hot path).
+5. The **AI pipeline** auto-runs (SpeciesNet → crop → classify), writing `observations` to Supabase; embeddings optionally go to **Qdrant**.
+6. **Azure blobs are deleted** — they're purely transient; Drive is the archive, Supabase holds the rows + renditions.
+
+The browser reads observations **directly from Supabase** (RLS-scoped by the user's JWT) and only calls the **Azure backend** for privileged/heavy work. **iNaturalist** is contacted when reviewers publish observations or look up taxa.
+
+> **Cloud gap:** Qdrant runs in the local `docker-compose` stack but is **not yet provisioned**
+> in the dev-cloud or staging environments. Until it is, the Wildlife Brain
+> (embeddings → clustering → similarity) is local-only — see the
+> [Deployment Guide](./documentation/resources/deployment-guide.md#qdrant-vector-store-not-yet-in-cloud).
+
+## Architecture at a glance
+
+How the services fit together. Dev-cloud and staging/production have the **same topology** — only
+the instances differ (dev Supabase project, `ww-backend-dev` container app, `*.pages.dev` previews,
+dev Drive subfolder; see the [Deployment Guide](./documentation/resources/deployment-guide.md)).
+
+```
+                                   ┌─────────────────────────────┐
+                                   │   Browser (React + Vite)    │
+                                   │  served by CLOUDFLARE PAGES │
+                                   │  wildlifewatcher.ai / *.pages.dev
+                                   └──────┬───────────────┬──────┘
+                 direct reads/writes      │               │  privileged / heavy work
+                 (user JWT, RLS-scoped)   │               │  (REST, VITE_API_BASE_URL)
+                                          ▼               ▼
+                            ┌──────────────────┐   ┌────────────────────────────────┐
+                            │     SUPABASE     │   │  FastAPI backend on AZURE      │
+                            │ Postgres + RLS   │◀──│  Container Apps (image via ACR,│
+                            │ Auth (JWT)       │   │  GitHub Actions deploy)        │
+                            │ Storage:         │   │  in-process async job runner   │
+                            │  · media-        │   └──┬──────┬──────┬──────┬────────┘
+                            │    renditions    │      │      │      │      │
+                            │    (public:      │      │      │      │      │
+                            │    thumbs/crops) │      ▼      │      ▼      ▼
+                            │  · firmware,     │  ┌────────┐ │ ┌────────┐ ┌─────────────┐
+                            │    ai-models     │  │ AZURE  │ │ │ GOOGLE │ │ iNATURALIST │
+                            └──────────────────┘  │ BLOB   │ │ │ DRIVE  │ │ taxa + obs  │
+                                                  │ temp   │ │ │ perm.  │ │ publishing /│
+                                                  │ upload │ │ │ image  │ │ community-ID│
+                                                  │ buffer │ │ │ archive│ │ sync        │
+                                                  └────────┘ │ └────────┘ └─────────────┘
+                                                             ▼
+                                                       ┌───────────┐
+                                                       │  QDRANT   │  DINOv3 vectors
+                                                       │ (container│  (Wildlife Brain) —
+                                                       │  in local │  ⚠ not yet provisioned
+                                                       │  compose) │  in the cloud envs
+                                                       └───────────┘
+
+Image upload flow:  browser → backend /
 
 | Tool | Version | Purpose |
 |------|---------|---------|
@@ -169,7 +264,8 @@ See the [Testing Guide](./documentation/resources/testing-with-seed-users.md) fo
 
 ## Documentation
 
-All documentation lives under [`documentation/`](./documentation), split into three folders.
+All documentation lives under [`documentation/`](./documentation) — see the
+**[documentation index](./documentation/README.md)** for the complete, status-tagged list. Summary:
 
 ### Onboarding (Start Here)
 
@@ -196,12 +292,16 @@ All documentation lives under [`documentation/`](./documentation), split into th
 
 ### Development Reports (`documentation/development reports/`)
 
-Point-in-time design docs, roadmaps, research spikes and audits — e.g.
-[annotation-pipeline-review.md](./documentation/development%20reports/annotation-pipeline-review.md),
-[inaturalist-integration.md](./documentation/development%20reports/inaturalist-integration.md),
-[ui-redesign-roadmap.md](./documentation/development%20reports/ui-redesign-roadmap.md),
-[v4-implementation-plan.md](./documentation/development%20reports/v4-implementation-plan.md).
-These capture *why* decisions were made; they are not kept current with the code.
+**Active engineering specs** (current hand-offs, kept up to date until shipped) — e.g.
+[bmp-ingestion-analysis.md](./documentation/development%20reports/bmp-ingestion-analysis.md),
+[dual-camera-rpi-analysis.md](./documentation/development%20reports/dual-camera-rpi-analysis.md),
+[exif-telemetry-firmware-spec.md](./documentation/development%20reports/exif-telemetry-firmware-spec.md),
+[access-test-seed-spec.md](./documentation/development%20reports/access-test-seed-spec.md).
+
+**Archive** ([`development reports/_archive/`](./documentation/development%20reports/_archive)) — frozen
+point-in-time plans, roadmaps and research spikes (v2/v4 plans, the UI-redesign roadmaps, the charting
+spike). They capture *why* decisions were made and are **not** kept current with the code. Each report
+carries a `> **Status:**` banner. Full list in the [documentation index](./documentation/README.md).
 
 ## Contributing
 

@@ -389,7 +389,13 @@ export function AnalyseImages() {
     // Check for ZIP files first — route to CamtrapDP
     const zips = incoming.filter(f => f.name.toLowerCase().endsWith('.zip'))
     const imageFiles = incoming.filter((f) =>
-      f.type.startsWith('image/') || f.name.toLowerCase().endsWith('.jpg') || f.name.toLowerCase().endsWith('.jpeg')
+      f.type.startsWith('image/') ||
+      f.name.toLowerCase().endsWith('.jpg') ||
+      f.name.toLowerCase().endsWith('.jpeg') ||
+      // Raw BMP frames: the backend re-compresses them to JPEG when
+      // FF_BMP_INGEST_ENABLED, else ignores them. Folder drops often leave
+      // f.type empty, so match the extension explicitly.
+      f.name.toLowerCase().endsWith('.bmp')
     )
 
     // Only route to CamtrapDP if there are ZIPs and no images

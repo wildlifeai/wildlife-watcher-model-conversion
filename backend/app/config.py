@@ -108,6 +108,16 @@ class Settings(BaseSettings):
         description="Path to service account JSON file, or inline JSON string",
     )
     GOOGLE_DRIVE_MAX_FILE_SIZE_MB: int = Field(50, description="Max file size in MB accepted for Drive upload")
+    MAX_UPLOAD_IMAGES_PER_REQUEST: int = Field(
+        500, ge=1, description="Max images an authenticated user may submit in one /api/exif/parse call (anti-abuse)"
+    )
+
+    # ── BMP ingest (raw device frames → JPEG in the upload pipeline) ───
+    FF_BMP_INGEST_ENABLED: bool = Field(
+        False,
+        description="Accept raw BMP frames on upload, re-compressing them to JPEG in-pipeline. When off, BMP files are ignored (not stored).",
+    )
+    BMP_JPEG_QUALITY: int = Field(90, ge=1, le=100, description="JPEG quality for re-compressed BMP frames")
 
     # ── Azure Storage (Temporary Image Buffer) ────────────────────────
     AZURE_STORAGE_CONNECTION_STRING: str = Field("", description="Azure Storage Account connection string for blob buffering")

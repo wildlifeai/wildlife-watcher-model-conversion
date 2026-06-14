@@ -45,10 +45,12 @@ The exact dependencies the web app runs on. Versions are the source of truth in
 
 | Service | Used for | Gate |
 |---------|----------|------|
-| **Supabase** | PostgreSQL + RLS, Auth, Storage, RPCs | always |
-| **Google Drive** | Permanent image archive | `GOOGLE_DRIVE_ENABLED` |
-| **Azure Blob** | Temporary image buffer during upload | with Drive uploads |
-| **iNaturalist** | Taxa autocomplete + lineage registration | `FF_INAT_ENABLED` |
+| **Supabase** | PostgreSQL + RLS, Auth, Storage (incl. the public `media-renditions` bucket), RPCs | always |
+| **Cloudflare** | Frontend hosting (Pages, per-branch previews), DNS for `wildlifewatcher.ai`, CDN, anonymous web analytics | always (hosting) |
+| **Azure** | Backend hosting (Container Apps + ACR); **Blob** = temporary image buffer during upload (deleted after Drive archival) | hosting; Blob with Drive uploads |
+| **Google Drive** | Permanent image archive (`gdrive://` originals) | `GOOGLE_DRIVE_ENABLED` |
+| **Qdrant** | Vector store for DINOv3 embeddings (Wildlife Brain similarity/clustering). Runs as a container in the local compose stack; **not yet provisioned in the cloud environments** — see [Deployment Guide](../resources/deployment-guide.md) | `FF_WILDLIFE_BRAIN_ENABLED` |
+| **iNaturalist** | Taxa autocomplete + lineage registration, observation publishing + community-ID sync | `FF_INAT_ENABLED` |
 | **TTN / Chirpstack** | LoRaWAN uplink webhooks | `FF_LORAWAN_WEBHOOKS_ENABLED` |
 | **Sentry** | Error tracking | `SENTRY_DSN` |
 

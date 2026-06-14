@@ -160,6 +160,80 @@ Owner for all template projects: **alice@ww.org** (`a0000000-…-000001`), Gener
 
 ---
 
+## Access-control test scenarios (`sdcard/access-scenarios/`)
+
+Real WW500 SD-card images for exercising **how upload behaves when a photo's embedded
+`Deployment_ID` resolves to different access states.** Drag the `MEDIA/` folder into the
+website upload. Each camera folder carries a real `Deployment_ID` UUID in its EXIF
+(`0xF200`) — that UUID, not the folder name, is what the backend binds on.
+
+> ⚠️ **Log in as a _non-admin_ seed user to test `no_access`** (e.g. Tama Jones, `a0…002`).
+> alice (`a0…001`) is a global **`ww_admin`** (`system` scope) and therefore sees *every*
+> deployment in *every* org — so the `no_access` case never triggers for her. Use alice only for
+> the **valid** / **not-found** / **no-id** cases; switch to a non-admin (General-only member) for
+> **no-access**.
+
+| Folder | EXIF `Deployment_ID` | Scenario | Seed? |
+|--------|----------------------|----------|-------|
+| `MEDIA/7785FABB/` (8 JPG + 8 BMP) | `7785fabb-e00e-4da2-aed6-a0fb906e6d79` | **Valid** — matches a deployment the logged-in user can access → media bind, pipeline runs (night skinks / blanks) | Seed in **General** org; grant the test user a project role |
+| `MEDIA/E005A4AB/` (11 JPG + 11 BMP) | `e005a4ab-a287-4efe-9878-56568f5c30bb` | **Valid — diverse content (cats & birds)** — recognisable animals; the best folder for exercising SpeciesNet classification | Seed in **General** org, owner `a0…001` (same as the valid row) |
+| `MEDIA/242025DF/` (3 JPG + 3 BMP) | `242025df-5d55-47d6-b245-e1690ef44126` | **No access** — deployment exists but in an org the **non-admin** test user is not in → `no_access` warning | Seeded in org **`b0…003`** (owner `a0…004`); Tama `a0…002` is not a member → no access |
+| `MEDIA/08702E50/` (1) | `08702e50-f7c6-499f-8b9d-3ecf9cfe050a` | **Not found** — UUID not in the DB → `not_found` warning | **Do not seed** |
+| `MEDIA/00000000/` (4) | _(none — tag absent)_ | **No deployment ID** — camera captured while unconfigured → no binding | n/a |
+| `MEDIA/IMAGES.000/` (4) | _(none — 2024 epoch date)_ | **Unconfigured camera** — no `Deployment_ID`, no RTC set | n/a |
+
+> **Two matching paths are exercised:** (1) the frontend pre-upload check
+> (`AnalyseImages.tsx` → `/api/deployments/validate`) reads the `MEDIA/<8-hex>/` **folder prefix**
+> and surfaces the `not_found` / `no_access` banners — which is why the `MEDIA/<HEX>/` structure is
+> preserved here; (2) the backend `match_deployment` (`domain/exif.py`) binds each image by the full
+> **EXIF UUID**. Both should agree.
+
+> **BMP + JPEG both included.** In the device's diagnostic "Save BMP" mode the camera **alternates**
+> one format per frame (even→BMP grayscale-raw, odd→JPG), so a BMP and a JPG are *different* captures,
+> not duplicates. The `7785FABB/` and `242025DF/` folders carry both. With `FF_BMP_INGEST_ENABLED` on
+> (default in `docker-compose.yml`), the upload route re-compresses each BMP → JPEG at
+> `BMP_JPEG_QUALITY` and ingests it as its own frame. **BMP frames have no EXIF**, so they bind via the
+> `MEDIA/<8-hex>/` folder prefix + hex-filename timestamp — exercising the folder-bound path alongside
+> the EXIF-bound JPGs. See [bmp-ingestion-analysis.md](../../documentation/development%20reports/bmp-ingestion-analysis.md).
+
+### Seed rows to add (the "valid" + "no-access" deployments)
+
+These are *test-scenario* rows (not a real export), and the "no-access" one must live in a
+different org — which the generator can't express (it re-homes everything to General). So add them
+as a small **hand-written** seed in `ww-backend`, e.g. `supabase/seeds/dev/access_test_deployments.sql`,
+cat'd into the dev seed after `data.sql` (same as `fixtures.generated.sql`). Sketch:
+
+```sql
+-- VALID: alice (a0…001) can see this — General org, she's a member.
+INSERT INTO devices (id, name, organisation_id, modified_by, bluetooth_id, device_eui)
+VALUES ('d7785fab-0000-4000-8000-000000000001', 'WW500 (valid test)',
+        'b0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001',
+        'BT_TEST_7785', 'EUI_TEST_7785') ON CONFLICT (id) DO NOTHING;
+INSERT INTO projects (id, name, description, organisation_id, created_by, modified_by, is_active)
+VALUES ('p7785fab-0000-4000-8000-000000000001', 'Access Test — Valid',
+        'Upload self-binds; alice has access', 'b0000000-0000-0000-0000-000000000001',
+        'a0000000-0000-0000-0000-000000000001', 'a0000000-0000-0000-0000-000000000001', true)
+ON CONFLICT (id) DO NOTHING;
+INSERT INTO deployments (id, project_id, device_id, name, location_name, deployment_status_id,
+        deployment_start, setup_by, modified_by)
+VALUES ('7785fabb-e00e-4da2-aed6-a0fb906e6d79', 'p7785fab-0000-4000-8000-000000000001',
+        'd7785fab-0000-4000-8000-000000000001', 'Valid Access Test', 'Test Location', 2,
+        '2026-06-12T00:00:00Z', 'a0000000-0000-0000-0000-000000000001',
+        'a0000000-0000-0000-0000-000000000001') ON CONFLICT (id) DO NOTHING;
+
+-- NO ACCESS: same shape but org b0…002, owner a0…00b, and alice gets NO role here.
+-- (Confirm a0…001 is not a global/ww_admin, or she'd see it anyway.)
+INSERT INTO projects (id, name, description, organisation_id, created_by, modified_by, is_active)
+VALUES ('p242025d-0000-4000-8000-000000000002', 'Access Test — No Access',
+        'Different org; alice is not a member', 'b0000000-0000-0000-0000-000000000002',
+        'a0000000-0000-0000-0000-00000000000b', 'a0000000-0000-0000-0000-00000000000b', true)
+ON CONFLICT (id) DO NOTHING;
+-- + matching device + deployment id 242025df-5d55-47d6-b245-e1690ef44126 in that project.
+-- Do NOT grant alice (a0…001) any role on org b0…002 / this project.
+```
+
+---
+
 ## Notes / known issues
 
 - **GPS fallback is unreliable.** `prepare.py` writes GPS as big-endian (`MM`) via `piexif`,

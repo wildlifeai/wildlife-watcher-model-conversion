@@ -26,6 +26,9 @@ services:
       - GOOGLE_DRIVE_FOLDER_ID=${GOOGLE_DRIVE_FOLDER_ID:-}
       - GOOGLE_SERVICE_ACCOUNT_JSON=${GOOGLE_SERVICE_ACCOUNT_JSON:-}
       - GOOGLE_DRIVE_MAX_FILE_SIZE_MB=${GOOGLE_DRIVE_MAX_FILE_SIZE_MB:-50}
+      # BMP ingest (raw device frames → JPEG in-pipeline); on for the quality trial
+      - FF_BMP_INGEST_ENABLED=${FF_BMP_INGEST_ENABLED:-true}
+      - BMP_JPEG_QUALITY=${BMP_JPEG_QUALITY:-90}
       # iNaturalist OAuth
       - INAT_CLIENT_ID=${INAT_CLIENT_ID:-}
       - INAT_CLIENT_SECRET=${INAT_CLIENT_SECRET:-}

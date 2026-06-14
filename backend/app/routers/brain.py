@@ -16,6 +16,7 @@ from fastapi import APIRouter, Depends, Query, Request
 
 from app.config import settings
 from app.dependencies import get_current_user
+from app.middleware.rate_limit import limiter
 from app.schemas.brain import ConfirmClusterRequest, EmbedRequest, MultiClusterRequest, ReprocessAllRequest, ReprocessRequest, ReviewDecisionRequest
 from app.schemas.common import ApiError, ApiMeta, ApiResponse
 from app.services.supabase_client import create_service_client
@@ -40,6 +41,7 @@ def _al_disabled(req_id):
 
 
 @router.post("/embed/{deployment_id}")
+@limiter.limit("10/minute")
 async def embed_deployment(request: Request, deployment_id: str, body: EmbedRequest | None = None, user=Depends(get_current_user)):
     """Embed + cluster a deployment. Server mode enqueues a GPU job."""
     req_id = getattr(request.state, "request_id", None)
@@ -118,7 +120,7 @@ async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depen
         return _disabled(req_id)
 
     if not body.deployment_ids:
-        return ApiResponse(data={"clusters": [], "outlier_media_ids": [], "model_groups": []}, meta=ApiMeta(request_id=req_id))
+        return ApiResponse(data={"clusters": [], "media_clusters": {}, "outlier_media_ids": [], "model_groups": []}, meta=ApiMeta(request_id=req_id))
 
     svc = create_service_client()
 
@@ -133,7 +135,7 @@ async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depen
             .execute()
         )
         if not runs_resp.data:
-            return [], [], []
+            return [], {}, [], []
 
         # Keep only the latest run per deployment.
         seen: dict[str, dict] = {}
@@ -170,12 +172,15 @@ async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depen
             c["model_name"] = run_model.get(c.get("embedding_run_id", ""), "unknown")
 
         outlier_ids = [m["media_id"] for m in members if m.get("is_outlier")]
+        # media_id → cluster_id for non-outlier members, so the grid can group
+        # each image under its cluster (not just separate outliers).
+        media_clusters = {m["media_id"]: m["cluster_id"] for m in members if not m.get("is_outlier")}
 
-        return clusters, outlier_ids, [{"model_name": k, "deployment_ids": v} for k, v in model_groups.items()]
+        return clusters, media_clusters, outlier_ids, [{"model_name": k, "deployment_ids": v} for k, v in model_groups.items()]
 
-    clusters, outlier_ids, model_groups = await asyncio.to_thread(_fetch)
+    clusters, media_clusters, outlier_ids, model_groups = await asyncio.to_thread(_fetch)
     return ApiResponse(
-        data={"clusters": clusters, "outlier_media_ids": outlier_ids, "model_groups": model_groups},
+        data={"clusters": clusters, "media_clusters": media_clusters, "outlier_media_ids": outlier_ids, "model_groups": model_groups},
         meta=ApiMeta(request_id=req_id),
     )
 

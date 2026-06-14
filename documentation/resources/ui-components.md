@@ -112,9 +112,10 @@ driven by `review_status` — see [`lib/observations.ts`](../onboarding/05-ANNOT
 
 | `status` | Colour | Icon | Meaning |
 |---|---|---|---|
-| `'issue'` | red | ✕ | No observations yet (unprocessed) — needs action |
+| `'pending'` | grey | ⧗ | No observations yet — still working through the pipeline (default) |
 | `'ai'` | teal | AI | AI-produced label (incl. `blank`), not yet human-reviewed |
 | `'reviewed'` | green | ✓ | A human validated the label |
+| `'issue'` | red | ✕ | Explicit pipeline error (reserved for BE-2) |
 
 ```tsx
 const status = deriveAnnotationStatus({

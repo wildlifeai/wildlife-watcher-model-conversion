@@ -15,10 +15,36 @@ built from the enabled per-step flags). Steps run in order:
 
 | Step (`PipelineStepType`) | What it does | Flag |
 |---|---|---|
-| `MEDIA_PREP` | Generate thumbnail + preview renditions into `media_assets` (Azure CDN) so the grid never hits Google Drive. No observations. | `FF_MEDIA_REGISTRY_ENABLED` |
-| `SPECIESNET` | **The core model.** Resolves each image to a temp file, runs the **SpeciesNet ensemble** (detector + species classifier in one pass), and writes media-level `observations` with bbox, detection `confidence`, species `classification_probability`, and `scientific_name`/`vernacular_name`. | `FF_SPECIESNET_ENABLED` |
+| `MEDIA_PREP` | Generate thumbnail + preview renditions and upload them to the **public Supabase Storage bucket** (`media-renditions`), recording the URLs on `media_assets` so the grid never hits Google Drive. Originals stay in Drive. No observations. | `FF_MEDIA_REGISTRY_ENABLED` |
+| `SPECIESNET` | **The core model.** Resolves each image to a temp file, runs the **SpeciesNet ensemble** (detector + species classifier in one pass), and writes media-level `observations` with bbox, detection `confidence`, species `classification_probability`, and `scientific_name`/`vernacular_name`. SpeciesNet classifies **one species per image**, so multiple detection boxes of the same type are collapsed into **one** observation carrying a `count` (number of boxes) + the highest-confidence box as the representative bbox — not N duplicate rows. The species is **taxonomically rolled up** by confidence (`rollup_taxon`): below `SPECIES_CONFIDENCE` (0.5) it backs off to genus, below `GENUS_CONFIDENCE` (0.35) to the most specific available higher rank — so a shaky 0.4 "Apteryx mantelli" is recorded as "Apteryx", not a false species claim. | `FF_SPECIESNET_ENABLED` |
 | `ANIMAL_CROP` | Crops the best animal detection into `media_assets.animal_crop_url` for DINOv3 / BioCLIP. No observations. | — |
-| `BIOCLIP` | **Secondary zero-shot classifier** ([Imageomics BioCLIP](https://imageomics.github.io/pybioclip/)) run on the animal crop. Adds a *second* `animal` observation tagged with its own `source_model_version` (`bioclip-2`) — a complement / second opinion to SpeciesNet, strong for taxa outside SpeciesNet's ~2k label set. | `FF_BIOCLIP_ENABLED` |
+| `BIOCLIP` | **Classify stage — pluggable.** Runs a classifier on the animal crop and adds a *second* `animal` observation tagged with the classifier's `source_model_version` — a complement / second opinion to SpeciesNet, strong for taxa outside SpeciesNet's ~2k label set. The classifier is resolved from a registry (`domain/classifiers.py`): [Imageomics BioCLIP](https://imageomics.github.io/pybioclip/) (`bioclip-2`) by default, or whatever `config['classifier']` selects. | `FF_BIOCLIP_ENABLED` |
+
+### Detector → Crop → Classify (the inference tree)
+
+The pipeline is a decision tree — **detect** (where are the animals?) → **crop** → **classify**
+(what species?).
+
+**Detection is global.** Every photo, in every project, is detected by the same SpeciesNet ensemble
+(the `SPECIESNET` step). There is **no per-project detector** — finding the animal and filtering
+blanks works the same everywhere.
+
+**Classification is global by default, with an optional per-project override.** The default classify
+path is also the same for everyone: SpeciesNet's own species guess, plus an optional BioCLIP second
+opinion. What's pluggable is *only* the classify stage: it's a swappable contract
+(`domain/classifiers.py`) where a `Classifier` takes animal-crop paths and returns one
+`ClassifierResult` each, resolved from a registry by id at run time. Today only `bioclip` is
+registered, so nothing changes unless you opt in. The point of the seam is that a project working on
+taxa the general models handle poorly (e.g. NZ geckos/wētā) *could* register a **custom species
+model** and select it via `config['classifier']` — without touching detection or the rest of the
+pipeline. A lighter-weight alternative is constraining BioCLIP to a custom label set with
+`bioclip_labels`. `ClassifierResult` is field-compatible with BioCLIP's `CropPrediction`, so any
+classifier flows through the same observation builder unchanged.
+
+> **Status:** the classifier registry + routing is wired and tested; per-project selection currently
+> rides the `config['classifier']` run override, and persisting the choice on the project row is the
+> remaining wiring. A parallel `Detector` contract (so detection could also vary) is a *possible*
+> future step, **not** something in use — detection stays global.
 
 **Idempotent + incremental (Guard 2):** by default `run_pipeline(only_unannotated=True)` fetches only
 media that **don't already have an `source_type='ai'` observation**, so re-running (or re-uploading)
@@ -37,7 +63,9 @@ the confidence threshold, it writes **one observation with `observation_type='bl
 `source_type='ai'`, `review_status='ai_reviewed'`). The distinction:
 
 - **Blank** = processed, no animal → has a `blank` AI observation → shows the teal **AI** badge.
-- **Unprocessed** = no observations at all → shows the **✕ Issue** badge (action needed).
+- **Unprocessed** = no observations at all → shows the neutral grey **⧗ Processing** badge (still
+  working through the pipeline). The red **✕ Issue** badge is reserved for an explicit pipeline
+  error (see `frontend/src/components/ui/StatusBadge.tsx`).
 
 Blanks are excluded from species charts but counted in the observation-type breakdown and the
 deployment **false-trigger rate**.
@@ -59,8 +87,15 @@ animal crop ──DINOv3──▶ media_embeddings ──HDBSCAN──▶ cluste
 ```
 
 - **Embeddings**: DINOv3 vectors per animal crop → `media_embeddings` / `embedding_runs`.
-- **Clustering**: HDBSCAN groups visually similar crops; outliers flagged. Confirmed in
-  `ClusterReviewPage` (`/clusters/:id`), which bulk-writes labels with cluster provenance.
+  **Auto-run:** after the annotation pipeline finishes, `auto_annotate_deployments` chains
+  `auto_embed_deployment` (gated on `FF_WILDLIFE_BRAIN_ENABLED`), so embeddings/clusters exist
+  without a manual `POST /api/brain/embed/{id}` trigger.
+- **Clustering**: HDBSCAN groups visually similar crops; outliers flagged. The Annotations grid's
+  **Group by → Cluster** reads the `media_id → cluster_id` map from `POST /api/brain/clusters/multi`;
+  clusters are confirmed in `ClusterReviewPage` (`/clusters/:id`), which bulk-writes labels with
+  cluster provenance. For small deployments the HDBSCAN `min_cluster_size` is scaled down to the
+  dataset (`prepare_cluster_input` / `cluster_hdbscan`) so they still form real clusters instead of
+  collapsing into one group.
 - **Active learning**: `get_review_queue()` ranks media by `active_learning_score` (novelty =
   `1 − cluster_confidence`) → surfaced in `ReviewQueuePage` (`/review/:id`).
 - **QA**: `qa_report()` computes AI-vs-human agreement (a precision proxy over images carrying both

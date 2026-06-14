@@ -9,6 +9,7 @@ They delegate to domain layer classes for actual business logic.
 import asyncio
 import hashlib
 import time
+import uuid
 from datetime import datetime, timezone
 
 import structlog
@@ -429,6 +430,20 @@ async def download_github_pretrained_job(job_id: str, user_id: str, org_id: str,
         raise
 
 
+def _is_uuid(value: object) -> bool:
+    """True when *value* is a valid UUID string.
+
+    Used to drop unresolved SD-card folder prefixes (e.g. "00000000" from an
+    unconfigured camera) before they reach the AI pipeline, where a non-UUID
+    deployment_id raises a Postgres 'invalid input syntax for type uuid' error.
+    """
+    try:
+        uuid.UUID(str(value))
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
 def build_pipeline_steps() -> list:
     """Build the ordered pipeline step list from the enabled feature flags.
 
@@ -470,14 +485,46 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
     if not steps:
         return
 
+    # Drop unresolved folder prefixes (e.g. "00000000") — they're not real deployments.
+    deployment_ids = [d for d in deployment_ids if _is_uuid(d)]
+
     for dep_id in deployment_ids:
         try:
             logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
             await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id)
             await emit_detection_notifications(dep_id)
+            # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
+            # without a manual per-deployment trigger. Needs the animal crops the
+            # pipeline just wrote (ANIMAL_CROP step). Best-effort + gated.
+            await auto_embed_deployment(dep_id, user_id=user_id)
             logger.info("auto_annotate_complete", deployment_id=dep_id)
         except Exception as exc:
             logger.warning("auto_annotate_failed", deployment_id=dep_id, error=str(exc))
+
+
+async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) -> None:
+    """Embed + cluster a deployment's animal crops after annotation (best-effort).
+
+    Gated on ``FF_WILDLIFE_BRAIN_ENABLED``; no-op when the Brain is disabled or
+    the deployment has no animal crops yet. Failures are logged, never raised, so
+    a missing GPU / Qdrant never breaks the upload flow.
+    """
+    from app.config import settings
+
+    if not settings.FF_WILDLIFE_BRAIN_ENABLED:
+        return
+    try:
+        from app.domain.wildlife_brain import embed_and_cluster_deployment
+
+        result = await embed_and_cluster_deployment(deployment_id, created_by=user_id)
+        logger.info(
+            "auto_embed_complete",
+            deployment_id=deployment_id,
+            images=result.get("image_count"),
+            clusters=result.get("clusters"),
+        )
+    except Exception as exc:
+        logger.warning("auto_embed_failed", deployment_id=deployment_id, error=str(exc))
 
 
 async def upload_drive_images_job(job_id: str, payload: dict):
@@ -928,9 +975,11 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         from app.domain.pipeline import run_pipeline  # noqa: PLC0415
 
         _user_id = payload.get("user_id")
-        # Unique deployment IDs present in this upload batch
+        # Unique, real (UUID) deployment IDs present in this upload batch. Unresolved
+        # folder prefixes like "00000000" (unconfigured camera) are dropped — they're
+        # not real deployments and would crash the pipeline's Postgres queries.
         _dep_ids: list[str] = list(
-            {entry.get("deployment", {}).get("id") for entry in file_entries if entry.get("deployment") and entry.get("deployment", {}).get("id")}
+            {entry["deployment"]["id"] for entry in file_entries if entry.get("deployment") and _is_uuid(entry.get("deployment", {}).get("id"))}
         )
 
         # Step set from the enabled flags (same source as auto_annotate_deployments),

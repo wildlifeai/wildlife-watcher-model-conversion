@@ -248,19 +248,50 @@ def build_scoped_cluster_assignment_rows(
 # ── Lazy ML wrappers ─────────────────────────────────────────────────
 
 
+# Below this many crops a UMAP projection is meaningless (it returns all-zero
+# coordinates), so we cluster on the raw embeddings instead — see
+# ``prepare_cluster_input``. Below ``MIN_CLUSTERABLE`` we don't cluster at all.
+MIN_UMAP_POINTS = 10
+MIN_CLUSTERABLE = 4
+
+
+def prepare_cluster_input(embeddings: list[list[float]]) -> list[tuple[float, ...]]:
+    """Build the feature matrix HDBSCAN clusters on.
+
+    For enough points, reduce to 50-D with UMAP (denoises + speeds up HDBSCAN).
+    For small sets UMAP can't project (it would emit all-zero coords and destroy
+    the signal), so fall back to the L2-normalized raw embeddings — euclidean
+    distance on those is equivalent to cosine, which is what we want.
+    """
+    n = len(embeddings)
+    if n >= MIN_UMAP_POINTS:
+        return reduce_umap(embeddings, 50, UMAP_CLUSTER_PARAMS)
+    normalized = _l2_normalize(np.asarray(embeddings, dtype=np.float32))
+    return [tuple(float(v) for v in row) for row in normalized]
+
+
 def cluster_hdbscan(embeddings: list[list[float]], preset: str = DEFAULT_HDBSCAN_PRESET) -> tuple[list[int], list[float]]:
     """Cluster embeddings with HDBSCAN. Returns (labels, probabilities).
 
-    Falls back to a single cluster when there are too few points for the preset.
+    The preset's ``min_cluster_size`` (15 for 'small') is tuned for full
+    deployments. For smaller sets it is scaled down to ``n // 2`` so they still
+    form real clusters instead of collapsing into a single fallback group —
+    which is what made "Group by Cluster" look broken on small/test deployments.
+    Below ``MIN_CLUSTERABLE`` points there is nothing meaningful to cluster, so
+    everything lands in one group.
     """
     cfg = HDBSCAN_PRESETS.get(preset, HDBSCAN_PRESETS[DEFAULT_HDBSCAN_PRESET])
     n = len(embeddings)
-    if n < cfg.min_cluster_size:
+    if n < MIN_CLUSTERABLE:
         return [0] * n, [1.0] * n
+
+    # Scale the preset to the dataset so small sets still cluster.
+    min_cluster_size = max(2, min(cfg.min_cluster_size, n // 2))
+    min_samples = max(1, min(cfg.min_samples, min_cluster_size))
 
     import hdbscan  # lazy
 
-    clusterer = hdbscan.HDBSCAN(min_cluster_size=cfg.min_cluster_size, min_samples=cfg.min_samples, metric="euclidean")
+    clusterer = hdbscan.HDBSCAN(min_cluster_size=min_cluster_size, min_samples=min_samples, metric="euclidean")
     labels = clusterer.fit_predict(np.asarray(embeddings, dtype=np.float32))
     probs = getattr(clusterer, "probabilities_", np.ones(n))
     return [int(x) for x in labels], [float(x) for x in probs]
@@ -414,7 +445,7 @@ async def embed_and_cluster_deployment(
 
         await _tick(0.65, "Reducing + clustering…")
         umap_2d = await asyncio.to_thread(reduce_umap, embeddings, 2, UMAP_PERSIST_PARAMS)
-        cluster_input = await asyncio.to_thread(reduce_umap, embeddings, 50, UMAP_CLUSTER_PARAMS)
+        cluster_input = await asyncio.to_thread(prepare_cluster_input, embeddings)
         labels, probs = await asyncio.to_thread(cluster_hdbscan, cluster_input)
         purities = compute_cluster_purities(embeddings, labels)
         summaries = summarize_clusters(labels, probs)
@@ -641,7 +672,7 @@ async def embed_and_cluster_scope(
 
         await _tick(0.65, "Reducing + clustering across scope…")
         umap_2d = await asyncio.to_thread(reduce_umap, embeddings, 2, UMAP_PERSIST_PARAMS)
-        cluster_input = await asyncio.to_thread(reduce_umap, embeddings, 50, UMAP_CLUSTER_PARAMS)
+        cluster_input = await asyncio.to_thread(prepare_cluster_input, embeddings)
         labels, probs = await asyncio.to_thread(cluster_hdbscan, cluster_input)
         purities = compute_cluster_purities(embeddings, labels)
 

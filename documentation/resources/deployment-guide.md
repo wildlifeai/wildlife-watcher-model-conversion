@@ -196,6 +196,44 @@ Enable Realtime on `lorawan_parsed_messages` so the mobile app receives live upd
 
 ---
 
+## Qdrant Vector Store (NOT yet in cloud)
+
+The **Wildlife Brain** (DINOv3 embeddings → clustering → similarity search) stores its vectors in
+**Qdrant**. This is **fully implemented in code** (`backend/app/services/qdrant_client.py`, gated by
+`FF_WILDLIFE_BRAIN_ENABLED`) and runs as a container in the local stack:
+
+```yaml
+# docker-compose.yml
+qdrant:
+  image: qdrant/qdrant:latest
+  ports: ["6333:6333"]
+  volumes: [qdrant_storage:/qdrant/storage]
+```
+
+**It is not provisioned in dev-cloud or staging.** The Azure Container App passes `QDRANT_URL`
+(default `http://qdrant:6333`, a Docker-network address that does not resolve in Azure), so any
+embedding/clustering call there will fail to connect. The client's `health()` degrades gracefully
+(never raises), so the rest of the API is unaffected — but **Group-by-Cluster, similarity, and the
+review queue produce no data in the cloud** until Qdrant is hosted.
+
+**To finish cloud support, one of:**
+
+1. **Qdrant Cloud** (managed) — create a cluster, set `QDRANT_URL=https://<cluster>.qdrant.io` and
+   `QDRANT_API_KEY=<key>` on the Container App. Simplest; no infra to run.
+2. **Self-host on Azure** — run `qdrant/qdrant` as a second Container App (or Container Instance) with
+   a persistent volume for `/qdrant/storage`, on the same internal environment so the API can reach
+   it; point `QDRANT_URL` at its internal FQDN.
+
+Either way also wire up the snapshot DR path: `QdrantService.create_snapshot()` exists and
+`SUPABASE_QDRANT_BACKUP_BUCKET` (`qdrant-backups`) is reserved for storing snapshots, but no
+scheduled backup job runs yet.
+
+> The heavy ML inference (DINOv3/SpeciesNet on GPU) is a separate concern — see the `gpu` profile +
+> `embedding-worker` in `docker-compose.yml`, which also needs Redis + ARQ before it can run as a
+> cloud worker (the API currently runs jobs in-process; see [Scaling](#scaling)).
+
+---
+
 ## CI/CD Pipeline
 
 ### Backend: GitHub Actions → ACR → Azure Container App
