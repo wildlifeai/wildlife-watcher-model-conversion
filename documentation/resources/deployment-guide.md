@@ -50,7 +50,7 @@ Azure Container App ("ww-backend" or "ww-backend-dev")
   └── Supabase sync for job persistence (api_jobs table)
 ```
 
-> **Note**: The target architecture adds Redis + ARQ Worker as separate containers. Currently, jobs run in-process with in-memory state synced to Supabase. See [v2-architecture-plan.md](../development%20reports/v2-architecture-plan.md) for the full Redis+ARQ target.
+> **Note**: The target architecture adds a Redis-backed GPU worker as a separate, scale-to-zero container (always-on CPU API + on-demand GPU). Currently, jobs run in-process with in-memory state synced to Supabase. The dispatch seam, `worker` image, and ARQ registration are already in code; see [GPU Worker + Scale-to-Zero](#gpu-worker--scale-to-zero-redis--arq--keda) for the deployment spec.
 
 ### Manual Deployment
 
@@ -346,19 +346,98 @@ az containerapp update \
   --memory 1.0Gi
 ```
 
-### Future: Redis + ARQ Worker
+### GPU Worker + Scale-to-Zero (Redis + ARQ + KEDA)
 
-When Redis+ARQ is implemented, the worker will run as a separate Container App:
+The two-container split — **always-on CPU API + on-demand GPU worker** — is already wired in code; this is the infra to light it up. The seam:
+
+- [`dispatch.py`](../../backend/app/jobs/dispatch.py): `REDIS_URL` set → `enqueue_job` pushes to Redis and the worker runs the job; empty → in-process. The lean API image never imports torch/SpeciesNet.
+- Dockerfile **`worker`** target bundles `requirements-ml.txt` (torch, transformers, hdbscan, umap, speciesnet); its CMD is `arq app.jobs.worker.WorkerSettings`.
+- [`worker.py`](../../backend/app/jobs/worker.py) auto-registers every function in `definitions.JOBS` — including `annotate_deployments_job`, the offload target the upload flow enqueues when `REDIS_URL` is set.
+- Job status is mirrored to Supabase `api_jobs`, so the API's `/api/jobs/{id}` polling works regardless of which process ran the job (cross-process by design).
+
+| Component | Azure resource | Replicas | Rough cost |
+|-----------|----------------|----------|-----------|
+| API | Container App, CPU, **`base`** image | min 1 | ~$15–40/mo |
+| Queue + status mirror | Azure Cache for Redis (Basic C0) | — | ~$16/mo |
+| GPU worker | Container App on a **GPU workload profile**, **`worker`** image | **min 0** | GPU only while processing (per-second) |
+| Vectors | Qdrant Cloud (free tier) | — | $0 |
+
+**1 — Redis.** ARQ needs a broker; Azure Redis requires TLS on 6380, so use a `rediss://` DSN.
+
+```bash
+az redis create --name ww-redis-dev --resource-group WW-Website \
+  --location australiaeast --sku Basic --vm-size c0
+# REDIS_URL=rediss://:<primary-access-key>@ww-redis-dev.redis.cache.windows.net:6380
+```
+
+**2 — Point the API at Redis** (this alone flips `dispatch` from in-process to ARQ; uploads then offload their AI phase):
+
+```bash
+az containerapp update --name ww-backend-dev --resource-group WW-Website \
+  --set-env-vars REDIS_URL=rediss://:<key>@ww-redis-dev.redis.cache.windows.net:6380
+```
+
+**3 — Build + push the GPU worker image** (the `worker` Dockerfile target):
+
+```bash
+docker build --target worker -t <ACR>/ww-backend-worker:latest -f backend/Dockerfile backend/
+docker push <ACR>/ww-backend-worker:latest
+```
+
+**4 — Add a GPU workload profile** to the Container Apps environment (one-time; **request GPU quota in the region first** — profile types/regions vary). Consumption GPU profiles support scale-to-zero:
+
+```bash
+az containerapp env workload-profile add \
+  --name <ACA_ENV> --resource-group WW-Website \
+  --workload-profile-name gpu-t4 --workload-profile-type Consumption-GPU-NC8as-T4
+```
+
+**5 — Deploy the worker, scale-to-zero:**
 
 ```bash
 az containerapp create \
-  --name ww-worker \
-  --resource-group WW-Website \
-  --image <ACR>/ww-backend:latest \
+  --name ww-embedding-worker-dev --resource-group WW-Website \
+  --environment <ACA_ENV> \
+  --image <ACR>/ww-backend-worker:latest \
+  --workload-profile-name gpu-t4 \
   --command "arq" "app.jobs.worker.WorkerSettings" \
-  --min-replicas 1 \
-  --max-replicas 3
+  --min-replicas 0 --max-replicas 2 \
+  --env-vars REDIS_URL=rediss://:<key>@ww-redis-dev.redis.cache.windows.net:6380 \
+             QDRANT_URL=https://<cluster>.qdrant.io:6333 QDRANT_API_KEY=<key> \
+             HF_TOKEN=<hf-token> EMBEDDING_DEVICE=cuda \
+             SUPABASE_URL=<url> SUPABASE_ANON_KEY=<anon> SUPABASE_SERVICE_ROLE_KEY=<service>
 ```
+
+**6 — Scale rule (the one real gotcha).** ARQ enqueues to a Redis **sorted set** (`arq:queue`), but KEDA's stock `redis` scaler reads **list length (`LLEN`)** — it cannot watch a sorted set directly. Pick one:
+
+- **(Recommended, stays on ARQ) Mirror a pending-list marker — *implemented*.** On every offload, [`dispatch.enqueue_job`](../../backend/app/jobs/dispatch.py) `LPUSH`es the ARQ job id onto the `ww:gpu:pending` list, and the worker adapter ([`worker.py`](../../backend/app/jobs/worker.py)) `LREM`s that id when the job finishes. KEDA scales on the list length:
+  ```bash
+  az containerapp update --name ww-embedding-worker-dev --resource-group WW-Website \
+    --scale-rule-name redis-queue --scale-rule-type redis \
+    --scale-rule-metadata listName=ww:gpu:pending listLength=1 \
+                          address=ww-redis-dev.redis.cache.windows.net:6380 enableTLS=true \
+    --scale-rule-auth password=redis-password-secret
+  ```
+  Worker scales 0→1 when work is pending, back to 0 when drained. The marker is best-effort (a missing push only affects autoscaling, never correctness). The retry edge is already handled: `WorkerSettings.max_tries = 1`, so a job can't be re-deferred after its marker was removed (our jobs self-handle errors and return normally, so retries aren't wanted anyway).
+- **(Cleaner cloud-native) Azure Service Bus / Storage Queue + KEDA `azure-queue` scaler.** Swap the offload broker from ARQ/Redis to an Azure queue at the `dispatch.py` seam; KEDA then scales natively on queue depth with no marker. Bigger change, no drift risk.
+- **(Interim, zero code) KEDA `cron` scaler** to pre-warm the worker during expected upload windows, or pin `--min-replicas 1` during an active tagging campaign and back to `0` afterwards.
+
+**7 — Model cache (cold start).** A GPU cold start pulls a multi-GB image and re-downloads DINOv3/SpeciesNet (~1–3 min). Mount an **Azure Files** volume on the worker and point the HF cache at it so models persist across scale-to-zero cycles:
+
+```bash
+# set on the worker: HF_HOME=/models/hf  (+ mount an Azure Files share at /models)
+az containerapp update --name ww-embedding-worker-dev --resource-group WW-Website \
+  --set-env-vars HF_HOME=/models/hf
+```
+
+### Verifying the split works
+
+1. Trigger an AI run (upload, or `POST /api/brain/reprocess/deployment/{id}`). API logs should show **`job_enqueued_arq`** (not `job_enqueued_local`).
+2. `az containerapp replica list --name ww-embedding-worker-dev -g WW-Website` shows the worker scaling **0 → 1**.
+3. Worker logs show `arq_worker_startup` then `auto_embed_complete` with a cluster count.
+4. Annotations → **Group → Cluster (embeddings)** populates; the worker scales back to **0** when idle.
+
+> Status polling already works cross-process: `recover_stuck_jobs()` + the Supabase `api_jobs` mirror mean the API reports progress on jobs the worker ran. No extra wiring needed.
 
 ---
 

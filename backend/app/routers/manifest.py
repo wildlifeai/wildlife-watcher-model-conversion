@@ -6,8 +6,9 @@ POST /api/manifest/generate → enqueues job, returns {job_id}
 GET  /api/manifest/branches → list available firmware branches
 """
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 
+from app.dependencies import get_optional_user
 from app.domain.manifest import fetch_github_branches
 from app.jobs.definitions import generate_manifest_job
 from app.jobs.runner import enqueue_local_job
@@ -23,12 +24,17 @@ router = APIRouter(prefix="/api/manifest", tags=["manifest"])
 async def generate_manifest(
     body: ManifestRequest,
     request: Request,
+    user=Depends(get_optional_user),
 ):
     """Enqueue a MANIFEST.zip generation job.
 
     Returns a job_id for polling via GET /api/jobs/{id}.
     """
-    job_id = await create_job()
+    job_id = await create_job(
+        user_id=getattr(user, "id", None),
+        kind="manifest",
+        label="Generate MANIFEST.zip",
+    )
 
     enqueue_local_job(generate_manifest_job(job_id, body.model_dump()))
 

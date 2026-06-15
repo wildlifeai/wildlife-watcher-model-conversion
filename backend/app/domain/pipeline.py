@@ -484,6 +484,7 @@ class BioCLIPStep(PipelineStep):
         svc = create_service_client()
         errors = 0
         observations_created = 0
+        skipped_confident = 0
 
         # Prefer the animal crop (better signal) over the full frame.
         media_ids = [m["id"] for m in media]
@@ -493,6 +494,27 @@ class BioCLIPStep(PipelineStep):
             return {r["media_id"]: r["animal_crop_url"] for r in (resp.data or []) if r.get("animal_crop_url")}
 
         crop_map = await asyncio.to_thread(_fetch_crops)
+
+        # Avoid showing the user three rows for one cat: BioCLIP is a *second opinion*,
+        # so only emit it where SpeciesNet was NOT already confident. Where SpeciesNet
+        # produced a confident animal label, skip BioCLIP so a single observation shows.
+        # Set config['bioclip_always']=True to keep the full ensemble (disagreement views).
+        suppress_when_confident = not config.get("bioclip_always", False)
+
+        def _fetch_confident_speciesnet() -> set[str]:
+            resp = (
+                svc.table("observations")
+                .select("media_id")
+                .in_("media_id", media_ids)
+                .eq("source_type", "ai")
+                .eq("observation_type", "animal")
+                .like("source_model_version", "speciesnet%")
+                .gte("confidence", SPECIES_CONFIDENCE)
+                .execute()
+            )
+            return {r["media_id"] for r in (resp.data or [])}
+
+        confident_ids = await asyncio.to_thread(_fetch_confident_speciesnet) if suppress_when_confident else set()
 
         tmpdir = tempfile.mkdtemp(prefix="bioclip_")
         path_to_media: dict[str, dict] = {}
@@ -523,6 +545,9 @@ class BioCLIPStep(PipelineStep):
                 m = path_to_media.get(pred.filepath)
                 if not m:
                     continue
+                if m["id"] in confident_ids:
+                    skipped_confident += 1
+                    continue  # SpeciesNet already labelled this animal confidently — no redundant row
                 obs_batch.extend(build_bioclip_observations(m, deployment_id, pred, model_version, timestamp, threshold))
 
             if obs_batch:
@@ -546,6 +571,7 @@ class BioCLIPStep(PipelineStep):
             classifier=classifier.name,
             media_processed=len(media),
             observations_created=observations_created,
+            skipped_confident_speciesnet=skipped_confident,
             errors=errors,
             duration_seconds=round(duration, 2),
         )

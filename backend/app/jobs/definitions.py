@@ -16,8 +16,10 @@ import structlog
 
 from app.jobs.store import (
     complete_phase,
+    create_job,
     emit_event,
     get_job,
+    set_job_deployments,
     start_phase,
     update_job,
     update_summary,
@@ -527,6 +529,27 @@ async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) 
         logger.warning("auto_embed_failed", deployment_id=deployment_id, error=str(exc))
 
 
+async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_id: str | None = None) -> None:
+    """Registered (ARQ-routable) AI job: annotate + embed a set of deployments.
+
+    This is the offload target for the upload flow's AI phase. When ``REDIS_URL`` is
+    set the upload job enqueues this and it runs on the GPU ``embedding-worker`` (the
+    heavy ML image); with no Redis it falls back to running in-process. Either way it
+    reports status to ``job_id`` so it appears in the user's Processing history.
+
+    The actual work (``run_pipeline`` per deployment + detection notifications + DINOv3
+    embed/cluster) lives in :func:`auto_annotate_deployments`; this is the thin
+    job-status wrapper around it.
+    """
+    await update_job(job_id, status=JobStatus.PROCESSING, current_phase=ProgressPhase.AI_PIPELINE)
+    try:
+        await auto_annotate_deployments(deployment_ids, user_id=user_id)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message="AI analysis complete")
+    except Exception as exc:
+        logger.warning("annotate_deployments_job_failed", job_id=job_id, error=str(exc))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(exc))
+
+
 async def upload_drive_images_job(job_id: str, payload: dict):
     """Upload analysed images to Google Drive.
 
@@ -972,6 +995,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
 
         # ── Phase 4: AI PIPELINE (auto-run once per deployment after Drive sync) ─
         # Imports deferred to keep the top-level module lightweight.
+        from app.config import settings  # noqa: PLC0415
         from app.domain.pipeline import run_pipeline  # noqa: PLC0415
 
         _user_id = payload.get("user_id")
@@ -990,8 +1014,14 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         # so this single inline run includes SpeciesNet/BioCLIP/etc. when enabled.
         _steps = build_pipeline_steps()
         pipeline_errors = 0
-        if _dep_ids and _steps:
+        # Run the AI inline only on a single-container / dev image (no Redis worker).
+        # When REDIS_URL is set, the heavy AI is offloaded to the GPU worker (the
+        # `elif` branch below) so this CPU process never imports torch/SpeciesNet.
+        if _dep_ids and _steps and not settings.REDIS_URL:
             await start_phase(job_id, ProgressPhase.AI_PIPELINE)
+            # Record the resolved deployments so the Annotations grid can show a
+            # "being processed" banner for them while this inline AI phase runs.
+            await set_job_deployments(job_id, _dep_ids)
             # The AI phase owns the tail of the progress bar (0.50 → 1.0): it is by far
             # the longest phase, so the bar keeps moving + logs a line per step instead
             # of freezing at the end of the upload.
@@ -1030,6 +1060,20 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                             message=(f"✅ AI analysis complete — deployment {_dep_id[:8]}: {_result.total_observations} observation(s) created"),
                         ),
                     )
+                    # Wildlife Brain: embed + cluster the new animal crops so the
+                    # Group → Cluster (embeddings) view populates. No-op unless
+                    # FF_WILDLIFE_BRAIN_ENABLED; best-effort (never raises) so a
+                    # missing GPU / Qdrant can't break the upload.
+                    if settings.FF_WILDLIFE_BRAIN_ENABLED:
+                        await emit_event(
+                            job_id,
+                            ProgressEvent(
+                                type=EventType.PROGRESS,
+                                phase=ProgressPhase.AI_PIPELINE,
+                                message=f"🧠 Clustering similar images — {_dep_id[:8]}…",
+                            ),
+                        )
+                        await auto_embed_deployment(_dep_id, user_id=_user_id)
                 except Exception as _pipeline_err:
                     pipeline_errors += 1
                     logger.warning(
@@ -1046,6 +1090,36 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                             message=f"⚠️ AI analysis failed for deployment {_dep_id[:8]}: {_pipeline_err}",
                         ),
                     )
+            await complete_phase(job_id, ProgressPhase.AI_PIPELINE)
+
+        # ── Phase 4 (offloaded): with a Redis-backed GPU worker configured, the
+        # heavy AI runs there (the two-container split) instead of in this CPU
+        # process. The upload itself is complete; AI is tracked as its own
+        # Processing-history job. enqueue_job falls back to in-process if Redis is
+        # unreachable, so this never silently drops the analysis. ──
+        elif _dep_ids and _steps and settings.REDIS_URL:
+            from app.jobs.dispatch import enqueue_job  # noqa: PLC0415
+
+            await start_phase(job_id, ProgressPhase.AI_PIPELINE)
+            ai_job_id = await create_job(
+                user_id=_user_id,
+                kind="ai_pipeline",
+                label=f"AI analysis — {len(_dep_ids)} deployment(s)",
+                deployment_ids=_dep_ids,
+            )
+            await enqueue_job("annotate_deployments_job", ai_job_id, _dep_ids, _user_id)
+            await emit_event(
+                job_id,
+                ProgressEvent(
+                    type=EventType.FILE_SUCCESS,
+                    phase=ProgressPhase.AI_PIPELINE,
+                    child_job_id=ai_job_id,
+                    message=(
+                        f"🛰️ Queued AI analysis for {len(_dep_ids)} deployment(s) on the GPU worker "
+                        f"— track it in Processing history (job {ai_job_id[:8]})"
+                    ),
+                ),
+            )
             await complete_phase(job_id, ProgressPhase.AI_PIPELINE)
 
         # ── Final status (Drive sync + AI pipeline done) ──────────────────
@@ -1231,6 +1305,7 @@ JOBS = [
     download_pretrained_job,
     download_github_pretrained_job,
     upload_drive_images_job,
+    annotate_deployments_job,
     backfill_thumbnails_job,
     embed_deployment_job,
     reprocess_deployment_job,

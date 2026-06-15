@@ -59,6 +59,36 @@ function resolveImageUrl(media: MediaRecord, size: 'thumb' | 'full' = 'full'): s
   return `${apiBase}/api/media/${media.id}/image?size=${size}`
 }
 
+// One label/value row used by the Media-information tab.
+function InfoRow({ label, value }: { label: string; value: React.ReactNode }) {
+  return (
+    <div style={{ display: 'flex', justifyContent: 'space-between', gap: 8, fontSize: '0.75rem', borderBottom: '1px solid var(--border)', padding: '4px 0' }}>
+      <span style={{ opacity: 0.6, whiteSpace: 'nowrap' }}>{label}</span>
+      <span style={{ textAlign: 'right', wordBreak: 'break-word' }}>{value}</span>
+    </div>
+  )
+}
+
+// Media-information tab — capture context + the full extracted EXIF, read-only.
+function MediaInfoSection({ media, timezone }: { media: MediaRecord; timezone?: string | null }) {
+  const aiCount = media.observations.filter(isAiLabel).length
+  return (
+    <div style={{ padding: '0.75rem 1rem' }}>
+      <strong style={{ fontSize: '0.8125rem' }}>Capture</strong>
+      <div style={{ marginTop: '0.5rem', display: 'flex', flexDirection: 'column' }}>
+        {media.timestamp && <InfoRow label="Captured (local)" value={formatCaptureTime(media.timestamp, timezone)} />}
+        {media.timestamp && <InfoRow label="Captured (UTC)" value={new Date(media.timestamp).toISOString().replace('T', ' ').replace('.000Z', ' UTC')} />}
+        <InfoRow label="File" value={media.file_name || media.file_path.split('/').pop()} />
+        <InfoRow label="Media type" value={media.file_mediatype} />
+        <InfoRow label="Hosting" value={media.file_public ? 'Public URL' : 'Private (proxied)'} />
+        <InfoRow label="AI detections" value={aiCount} />
+        {media.media_comments && <InfoRow label="Comments" value={media.media_comments} />}
+      </div>
+      <ExifSection exif={media.exif_metadata} />
+    </div>
+  )
+}
+
 // EXIF panel — lists primitive key/values from the media's exif_metadata jsonb.
 function ExifSection({ exif }: { exif: Record<string, unknown> | null }) {
   const entries = exif && typeof exif === 'object'
@@ -89,6 +119,9 @@ export function MediaDetail({ media, timezone, onClose, onUpdated, onNext, onPre
 
   const [saving, setSaving] = useState(false)
   const [saveMsg, setSaveMsg] = useState<string | null>(null)
+  // Right panel is split into two tabs: the editable annotations, and read-only
+  // capture/EXIF metadata (so the date + extracted EXIF aren't buried below the form).
+  const [activeTab, setActiveTab] = useState<'annotations' | 'info'>('annotations')
 
   // ── AN-7: bounding-box drawing state ───────────────────────────────────────
   // bboxObsId = the observation a freshly-drawn box will be written to (draw mode).
@@ -370,21 +403,31 @@ export function MediaDetail({ media, timezone, onClose, onUpdated, onNext, onPre
           </div>
         )}
 
-        {/* ── Metadata ─────────────────────────────────────── */}
-        <div style={{ padding: '0.75rem 1rem', borderBottom: '1px solid var(--border)', fontSize: '0.75rem', opacity: 0.7 }}>
-          {media.timestamp && <div>📅 {formatCaptureTime(media.timestamp, timezone)}</div>}
-          <div>📁 {media.file_mediatype}</div>
-          {media.observations.filter(isAiLabel).length > 0 && (
-            <div>🔍 {media.observations.filter(isAiLabel).length} AI detection{media.observations.filter(isAiLabel).length > 1 ? 's' : ''}</div>
-          )}
+        {/* ── Tabs: Annotations | Media information ────────── */}
+        <div style={{ display: 'flex', borderBottom: '1px solid var(--border)' }}>
+          {(['annotations', 'info'] as const).map(tab => (
+            <button
+              key={tab}
+              onClick={() => setActiveTab(tab)}
+              style={{
+                flex: 1, padding: '0.5rem', fontSize: '0.75rem', fontWeight: 600, cursor: 'pointer',
+                background: 'none', border: 'none', color: 'var(--text-color)',
+                borderBottom: activeTab === tab ? '2px solid var(--primary, #10b981)' : '2px solid transparent',
+                opacity: activeTab === tab ? 1 : 0.6,
+              }}
+            >
+              {tab === 'annotations' ? 'Annotations' : 'Media information'}
+            </button>
+          ))}
         </div>
 
-        {/* ── Observations ─────────────────────────────────── */}
+        {/* ── Annotations tab ──────────────────────────────── */}
         {/* The AI pipeline writes one observation per detection box, so a single
             animal often arrives as several near-identical rows. To keep review
             simple, show ONE primary observation (human-reviewed first, then the
             highest-confidence AI row); the rest stay editable in a collapsed
             "Other detections" section. All boxes still render on the image. */}
+        {activeTab === 'annotations' && (
         <div style={{ padding: '0.75rem 1rem' }}>
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
           <strong style={{ fontSize: '0.8125rem' }}>Observation</strong>
@@ -537,9 +580,10 @@ export function MediaDetail({ media, timezone, onClose, onUpdated, onNext, onPre
           + Add Observation
         </button>
         </div>
+        )}
 
-        {/* ── EXIF metadata ────────────────────────────────── */}
-        <ExifSection exif={media.exif_metadata} />
+        {/* ── Media information tab ────────────────────────── */}
+        {activeTab === 'info' && <MediaInfoSection media={media} timezone={timezone} />}
       </div>
     </div>
   )

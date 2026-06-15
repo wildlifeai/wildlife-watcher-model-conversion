@@ -35,6 +35,7 @@ import { InsightsPage } from './pages/InsightsPage'
 import { ToolkitPage } from './pages/ToolkitPage'
 import { FieldPage } from './pages/FieldPage'
 import { NotificationsPage } from './pages/NotificationsPage'
+import { ProcessingHistoryPage } from './pages/ProcessingHistoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { UploadLogsPage } from './pages/UploadLogsPage'
 import { UploadProvider, useUploadStore } from './contexts/UploadContext'
@@ -167,6 +168,15 @@ function AccountMenu({ email, isOrgManager, onLogout, unreadCount, recent }: {
             onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'transparent')}
           >
             🔔 Notifications{unreadCount > 0 ? ` (${unreadCount})` : ''}{recent.length > 0 ? ' — View all' : ''}
+          </Link>
+          <Link
+            to="/processing"
+            onClick={() => setOpen(false)}
+            style={itemStyle}
+            onMouseEnter={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(76,175,80,0.07)')}
+            onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'transparent')}
+          >
+            🗂 Processing history
           </Link>
           <Link
             to="/settings"
@@ -441,6 +451,7 @@ export default function App() {
 
               {/* Personal surfaces (avatar menu) — fleshed out in later phases */}
               <Route path="/notifications" element={<RequireAuth><NotificationsPage /></RequireAuth>} />
+              <Route path="/processing"    element={<RequireAuth><ProcessingHistoryPage /></RequireAuth>} />
               <Route path="/settings"      element={<RequireAuth><SettingsPage /></RequireAuth>} />
 
               {/* Legacy path redirects (query string preserved) */}

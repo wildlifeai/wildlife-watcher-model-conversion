@@ -415,7 +415,11 @@ async def _enqueue_drive_upload(
         return {"enabled": True, "status": "skipped", "reason": "no_files_stored"}
 
     # ── Enqueue ARQ job ──────────────────────────────────────────
-    job_id = await create_job()
+    job_id = await create_job(
+        user_id=user_id,
+        kind="upload",
+        label=f"Upload — {len(storage_entries)} file{'s' if len(storage_entries) != 1 else ''}",
+    )
 
     payload = {
         "files": storage_entries,

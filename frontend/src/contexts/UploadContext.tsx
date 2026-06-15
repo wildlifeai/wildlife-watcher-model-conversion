@@ -207,6 +207,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
         let changed = false
         const logsToAdd: LogEntry[] = []
+        // Jobs spawned by a running job (e.g. AI analysis offloaded to the GPU
+        // worker) that the dock should chain onto so it keeps polling + the dock
+        // stays open until the follow-on finishes.
+        const childJobsToAdd: PipelineJob[] = []
 
         for (let i = 0; i < jobs.length; i++) {
           const prev = jobs[i]
@@ -249,6 +253,16 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 level,
                 message: evt.message,
               })
+
+              // Chain onto a spawned follow-on job (e.g. offloaded AI analysis).
+              const childId: string | undefined = evt.child_job_id
+              if (
+                childId &&
+                !jobs.some((j) => j.id === childId) &&
+                !childJobsToAdd.some((c) => c.id === childId)
+              ) {
+                childJobsToAdd.push({ id: childId, status: 'queued', progress: 0, fileCount: 0 })
+              }
             }
           } else if (next.message && next.message !== prev.message && events.length === 0) {
             // Fallback for job types without structured events
@@ -273,10 +287,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           return true
         })
 
-        if (changed) {
+        if (changed || childJobsToAdd.length > 0) {
           setPipelineState((prev) => ({
             ...prev,
-            jobs: updates,
+            // Append any newly-spawned follow-on jobs so the dock keeps polling
+            // them; the effect re-runs on the new jobs list and the dock stays
+            // open until every job (including the chained AI job) is terminal.
+            jobs: [...updates, ...childJobsToAdd],
             logs: [...prev.logs, ...deduped],
             lastUpdateTs: Date.now(),
           }))

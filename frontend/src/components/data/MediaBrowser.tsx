@@ -14,6 +14,7 @@ import { isHumanReviewed, isAiLabel } from '../../lib/observations'
 import { getTimeOfDay, formatCaptureTime } from '../../lib/time'
 import { MediaGroup } from './MediaGroup'
 import { useMultiClusters } from '../../hooks/useBrain'
+import { useJobsList } from '../../hooks/useJobs'
 import { MediaBulkActions, type BulkAction } from './MediaBulkActions'
 import { DeleteConfirmModal, AiModelPickerModal, PipelineLogModal } from './BulkActionModals'
 
@@ -110,6 +111,47 @@ function resolveImageUrl(media: MediaRecord): string | null {
   return `${apiBase}/api/media/${media.id}/image?size=thumb`
 }
 
+
+// ── Processing banner ─────────────────────────────────────────────────────────
+// Explains blank thumbnails / missing labels: when an upload or AI run is still
+// processing a deployment the user is looking at, the grid would otherwise show
+// empty cards with no reason. Driven by the user's active jobs (GET /api/jobs),
+// intersected with the deployments currently in view.
+function ProcessingBanner({ deployments }: { deployments: Props['deployments'] }) {
+  const { data: jobs } = useJobsList()
+  const viewIds = new Set(deployments.map(d => d.id))
+  const names = new Map(deployments.map(d => [d.id, d.location_name || d.id.slice(0, 8)]))
+
+  const active = (jobs ?? []).filter(
+    j => (j.status === 'queued' || j.status === 'processing') && (j.deployment_ids ?? []).some(id => viewIds.has(id)),
+  )
+  if (active.length === 0) return null
+
+  const depIds = [...new Set(active.flatMap(j => (j.deployment_ids ?? []).filter(id => viewIds.has(id))))]
+  const depNames = depIds.map(id => names.get(id) || id.slice(0, 8))
+  const shown = depNames.length <= 3 ? depNames.join(', ') : `${depNames.slice(0, 3).join(', ')} +${depNames.length - 3} more`
+  const isOne = depIds.length === 1
+
+  return (
+    <div
+      role="status"
+      style={{
+        display: 'flex', alignItems: 'center', gap: '0.6rem',
+        padding: '0.6rem 0.9rem', marginBottom: '0.75rem',
+        border: '1px solid rgba(59,130,246,0.4)', borderRadius: 'var(--radius)',
+        backgroundColor: 'rgba(59,130,246,0.08)', fontSize: '0.8125rem',
+      }}
+    >
+      <span style={{ fontSize: '1rem', animation: 'spin 1.4s linear infinite' }}>⟳</span>
+      <span>
+        <strong>Processing</strong> — AI analysis is running for {isOne ? 'deployment ' : 'deployments '}
+        <strong>{shown}</strong>. Thumbnails and labels for {isOne ? 'it' : 'these'} will appear as they complete.
+        See <em>Processing history</em> (avatar menu) for live progress.
+      </span>
+      <style>{`@keyframes spin { from { transform: rotate(0) } to { transform: rotate(360deg) } }`}</style>
+    </div>
+  )
+}
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -765,6 +807,9 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
 
   return (
     <div>
+      {/* ── "Being processed" banner for in-view deployments ───────── */}
+      <ProcessingBanner deployments={deployments} />
+
       {/* ── Ribbon command bar ────────────────────────────────────── */}
       <Ribbon
         status={<span><strong>{totalCount ?? stats.total}</strong> media</span>}

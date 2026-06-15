@@ -63,7 +63,7 @@ async def embed_deployment(request: Request, deployment_id: str, body: EmbedRequ
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="ai_embed", label=f"Embed deployment {deployment_id[:8]}", deployment_ids=[deployment_id])
     await enqueue_job("embed_deployment_job", job_id, deployment_id, body.model_name)
     return ApiResponse(
         data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id},
@@ -353,7 +353,7 @@ async def reprocess_deployment_endpoint(request: Request, deployment_id: str, bo
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="ai_reprocess", label=f"Reprocess deployment {deployment_id[:8]}", deployment_ids=[deployment_id])
     await enqueue_job("reprocess_deployment_job", job_id, deployment_id, body.model_name)
     return ApiResponse(data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id}, meta=ApiMeta(request_id=req_id))
 
@@ -369,7 +369,7 @@ async def reprocess_project_endpoint(request: Request, project_id: str, body: Re
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="ai_reprocess", label=f"Reprocess project {project_id[:8]}")
     await enqueue_job("reprocess_project_job", job_id, project_id, body.model_name)
     return ApiResponse(data={"job_id": job_id, "status": "queued", "project_id": project_id}, meta=ApiMeta(request_id=req_id))
 
@@ -393,7 +393,7 @@ async def reprocess_all_endpoint(request: Request, body: ReprocessAllRequest | N
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="ai_reprocess", label="Reprocess all deployments")
     await enqueue_job("reprocess_all_job", job_id, body.model_name)
     return ApiResponse(data={"job_id": job_id, "status": "queued", "scope": "global"}, meta=ApiMeta(request_id=req_id))
 
@@ -424,7 +424,9 @@ async def recalculate_al_scores(request: Request, deployment_id: str, user=Depen
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(
+        user_id=user.id, kind="active_learning", label=f"Recompute AL scores {deployment_id[:8]}", deployment_ids=[deployment_id]
+    )
     await enqueue_job("recompute_al_job", job_id, deployment_id)
     return ApiResponse(data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id}, meta=ApiMeta(request_id=req_id))
 
@@ -489,6 +491,6 @@ async def backup_qdrant_endpoint(request: Request, user=Depends(get_current_user
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="maintenance", label="Qdrant backup")
     await enqueue_job("qdrant_backup_job", job_id)
     return ApiResponse(data={"job_id": job_id, "status": "queued"}, meta=ApiMeta(request_id=req_id))
