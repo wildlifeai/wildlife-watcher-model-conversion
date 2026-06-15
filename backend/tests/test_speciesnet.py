@@ -24,7 +24,7 @@ _RAW = {
                 {"category": "1", "label": "animal", "conf": 0.93, "bbox": [0.1, 0.2, 0.3, 0.4]},
                 {"category": "1", "label": "animal", "conf": 0.10, "bbox": [0.5, 0.5, 0.1, 0.1]},
             ],
-            "prediction": "uuid-1234-abcd;mammalia;apterygiformes;apterygidae;apteryx;mantelli;north island brown kiwi",
+            "prediction": "12345678-1234-1234-1234-1234567890ab;mammalia;apterygiformes;apterygidae;apteryx;mantelli;north island brown kiwi",
             "prediction_score": 0.87,
         },
         {
@@ -45,7 +45,9 @@ def test_category_to_observation_type():
 
 
 def test_parse_prediction_string_extracts_scientific_and_common():
-    sci, common = parse_prediction_string("uuid-1234-abcd;mammalia;apterygiformes;apterygidae;apteryx;mantelli;north island brown kiwi")
+    sci, common = parse_prediction_string(
+        "12345678-1234-1234-1234-1234567890ab;mammalia;apterygiformes;apterygidae;apteryx;mantelli;north island brown kiwi"
+    )
     assert sci == "Apteryx mantelli"
     assert common == "north island brown kiwi"
 
@@ -107,12 +109,19 @@ def test_build_observations_blank_image():
 
 
 def test_parse_taxonomy_full_lineage():
-    tax = parse_taxonomy("uuid-1234-abcd;mammalia;apterygiformes;apterygidae;apteryx;mantelli;north island brown kiwi")
+    tax = parse_taxonomy("12345678-1234-1234-1234-1234567890ab;mammalia;apterygiformes;apterygidae;apteryx;mantelli;north island brown kiwi")
     assert tax["class"] == "mammalia"
     assert tax["family"] == "apterygidae"
     assert tax["genus"] == "apteryx"
     assert tax["species"] == "mantelli"
     assert tax["common"] == "north island brown kiwi"
+
+
+def test_parse_taxonomy_keeps_hyphenated_first_field_without_uuid():
+    # No UUID prefix: a hyphenated first field must NOT be mistaken for a UUID and dropped.
+    tax = parse_taxonomy("actinopterygii-class;perciformes;;;;;ray-finned fish")
+    assert tax["class"] == "actinopterygii-class"
+    assert tax["order"] == "perciformes"
 
 
 def test_parse_taxonomy_empty():

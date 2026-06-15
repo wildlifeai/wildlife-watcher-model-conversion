@@ -128,8 +128,10 @@ def parse_taxonomy(prediction: Optional[str]) -> dict[str, Optional[str]]:
     if not prediction:
         return {}
     parts = [p.strip() for p in prediction.split(";")]
-    # Drop a leading UUID field if present (SpeciesNet prefixes one).
-    if parts and "-" in parts[0] and " " not in parts[0]:
+    # Drop a leading UUID field if present (SpeciesNet prefixes the species GUID).
+    # Match the exact UUID shape (36 chars, 4 hyphens) so a hyphenated taxon name
+    # in an un-prefixed string can't be mistaken for a UUID and dropped.
+    if parts and len(parts[0]) == 36 and parts[0].count("-") == 4:
         parts = parts[1:]
     if not parts:
         return {}
