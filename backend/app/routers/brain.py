@@ -14,6 +14,15 @@ from datetime import datetime, timezone
 import structlog
 from fastapi import APIRouter, Depends, Query, Request
 
+from app.authz import (
+    accessible_deployment_ids,
+    assert_access,
+    require_cluster_access,
+    require_deployment_access,
+    require_media_access,
+    require_project_access,
+    require_system_admin,
+)
 from app.config import settings
 from app.dependencies import get_current_user, get_verified_user
 from app.middleware.rate_limit import limiter
@@ -40,7 +49,7 @@ def _al_disabled(req_id):
     )
 
 
-@router.post("/embed/{deployment_id}")
+@router.post("/embed/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 @limiter.limit("10/minute")
 async def embed_deployment(request: Request, deployment_id: str, body: EmbedRequest | None = None, user=Depends(get_verified_user)):
     """Embed + cluster a deployment. Server mode enqueues a GPU job."""
@@ -71,7 +80,7 @@ async def embed_deployment(request: Request, deployment_id: str, body: EmbedRequ
     )
 
 
-@router.get("/clusters/{deployment_id}")
+@router.get("/clusters/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def list_clusters(request: Request, deployment_id: str, user=Depends(get_current_user)):
     """List HDBSCAN clusters for the deployment's latest embedding run."""
     req_id = getattr(request.state, "request_id", None)
@@ -119,6 +128,12 @@ async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depen
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
         return _disabled(req_id)
 
+    if not body.deployment_ids:
+        return ApiResponse(data={"clusters": [], "media_clusters": {}, "outlier_media_ids": [], "model_groups": []}, meta=ApiMeta(request_id=req_id))
+
+    # Object-level authz: restrict to deployments the caller may access (body list,
+    # so it can't use the path-param dependency). An empty result hides the rest.
+    body.deployment_ids = await accessible_deployment_ids(user.id, body.deployment_ids)
     if not body.deployment_ids:
         return ApiResponse(data={"clusters": [], "media_clusters": {}, "outlier_media_ids": [], "model_groups": []}, meta=ApiMeta(request_id=req_id))
 
@@ -185,7 +200,7 @@ async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depen
     )
 
 
-@router.get("/umap/{deployment_id}")
+@router.get("/umap/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def umap_coords(request: Request, deployment_id: str, user=Depends(get_current_user)):
     """UMAP scatter data for the deployment (stable persisted coords)."""
     req_id = getattr(request.state, "request_id", None)
@@ -207,7 +222,7 @@ async def umap_coords(request: Request, deployment_id: str, user=Depends(get_cur
     return ApiResponse(data={"points": points, "count": len(points)}, meta=ApiMeta(request_id=req_id))
 
 
-@router.get("/outliers/{deployment_id}")
+@router.get("/outliers/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def list_outliers(request: Request, deployment_id: str, user=Depends(get_current_user)):
     """HDBSCAN-rejected images (candidate expert-review queue)."""
     req_id = getattr(request.state, "request_id", None)
@@ -231,7 +246,7 @@ async def list_outliers(request: Request, deployment_id: str, user=Depends(get_c
     return ApiResponse(data={"outliers": rows, "count": len(rows)}, meta=ApiMeta(request_id=req_id))
 
 
-@router.get("/similar/{media_id}")
+@router.get("/similar/{media_id}", dependencies=[Depends(require_media_access)])
 async def similar(request: Request, media_id: str, n: int = Query(20, ge=1, le=100), org_scoped: bool = True, user=Depends(get_current_user)):
     """Qdrant nearest-neighbour search for a media item."""
     req_id = getattr(request.state, "request_id", None)
@@ -262,7 +277,7 @@ async def similar(request: Request, media_id: str, n: int = Query(20, ge=1, le=1
     return ApiResponse(data={"media_id": media_id, "results": hits}, meta=ApiMeta(request_id=req_id))
 
 
-@router.post("/clusters/{cluster_assignment_id}/confirm")
+@router.post("/clusters/{cluster_assignment_id}/confirm", dependencies=[Depends(require_cluster_access)])
 async def confirm_cluster(request: Request, cluster_assignment_id: str, body: ConfirmClusterRequest, user=Depends(get_current_user)):
     """Confirm a cluster as a taxon — bulk-creates human observations for members."""
     req_id = getattr(request.state, "request_id", None)
@@ -329,7 +344,7 @@ async def confirm_cluster(request: Request, cluster_assignment_id: str, body: Co
 # ── Embedding lifecycle (Phase 5.5) ──────────────────────────────────
 
 
-@router.get("/embedding-runs/{deployment_id}")
+@router.get("/embedding-runs/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def embedding_runs(request: Request, deployment_id: str, user=Depends(get_current_user)):
     """List embedding runs for a deployment (model version, status, image count)."""
     req_id = getattr(request.state, "request_id", None)
@@ -342,7 +357,7 @@ async def embedding_runs(request: Request, deployment_id: str, user=Depends(get_
     return ApiResponse(data={"runs": runs}, meta=ApiMeta(request_id=req_id))
 
 
-@router.post("/reprocess/deployment/{deployment_id}")
+@router.post("/reprocess/deployment/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def reprocess_deployment_endpoint(request: Request, deployment_id: str, body: ReprocessRequest | None = None, user=Depends(get_verified_user)):
     """Supersede current runs and re-embed a deployment (new embedding_run)."""
     req_id = getattr(request.state, "request_id", None)
@@ -358,7 +373,7 @@ async def reprocess_deployment_endpoint(request: Request, deployment_id: str, bo
     return ApiResponse(data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id}, meta=ApiMeta(request_id=req_id))
 
 
-@router.post("/reprocess/project/{project_id}")
+@router.post("/reprocess/project/{project_id}", dependencies=[Depends(require_project_access)])
 async def reprocess_project_endpoint(request: Request, project_id: str, body: ReprocessRequest | None = None, user=Depends(get_verified_user)):
     """Reprocess all deployments in a project."""
     req_id = getattr(request.state, "request_id", None)
@@ -374,7 +389,7 @@ async def reprocess_project_endpoint(request: Request, project_id: str, body: Re
     return ApiResponse(data={"job_id": job_id, "status": "queued", "project_id": project_id}, meta=ApiMeta(request_id=req_id))
 
 
-@router.post("/reprocess/all")
+@router.post("/reprocess/all", dependencies=[Depends(require_system_admin)])
 async def reprocess_all_endpoint(request: Request, body: ReprocessAllRequest | None = None, user=Depends(get_verified_user)):
     """Platform-wide re-embed. Default dry-run returns a cost estimate; executing requires confirm=true."""
     req_id = getattr(request.state, "request_id", None)
@@ -405,6 +420,18 @@ async def compare_runs_endpoint(request: Request, run_a: str = Query(...), run_b
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
         return _disabled(req_id)
 
+    # Object-level authz: both runs (query params) resolve to a deployment the
+    # caller must be able to access.
+    svc = create_service_client()
+
+    def _run_deployment(run_id: str):
+        resp = svc.table("embedding_runs").select("deployment_id").eq("id", run_id).limit(1).execute()
+        rows = resp.data or []
+        return rows[0]["deployment_id"] if rows else None
+
+    for _rid in (run_a, run_b):
+        await assert_access(user.id, deployment_id=await asyncio.to_thread(_run_deployment, _rid))
+
     from app.domain.embedding_lifecycle import compare_runs
 
     result = await compare_runs(run_a, run_b)
@@ -414,7 +441,7 @@ async def compare_runs_endpoint(request: Request, run_a: str = Query(...), run_b
 # ── Active learning + review queue (Phase 8) ─────────────────────────
 
 
-@router.post("/recalculate-al-scores/{deployment_id}")
+@router.post("/recalculate-al-scores/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def recalculate_al_scores(request: Request, deployment_id: str, user=Depends(get_current_user)):
     """Enqueue an active-learning score recompute for a deployment."""
     req_id = getattr(request.state, "request_id", None)
@@ -431,7 +458,7 @@ async def recalculate_al_scores(request: Request, deployment_id: str, user=Depen
     return ApiResponse(data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id}, meta=ApiMeta(request_id=req_id))
 
 
-@router.get("/review-queue/{deployment_id}")
+@router.get("/review-queue/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def review_queue(request: Request, deployment_id: str, limit: int = Query(50, ge=1, le=200), user=Depends(get_current_user)):
     """Media ranked by active_learning_score DESC, with AI label + score reasons."""
     req_id = getattr(request.state, "request_id", None)
@@ -444,7 +471,7 @@ async def review_queue(request: Request, deployment_id: str, limit: int = Query(
     return ApiResponse(data={"queue": rows, "count": len(rows)}, meta=ApiMeta(request_id=req_id))
 
 
-@router.post("/review/{media_id}")
+@router.post("/review/{media_id}", dependencies=[Depends(require_media_access)])
 async def review_media(request: Request, media_id: str, body: ReviewDecisionRequest, user=Depends(get_current_user)):
     """Record a reviewer decision on one media item (creates a human observation)."""
     req_id = getattr(request.state, "request_id", None)
@@ -481,7 +508,7 @@ async def review_media(request: Request, media_id: str, body: ReviewDecisionRequ
     return ApiResponse(data={"media_id": media_id, "decision": body.decision, "review_status": review_status}, meta=ApiMeta(request_id=req_id))
 
 
-@router.post("/backup")
+@router.post("/backup", dependencies=[Depends(require_system_admin)])
 async def backup_qdrant_endpoint(request: Request, user=Depends(get_current_user)):
     """Enqueue a Qdrant snapshot → private Supabase Storage backup (DR)."""
     req_id = getattr(request.state, "request_id", None)

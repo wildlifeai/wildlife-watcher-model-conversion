@@ -17,12 +17,50 @@ To add a new provider, implement an async function matching the
 ``Resolver`` signature and register it in the ``RESOLVERS`` dict.
 """
 
+import asyncio
+import ipaddress
+import socket
 from typing import Callable, Coroutine, Literal, Optional, Tuple
+from urllib.parse import urlparse
 
 import httpx
 import structlog
 
 logger = structlog.get_logger()
+
+
+async def _is_safe_public_url(url: str) -> bool:
+    """SSRF guard: allow only http(s) URLs whose host resolves to public IPs.
+
+    The media proxy resolves a user-writable ``file_path``, so without this an
+    authenticated user could point it at cloud metadata (169.254.169.254) or an
+    internal service. We reject private/loopback/link-local/reserved/multicast
+    targets up front, and the caller disables redirects so a public host can't
+    bounce to an internal one. (Residual: DNS rebinding between this check and the
+    request — acceptable here; pin the IP if this ever serves higher-risk paths.)
+    """
+    try:
+        parsed = urlparse(url)
+    except Exception:
+        return False
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        return False
+    port = parsed.port or (443 if parsed.scheme == "https" else 80)
+    try:
+        loop = asyncio.get_running_loop()
+        infos = await loop.getaddrinfo(parsed.hostname, port, proto=socket.IPPROTO_TCP)
+    except Exception as exc:
+        logger.warning("media_resolve_dns_failed", host=parsed.hostname, error=str(exc))
+        return False
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            return False
+        if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_reserved or ip.is_multicast or ip.is_unspecified:
+            return False
+    return True
+
 
 # Type alias for image size: thumbnail (grid) or full (detail panel)
 ImageSize = Literal["thumb", "full"]
@@ -36,9 +74,13 @@ Resolver = Callable[[str, ImageSize], Coroutine[None, None, Optional[Tuple[bytes
 
 
 async def _resolve_public_url(url: str, size: ImageSize) -> Optional[Tuple[bytes, str]]:
-    """Fetch an image from a public HTTP(S) URL."""
+    """Fetch an image from a public HTTP(S) URL (SSRF-guarded, no redirects)."""
+    if not await _is_safe_public_url(url):
+        logger.warning("media_resolve_url_blocked", url=url)
+        return None
     try:
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True) as client:
+        # follow_redirects=False so a public host can't 30x-redirect to an internal one.
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=False) as client:
             resp = await client.get(url)
             if resp.status_code != 200:
                 logger.warning("media_resolve_http_error", url=url, status=resp.status_code)

@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import Response
 from pydantic import BaseModel, Field
 
+from app.authz import require_deployment_access, require_media_access
 from app.config import settings
 from app.dependencies import get_current_user, get_user_client
 from app.domain.media_registry import resolve_url, with_resolved_urls
@@ -34,7 +35,7 @@ def _registry_disabled(req_id: str | None) -> ApiResponse:
     )
 
 
-@router.get("/{media_id}/image")
+@router.get("/{media_id}/image", dependencies=[Depends(require_media_access)])
 async def get_media_image(
     media_id: str,
     size: Literal["thumb", "full"] = Query("thumb", description="Image size: thumb (grid) or full (detail)"),
@@ -85,7 +86,7 @@ async def get_media_image(
 # ── Media Registry (Phase 6) ─────────────────────────────────────────
 
 
-@router.get("/{media_id}/resolve")
+@router.get("/{media_id}/resolve", dependencies=[Depends(require_media_access)])
 async def resolve_media_url(
     request: Request,
     media_id: str,
@@ -108,7 +109,7 @@ async def resolve_media_url(
     )
 
 
-@router.get("/registry/{deployment_id}")
+@router.get("/registry/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def media_registry(
     request: Request,
     deployment_id: str,
@@ -139,7 +140,7 @@ async def media_registry(
     )
 
 
-@router.post("/thumbnails/{deployment_id}")
+@router.post("/thumbnails/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def enqueue_thumbnail_backfill(
     request: Request,
     deployment_id: str,

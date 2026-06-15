@@ -48,9 +48,24 @@ def test_openapi_schema_valid(client):
 
 @needs_redis
 def test_job_not_found(client):
-    """GET /api/jobs/{unknown_id} should return 404."""
-    response = client.get("/api/jobs/nonexistent-job-id")
-    assert response.status_code == 404
+    """GET /api/jobs/{unknown_id} should return 404 (for an authenticated caller)."""
+    from types import SimpleNamespace
+
+    from app.dependencies import get_current_user
+    from app.main import app
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="test-user", email="t@ww.ai")
+    try:
+        response = client.get("/api/jobs/nonexistent-job-id")
+        assert response.status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_job_status_requires_auth(client):
+    """GET /api/jobs/{id} must reject unauthenticated callers (was an open IDOR)."""
+    response = client.get("/api/jobs/some-id")
+    assert response.status_code in (401, 403, 422)  # missing/invalid Authorization header
 
 
 @needs_redis

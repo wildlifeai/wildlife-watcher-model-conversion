@@ -96,6 +96,7 @@ class JobInfo(BaseModel):
     """Public representation of a job's full state."""
 
     job_id: str
+    user_id: Optional[str] = Field(None, description="Owner — used to scope status polling to the creator")
     status: JobStatus = JobStatus.QUEUED
     progress: float = Field(0.0, ge=0.0, le=1.0, description="0.0–1.0 weighted progress")
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
