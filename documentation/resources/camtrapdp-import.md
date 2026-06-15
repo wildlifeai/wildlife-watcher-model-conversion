@@ -1,8 +1,8 @@
 # CamtrapDP Import & Seeding
 
 **Version**: v1.0
-**Status**: Active
-**Last Updated**: May 2026
+**Status**: Active (gated by `FF_CAMTRAPDP_IMPORT_ENABLED`, default on)
+**Last Updated**: June 2026
 
 ---
 
@@ -21,12 +21,17 @@ CamtrapDP ZIP (uploaded or downloaded)
    │    └─ Fetch missing taxa via iNaturalist API
    │    └─ Insert into taxa table
    └─ import_package()  → inserts into Supabase
-        ├─ projects     (1 new project)
+        ├─ projects     (1 new project, importing user → project admin)
         ├─ devices      (placeholder per unique cameraID)
-        ├─ deployments  (with CamtrapDP alignment fields)
-        ├─ media        (file references + timestamps)
-        └─ observations (species IDs + classification provenance)
+        ├─ deployments  (CamtrapDP alignment fields + timezone from GPS)
+        ├─ media        (public http(s) URLs stored as-is; zip-embedded images
+        │                queued for Google Drive upload → file_path patched to gdrive://<id>)
+        └─ observations (species IDs + classification provenance, mode-aware)
 ```
+
+The HTTP entrypoint is `POST /api/camtrapdp/import` (multipart: `file` = the `.zip`,
+`annotation_mode` = `final` | `unprocessed`). The importing user's **primary organisation**
+(first `user_roles` org membership) owns the new project.
 
 ### Automated Taxa Registration
 

@@ -301,7 +301,9 @@ async def api_export_camtrapdp(
     """Export deployment data as a CamtrapDP package (async job)."""
     key = await require_api_key(x_api_key, required_scope="export:camtrapdp")
 
-    job_id = await create_job()
+    # API-key (machine) job — no logged-in user, so it isn't tied to a user's
+    # processing history; still stamped with a kind/label for traceability.
+    job_id = await create_job(kind="export", label="CamtrapDP export (API)")
 
     from app.jobs.definitions import export_camtrapdp_job
     from app.jobs.runner import enqueue_local_job

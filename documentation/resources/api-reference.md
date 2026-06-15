@@ -48,905 +48,281 @@ On error:
 - [iNaturalist Integration](#inaturalist-integration)
 - [Image Clustering](#image-clustering)
 - [AI Pipeline](#ai-pipeline)
+- [Media Registry](#media-registry)
+- [Deployments](#deployments)
+- [CamtrapDP Import](#camtrapdp-import)
+- [Wildlife Brain — Embeddings & Clustering](#wildlife-brain--embeddings--clustering)
+- [Conservation Intelligence](#conservation-intelligence)
+- [QA](#qa)
+- [Public Data API (v1)](#public-data-api-v1)
 - [Error Codes](#error-codes)
 
 ---
 
+> Every endpoint returns the standard `ApiResponse` envelope — `{ "data": …, "meta": { "request_id": … } }`
+> on success, or `{ "error": { "code", "message" }, "meta": … }` on failure. The authoritative
+> request/response schemas are always at **`/docs`** (Swagger) / **`/openapi.json`**.
+
 ## System
 
-### `GET /health`
-
-Health probe for Docker/Render/load balancer checks.
-
-**Authentication:** None
-
-**Response:**
-
-```json
-{ "status": "ok" }
-```
-
-**Status Codes:**
-
-| Code | Meaning |
-|------|---------|
-| 200 | Service is healthy |
-
----
-
-### `GET /docs`
-
-Interactive Swagger UI documentation.
-
-### `GET /redoc`
-
-ReDoc-formatted API documentation.
-
-### `GET /openapi.json`
-
-Raw OpenAPI 3.0 specification.
+| Method · Path | Description |
+|---|---|
+| `GET /health` | Health probe → `{ "status": "ok" }` (no auth) |
+| `GET /docs` · `GET /redoc` | Interactive Swagger / ReDoc docs |
+| `GET /openapi.json` | Raw OpenAPI 3.0 spec |
 
 ---
 
 ## Jobs (Async)
 
-Long-running operations (manifest generation, model conversion) return a `job_id` immediately. Poll these endpoints to track progress.
+Long-running operations (manifest, model conversion, pipeline, embedding) return a `job_id`
+immediately; poll these to track progress. Job IDs are unguessable UUIDs (no auth). Prefix `/api/jobs`.
 
-### `GET /api/jobs/{job_id}`
+| Method · Path | Description |
+|---|---|
+| `GET /api/jobs/{job_id}` | Status + `progress`, `current_phase`, ordered `events[]`, `summary` |
+| `GET /api/jobs/{job_id}/result` | Result of a completed job (`result_url`); `409` if not yet complete |
 
-Get the current status of an async job.
-
-**Authentication:** None (job IDs are unguessable UUIDs)
-
-**Path Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `job_id` | string | UUID returned when the job was created |
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "job_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-    "status": "processing",
-    "progress": 0.5,
-    "created_at": "2026-04-12T03:00:00Z",
-    "updated_at": "2026-04-12T03:00:05Z",
-    "result_url": null,
-    "error": null,
-    "message": "📥 Downloading images from Supabase...",
-    "current_phase": "download",
-    "summary": {
-      "total": 38,
-      "downloaded": 10,
-      "uploaded": 0,
-      "skipped": 0,
-      "failed": 0,
-      "current_phase": "download",
-      "started_at": "2026-04-12T03:00:02Z"
-    },
-    "events": [
-      {
-        "type": "progress",
-        "phase": "download",
-        "timestamp": "2026-04-12T03:00:05Z",
-        "message": "Downloaded image 10/38 from Supabase ✓",
-        "seq": 10
-      }
-    ]
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
-**Job Status Values:**
-
-| Status | Description |
-|--------|-------------|
-| `queued` | Job created, waiting for worker to pick up |
-| `processing` | Worker is actively processing the job |
-| `completed` | Done without errors |
-| `completed_with_errors` | Done, but some items (e.g. specific files) failed. Check summary/logs. |
-| `failed` | Complete failure — `error` field has the failure reason |
-
-**Status Codes:**
-
-| Code | Meaning |
-|------|---------|
-| 200 | Job found, status returned |
-| 404 | Job ID not found (expired or invalid) |
-
----
-
-### `GET /api/jobs/{job_id}/result`
-
-Get the result of a completed job.
-
-**Authentication:** None
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "result_url": "https://xxx.supabase.co/storage/v1/object/sign/firmware/temp/..."
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
-**Status Codes:**
-
-| Code | Meaning |
-|------|---------|
-| 200 | Result available |
-| 404 | Job not found, or result expired |
-| 409 | Job is not yet completed |
+**Status values:** `queued` → `processing` → `completed` · `completed_with_errors` (some items failed —
+check `summary`/logs) · `failed` (`error` carries the reason).
 
 ---
 
 ## Manifest Generation
 
-### `POST /api/manifest/generate`
+Build a camera `MANIFEST.zip` firmware package. Async (returns a `job_id`). No auth. Prefix `/api/manifest`.
 
-Generate a MANIFEST.zip firmware package for camera SD card deployment. This is an **async** operation — returns a `job_id` for polling.
+| Method · Path | Description |
+|---|---|
+| `POST /api/manifest/generate` | Body `{ model_source, model_type?, resolution?, sscma_model_id?, org_model_id?, camera_type? }` → `{ job_id, status }` |
 
-**Authentication:** None (public endpoint for firmware downloads)
+- **`model_source`:** `default` (best in DB) · `github` (+ `model_type`, `resolution`) · `sscma` (+ `sscma_model_id`) · `organisation` (+ `org_model_id`).
+- **GitHub models:** Person Detection `96x96`; YOLOv8 Detection `192x192`; YOLOv11 Detection `192x192`/`224x224`; YOLOv8 Pose `256x256`.
+- **`camera_type`:** `Raspberry Pi` (default) · `HM0360`.
 
-**Request Body:**
-
-```json
-{
-  "model_source": "github",
-  "model_type": "YOLOv11 Object Detection",
-  "resolution": "192x192",
-  "camera_type": "Raspberry Pi"
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `model_source` | string | No | `"default"` | Model source type (see below) |
-| `model_type` | string | Conditional | — | Model name (for `github` source) |
-| `resolution` | string | Conditional | — | Resolution (for `github` source) |
-| `sscma_model_id` | string | Conditional | — | SSCMA model ID (for `sscma` source) |
-| `org_model_id` | string | Conditional | — | Supabase ai_models.id (for `organisation` source) |
-| `camera_type` | string | No | `"Raspberry Pi"` | Camera hardware configuration |
-
-**Model Source Options:**
-
-| Source | Description | Required Fields |
-|--------|-------------|-----------------|
-| `default` | Best available model from the database | _(none)_ |
-| `github` | Pre-trained model from GitHub model zoo | `model_type`, `resolution` |
-| `sscma` | Model from SSCMA catalog | `sscma_model_id` |
-| `organisation` | Custom model from your org's uploads | `org_model_id` |
-
-**Available GitHub Models:**
-
-| Model | Resolutions |
-|-------|-------------|
-| `Person Detection` | `96x96` |
-| `YOLOv8 Object Detection` | `192x192` |
-| `YOLOv11 Object Detection` | `192x192`, `224x224` |
-| `YOLOv8 Pose Estimation` | `256x256` |
-
-**Camera Types:**
-
-| Type | Description |
-|------|-------------|
-| `Raspberry Pi` | Standard RPi camera (v1/v2/v3) |
-| `HM0360` | Himax HM0360 motion sensor |
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "job_id": "a1b2c3d4-...",
-    "status": "queued"
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
-**Example — Download Workflow:**
-
-```bash
-# 1. Submit generation request
-curl -X POST http://localhost:8000/api/manifest/generate \
-  -H "Content-Type: application/json" \
-  -d '{"model_source": "github", "model_type": "YOLOv11 Object Detection", "resolution": "192x192"}'
-# → {"data": {"job_id": "abc-123", "status": "queued"}, ...}
-
-# 2. Poll for completion
-curl http://localhost:8000/api/jobs/abc-123
-# → {"data": {"status": "processing", "progress": 0.5, ...}, ...}
-
-# 3. Get result
-curl http://localhost:8000/api/jobs/abc-123
-# → {"data": {"status": "completed", "result_url": "https://...", ...}, ...}
-
-# 4. Download MANIFEST.zip from result_url
-curl -o MANIFEST.zip "https://xxx.supabase.co/storage/v1/..."
-```
+> **Async pattern** (all job-returning endpoints): `POST …` → `{ job_id }`, then poll
+> `GET /api/jobs/{job_id}` until `completed`, then download from its `result_url`.
 
 ---
 
 ## Model Conversion
 
-> See [AI Model Pipeline](./ai-model-pipeline.md) for full architecture documentation.
+Edge Impulse → Vela (Ethos-U55) conversion + registration. Async. `multipart/form-data` for uploads.
+Architecture: [AI Model Pipeline](./ai-model-pipeline.md). Prefix `/api/models`.
 
-### `POST /api/models/convert`
-
-Upload and convert a model file for Ethos-U55 deployment. This is an **async** operation — returns a `job_id` for polling.
-
-**Authentication:** Required (JWT Bearer token). User must have `organisation_manager` role.
-
-**Content-Type:** `multipart/form-data`
-
-**Parameters:**
-
-| Field | Type | Max Size | Description |
-|-------|------|----------|-------------|
-| `file` | binary | 50 MB | Model file (`.zip`, `.tflite`, or `.cc`) |
-| `model_name` | string | — | Display name for the model (used for family grouping and versioning) |
-| `description` | string | — | Optional description |
-| `organisation_id` | string | — | Optional org UUID (auto-resolved if user manages only one) |
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "job_id": "def-456",
-    "model_id": "abc-789",
-    "status": "queued"
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
-**Status Codes:**
-
-| Code | Meaning |
-|------|---------|
-| 200 | Job enqueued successfully |
-| 400 | Invalid file type or corrupt file |
-| 401 | Not authenticated |
-| 403 | User is not an organisation manager |
-| 413 | File exceeds 50 MB limit |
-
----
-
-### `POST /api/models/pretrained`
-
-Download, package, and register a pre-trained model. Supports both GitHub Zoo and SSCMA sources. This is an **async** operation.
-
-**Authentication:** Required (JWT Bearer token). User must have `organisation_manager` role.
-
-**Request Body:**
-
-```json
-{
-  "source_type": "pretrained",
-  "architecture": "Person Detection",
-  "resolution": "96x96",
-  "description": "Optional description",
-  "organisation_id": "b0000000-..."
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `source_type` | string | Yes | `"pretrained"` (GitHub Zoo) or `"sscma"` (SenseCap Zoo) |
-| `architecture` | string | For `pretrained` | Model architecture name |
-| `resolution` | string | For `pretrained` | Input resolution (e.g. "96x96") |
-| `sscma_uuid` | string | For `sscma` | UUID from the SSCMA catalog |
-| `model_name` | string | For `sscma` | Display name |
-| `description` | string | No | Optional description |
-| `organisation_id` | string | No | Org UUID (auto-resolved if only one) |
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "job_id": "ghi-012",
-    "status": "queued"
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
----
-
-### `GET /api/models/pretrained/catalog`
-
-Return the built-in pretrained model registry. Used by the frontend to dynamically render architecture/resolution dropdowns.
-
-**Authentication:** None
-
-**Response (200):**
-
-```json
-{
-  "data": [
-    {
-      "architecture": "Person Detection",
-      "firmware_model_id": 20,
-      "resolutions": ["96x96"],
-      "labels": ["no person", "person"]
-    },
-    {
-      "architecture": "YOLOv11 Object Detection",
-      "firmware_model_id": 1,
-      "resolutions": ["192x192", "224x224"],
-      "labels": ["object"]
-    }
-  ],
-  "meta": { "request_id": "..." }
-}
-```
-
----
-
-### `GET /api/models/sscma/catalog`
-
-Get the SSCMA (Seeed Studio Model Assistant) model catalog. Results are cached for 1 hour.
-
-**Authentication:** None
-
-**Response (200):**
-
-```json
-{
-  "data": [
-    {
-      "name": "YOLOv8n Detection",
-      "uuid": "...",
-      "description": "...",
-      "task": "detection"
-    }
-  ],
-  "meta": { "request_id": "..." }
-}
-```
-
----
-
-### `GET /api/models/managed-orgs`
-
-List organisations where the current user has the `organisation_manager` role. Used by the Upload Model form to populate the organisation selector.
-
-**Authentication:** Required (JWT Bearer token)
-
-**Response (200):**
-
-```json
-{
-  "data": [
-    { "id": "b0000000-...", "name": "Wildlife AI" }
-  ],
-  "meta": { "request_id": "..." }
-}
-```
+| Method · Path | Auth | Description |
+|---|---|---|
+| `POST /api/models/convert` | JWT · org-manager | Upload + convert a model file (`.zip`/`.tflite`/`.cc`, ≤50 MB) — form `file`, `model_name`, `description?`, `organisation_id?` → `{ job_id, model_id }` |
+| `POST /api/models/pretrained` | JWT · org-manager | Download + register a zoo model — body `{ source_type: "pretrained"\|"sscma", architecture?, resolution?, sscma_uuid?, model_name?, … }` |
+| `GET /api/models/pretrained/catalog` | None | Built-in pretrained registry (architectures, resolutions, labels) |
+| `GET /api/models/sscma/catalog` | None | SSCMA model catalog (cached 1 h) |
+| `GET /api/models/managed-orgs` | JWT | Orgs where the user is `organisation_manager` |
 
 ---
 
 ## EXIF Parsing
 
-### `POST /api/exif/parse`
+Parse EXIF from uploaded JPEGs (sync). No auth. `multipart/form-data`. Prefix `/api/exif`. Drives the
+image-upload pipeline — see [03-DATA-AND-SYNC](../onboarding/03-DATA-AND-SYNC.md).
 
-Parse EXIF metadata from uploaded JPEG images. Extracts standard fields (DateTime, GPS) and custom Wildlife Watcher firmware tags (deployment ID). This is a **sync** (immediate response) operation.
+| Method · Path | Description |
+|---|---|
+| `POST /api/exif/parse` | Form `files[]` (+ optional `paths[]`, `upload_to_drive`) → per-file parsed EXIF; optionally buffers bytes to Azure and enqueues the Drive upload job |
 
-**Authentication:** None
-
-**Content-Type:** `multipart/form-data`
-
-**Parameters:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `files` | binary[] | One or more JPEG files |
-
-**Response (200):**
-
-```json
-{
-  "data": [
-    {
-      "filename": "IMG_0001.jpg",
-      "exif": {
-        "DateTime": "2026:04:12 10:30:00",
-        "Datetime_Original": "2026:04:12 10:30:00",
-        "latitude": -36.848461,
-        "longitude": 174.763336,
-        "GPS_Altitude": 42.5,
-        "deployment_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-        "date": "2026:04:12 10:30:00"
-      }
-    }
-  ],
-  "meta": { "request_id": "..." }
-}
-```
-
-**Extracted Fields:**
-
-| Field | Source | Description |
-|-------|--------|-------------|
-| `DateTime` | EXIF tag 0x0132 | Camera date/time |
-| `Datetime_Original` | EXIF tag 0x9003 | Original capture time |
-| `latitude` | GPS tags | Decimal degrees (computed from DMS) |
-| `longitude` | GPS tags | Decimal degrees |
-| `GPS_Altitude` | GPS tag 0x0006 | Altitude in meters |
-| `deployment_id` | Custom tags | UUID extracted from firmware EXIF (tag 0xF200, UserComment, or Custom_Data) |
-| `date` | Normalised | First available: Original > Create > DateTime |
-
-**Example:**
-
-```bash
-curl -X POST http://localhost:8000/api/exif/parse \
-  -F "files=@IMG_0001.jpg" \
-  -F "files=@IMG_0002.jpg"
-```
+**Key extracted fields:** `deployment_id` (firmware tag `0xF200` → `UserComment` → `Custom_Data`),
+`latitude`/`longitude` (GPS DMS→decimal), `date` (Original → Create → DateTime), `Make`/`Model`,
+and `temperature_c`/`battery_pct` (parsed from `UserComment` telemetry). The full set lands in
+`media.exif_metadata`.
 
 ---
 
 ## LoRaWAN Webhooks
 
-Endpoints for receiving real-time device uplinks from LoRaWAN network servers.
+Receive device uplinks from LoRaWAN network servers. Webhooks authenticate with the
+**`X-Webhook-Secret`** header (`LORAWAN_TTN_WEBHOOK_SECRET` / `LORAWAN_CHIRPSTACK_WEBHOOK_SECRET` /
+`LORAWAN_WEBHOOK_SECRET`); query endpoints use JWT. Gated by `FF_LORAWAN_WEBHOOKS_ENABLED`. Prefix
+`/api/lorawan`. Payload formats + network-server config: [LoRaWAN Webhook Setup](./lorawan-webhook-setup.md).
 
-### `POST /api/lorawan/webhook/ttn`
-
-Receive a TTN (The Things Network) v3 uplink webhook.
-
-**Authentication:** `X-Webhook-Secret` header (must match `LORAWAN_TTN_WEBHOOK_SECRET` or `LORAWAN_WEBHOOK_SECRET` env var)
-
-**Request Body:** TTN v3 uplink format:
-
-```json
-{
-  "end_device_ids": {
-    "device_id": "ww-camera-01",
-    "dev_eui": "0004A30B001F9ACB",
-    "application_ids": {
-      "application_id": "wildlife-watcher"
-    }
-  },
-  "uplink_message": {
-    "frm_payload": "S0o=",
-    "f_port": 1,
-    "rx_metadata": [...]
-  },
-  "received_at": "2026-04-12T03:00:00Z"
-}
-```
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "device_eui": "0004A30B001F9ACB",
-    "battery_level": 75.0,
-    "sd_card_used_capacity": 42.0,
-    "model_output": { "detection": "person", "confidence": 0.95 },
-    "raw_payload_hex": "4b2a7b226465746563...",
-    "received_at": "2026-04-12T03:00:00Z"
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
-**Status Codes:**
-
-| Code | Meaning |
-|------|---------|
-| 200 | Uplink processed and stored |
-| 401 | Invalid webhook secret |
-| 422 | Invalid payload format |
-
----
-
-### `POST /api/lorawan/webhook/chirpstack`
-
-Receive a Chirpstack v4 uplink webhook.
-
-**Authentication:** `X-Webhook-Secret` header
-
-**Request Body:** Chirpstack v4 HTTP integration format:
-
-```json
-{
-  "deviceInfo": {
-    "devEui": "0004A30B001F9ACB",
-    "deviceName": "ww-camera-01",
-    "applicationId": "app-123"
-  },
-  "data": "S0o=",
-  "fPort": 1,
-  "time": "2026-04-12T03:00:00Z"
-}
-```
-
----
-
-### `GET /api/lorawan/messages`
-
-List LoRaWAN messages for the authenticated user's organisation.
-
-**Authentication:** Required (JWT Bearer token)
-
-**Response (200):**
-
-```json
-{
-  "data": [],
-  "meta": { "request_id": "..." }
-}
-```
-
-> Note: Currently returns empty array. Full implementation with RLS-scoped queries coming in Phase 2.
-
----
-
-### `GET /api/lorawan/messages/{device_eui}/latest`
-
-Get the latest parsed message for a specific device.
-
-**Authentication:** Required (JWT Bearer token)
-
-**Path Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `device_eui` | string | LoRaWAN Device EUI (16 hex chars) |
+| Method · Path | Auth | Description |
+|---|---|---|
+| `POST /api/lorawan/webhook/ttn` | `X-Webhook-Secret` | TTN v3 uplink → parsed battery / SD-card / model-output |
+| `POST /api/lorawan/webhook/chirpstack` | `X-Webhook-Secret` | Chirpstack v4 uplink |
+| `GET /api/lorawan/messages` | JWT | Org-scoped parsed-message list |
+| `GET /api/lorawan/messages/{device_eui}/latest` | JWT | Latest parsed message for a device EUI |
 
 ---
 
 ## iNaturalist Integration
 
-> Gated behind the `FF_INAT_ENABLED` feature flag. All endpoints return 404 when disabled.
+OAuth connect + observation publish/poll. Gated by `FF_INAT_ENABLED` (404 when off). JWT unless noted.
+Prefix `/api/inat`. The Annotations bulk "Upload to iNaturalist" / "Sync IDs" flows build on these —
+see [05-ANNOTATION-WORKFLOW](../onboarding/05-ANNOTATION-WORKFLOW.md).
 
-### `GET /api/inat/auth`
-
-Start the iNaturalist OAuth flow. Returns an authorization URL for redirecting the user.
-
-**Authentication:** Required (JWT Bearer token)
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "authorization_url": "https://www.inaturalist.org/oauth/authorize?client_id=...&state=...",
-    "state": "abc123"
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
----
-
-### `GET /api/inat/callback`
-
-Handle the OAuth redirect from iNaturalist. Exchanges the authorization code for tokens, stores them encrypted in Supabase, and redirects the user back to the frontend.
-
-**Authentication:** None (state param validates the request)
-
-**Query Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `code` | string | Authorization code from iNaturalist |
-| `state` | string | CSRF state token (must match the one from `/auth`) |
-
-**Response:** 302 redirect to `{frontend_url}/toolkit?inat=connected`
-
----
-
-### `GET /api/inat/status`
-
-Check if the current user is connected to iNaturalist.
-
-**Authentication:** Required (JWT Bearer token)
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "connected": true,
-    "inat_username": "wildlife_user",
-    "inat_user_id": 12345,
-    "inat_icon_url": "https://static.inaturalist.org/..."
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
----
-
-### `POST /api/inat/disconnect`
-
-Revoke stored iNaturalist tokens and disconnect the user.
-
-**Authentication:** Required (JWT Bearer token)
-
-**Response (200):**
-
-```json
-{
-  "data": { "disconnected": true },
-  "meta": { "request_id": "..." }
-}
-```
-
----
-
-### `POST /api/inat/observations`
-
-Create an iNaturalist observation using the user's stored OAuth token.
-
-**Authentication:** Required (JWT Bearer token)
-
-**Request Body:**
-
-```json
-{
-  "species_guess": "Kiwi",
-  "latitude": -36.848,
-  "longitude": 174.763,
-  "observed_on": "2026-04-12",
-  "description": "Captured by Wildlife Watcher camera trap",
-  "geoprivacy": "obscured"
-}
-```
-
----
-
-### `GET /api/inat/observations/{observation_id}/status`
-
-Poll identification status for a specific iNaturalist observation. Public endpoint — no auth required.
-
----
-
-### `POST /api/inat/observations/poll`
-
-Batch poll identification status for up to 200 observation IDs.
-
-**Request Body:**
-
-```json
-{
-  "observation_ids": [123, 456, 789]
-}
-```
+| Method · Path | Auth | Description |
+|---|---|---|
+| `GET /api/inat/auth` | JWT | Start OAuth → `{ authorization_url, state }` |
+| `GET /api/inat/callback` | None (state) | OAuth redirect handler → stores tokens, 302 to `/toolkit?inat=connected` |
+| `GET /api/inat/status` | JWT | Connection status (`connected`, `inat_username`, …) |
+| `POST /api/inat/disconnect` | JWT | Revoke stored tokens |
+| `POST /api/inat/observations` | JWT | Create an observation — body `{ species_guess, latitude, longitude, observed_on, geoprivacy?, … }` |
+| `GET /api/inat/observations/{observation_id}/status` | None | Identification status for one observation |
+| `POST /api/inat/observations/poll` | JWT | Batch status for ≤200 observation ids (`{ observation_ids: [...] }`) |
 
 ---
 
 ## Image Clustering
 
-Near-duplicate detection for camera trap images using perceptual hashing (dHash) with BK-tree indexing.
+Near-duplicate detection via perceptual hashing (dHash + BK-tree). No auth. `multipart/form-data`.
+≤1000 images/request. Prefix `/api/clustering`.
 
-### `POST /api/clustering/analyze`
+> **Legacy** — this is pixel near-duplicate grouping. For semantic DINOv3 clustering (what the
+> Annotations *Group by → Cluster* uses), see [Wildlife Brain](#wildlife-brain--embeddings--clustering).
 
-Cluster uploaded images by visual similarity and select representative images.
-
-**Authentication:** None
-
-**Content-Type:** `multipart/form-data`
-
-**Parameters:**
-
-| Field | Type | Description |
-|-------|------|-------------|
-| `files` | binary[] | One or more image files (JPEG, PNG, WebP) |
-| `max_hamming` | int | Similarity threshold (0–20). Lower = stricter. Default 10. |
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "total_images": 100,
-    "total_clusters": 25,
-    "total_representatives": 25,
-    "clusters": [
-      {
-        "cluster_id": 0,
-        "size": 8,
-        "representative": "IMG_0042.jpg",
-        "members": [
-          {
-            "filename": "IMG_0042.jpg",
-            "sharpness": 1523.4,
-            "width": 1920,
-            "height": 1080,
-            "is_representative": true
-          }
-        ]
-      }
-    ]
-  },
-  "meta": { "request_id": "..." }
-}
-```
-
-**Limits:** Maximum 1000 images per request.
-
----
-
-### `POST /api/clustering/analyze/csv`
-
-Same clustering logic, but returns results as a downloadable CSV file.
-
-**Content-Type:** `multipart/form-data`
-
-**Parameters:** Same as `/api/clustering/analyze`
-
-**Response:** `text/csv` file with columns: `filename`, `cluster_id`, `cluster_size`, `is_representative`, `sharpness`, `width`, `height`
-
----
+| Method · Path | Description |
+|---|---|
+| `POST /api/clustering/analyze` | Form `files[]`, `max_hamming?` (0–20, default 10) → clusters + representatives |
+| `POST /api/clustering/analyze/csv` | Same logic; returns a `text/csv` download |
 
 ---
 
 ## AI Pipeline
 
-> Gated behind the `FF_PIPELINE_ENABLED` feature flag. All endpoints return 404 when disabled.
+Run inference + ecological event/effort computation on a deployment. Gated by `FF_PIPELINE_ENABLED`
+(404 when off). JWT required. Prefix `/api/pipeline`. Architecture:
+[04-AI-PIPELINE](../onboarding/04-AI-PIPELINE.md).
 
-### `POST /api/pipeline/run`
+| Method · Path | Description |
+|---|---|
+| `POST /api/pipeline/run` | Run the pipeline — body `{ deployment_id, steps?, confidence_threshold?, config?, only_unannotated? }`. Steps: `media_prep`, `speciesnet`, `animal_crop`, `bioclip`. Returns per-step + aggregate counts and records an `annotation_run` |
+| `POST /api/pipeline/events/cluster` | Group observations into ecological events by temporal gap — body `{ deployment_id, gap_minutes?, min_images? }` |
+| `POST /api/pipeline/effort/{deployment_id}` | Compute + store effort (trap-nights, uptime, false-trigger rate) |
+| `GET /api/pipeline/effort/{deployment_id}` | Retrieve cached effort stats |
 
-Run an AI inference pipeline on a deployment's media. Executes detection and/or classification steps sequentially.
-
-**Authentication:** Required (JWT Bearer token)
-
-**Request Body:**
-
-```json
-{
-  "deployment_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "steps": ["megadetector"],
-  "confidence_threshold": 0.2,
-  "config": {}
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `deployment_id` | string | Yes | — | UUID of the target deployment |
-| `steps` | string[] | No | `["megadetector"]` | Ordered pipeline steps: `megadetector`, `species_classifier`, `empty_frame`, `custom` |
-| `confidence_threshold` | float | No | `0.2` | Minimum confidence to retain detections (0.0–1.0) |
-| `config` | object | No | `{}` | Step-specific configuration overrides |
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "deployment_id": "a1b2c3d4-...",
-    "annotation_run_id": "def-456",
-    "steps": [
-      {
-        "step": "megadetector",
-        "observations_created": 150,
-        "media_processed": 200,
-        "errors": 0,
-        "duration_seconds": 12.5,
-        "model_version": "MDv6-stub"
-      }
-    ],
-    "total_media": 200,
-    "total_observations": 150,
-    "duration_seconds": 12.5
-  },
-  "meta": { "request_id": "..." }
-}
-```
+> The pipeline also runs **automatically after upload** (`auto_annotate_deployments`) — the endpoints
+> above are the manual trigger. Step set + auto-run details: [04-AI-PIPELINE](../onboarding/04-AI-PIPELINE.md).
 
 ---
 
-### `POST /api/pipeline/events/cluster`
+## Media Registry
 
-Cluster observations into ecological events using temporal gap analysis.
+Image rendition resolution, thumbnails/crops, and bulk media operations. JWT required; the rendition
+endpoints are gated by `FF_MEDIA_REGISTRY_ENABLED`. All return the standard `ApiResponse` envelope.
 
-**Authentication:** Required (JWT Bearer token)
-
-**Request Body:**
-
-```json
-{
-  "deployment_id": "a1b2c3d4-e5f6-7890-abcd-ef1234567890",
-  "gap_minutes": 30,
-  "min_images": 1
-}
-```
-
-**Parameters:**
-
-| Field | Type | Required | Default | Description |
-|-------|------|----------|---------|-------------|
-| `deployment_id` | string | Yes | — | UUID of the deployment to cluster |
-| `gap_minutes` | int | No | `30` | Temporal gap threshold (1–1440 minutes) |
-| `min_images` | int | No | `1` | Minimum media count per valid event |
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "deployment_id": "a1b2c3d4-...",
-    "events_created": 15,
-    "observations_linked": 45,
-    "events": [
-      {
-        "id": "evt-789",
-        "deployment_id": "a1b2c3d4-...",
-        "taxon_id": "txn-001",
-        "scientific_name": "Apteryx mantelli",
-        "start_time": "2026-04-12T22:30:00Z",
-        "end_time": "2026-04-12T22:45:00Z",
-        "event_duration_seconds": 900,
-        "media_count": 3,
-        "review_status": "ai_reviewed",
-        "confidence": 0.85
-      }
-    ]
-  },
-  "meta": { "request_id": "..." }
-}
-```
+| Method · Path | Description |
+|---|---|
+| `GET /api/media/{media_id}/image` | Serve/proxy a media image (`?size=thumb\|full`); resolves public files / signed URLs |
+| `GET /api/media/{media_id}/resolve` | Resolve a media id to a displayable URL (rendition or signed original) |
+| `GET /api/media/registry/{deployment_id}` | Rendition status for a deployment's media |
+| `POST /api/media/thumbnails/{deployment_id}` | Enqueue a thumbnail/preview backfill (async job) |
+| `DELETE /api/media/batch` | Soft-delete media by id list — body `{ "media_ids": [...] }` |
+| `POST /api/media/run-selected` | Run the AI pipeline on a media subset — body `{ "media_ids": [...], "steps": [...] }` |
 
 ---
 
-### `POST /api/pipeline/effort/{deployment_id}`
+## Deployments
 
-Compute and store effort statistics (trap nights, camera uptime, false trigger rate) for a deployment.
+Deployment helpers used by the upload flow. JWT required. Prefix `/api/deployments`.
 
-**Authentication:** Required (JWT Bearer token)
-
-**Path Parameters:**
-
-| Parameter | Type | Description |
-|-----------|------|-------------|
-| `deployment_id` | string | UUID of the deployment |
-
-**Response (200):**
-
-```json
-{
-  "data": {
-    "deployment_id": "a1b2c3d4-...",
-    "trap_nights": 14.5,
-    "camera_uptime_hours": 348.0,
-    "total_events": 42,
-    "total_media": 1200,
-    "false_trigger_rate": 0.12,
-    "computed_at": "2026-04-12T03:00:00Z"
-  },
-  "meta": { "request_id": "..." }
-}
-```
+| Method · Path | Description |
+|---|---|
+| `POST /api/deployments/validate` | Resolve folder-prefix deployment ids to `valid` / `no_access` / `not_found` — the upload pre-check that drives the warning banners. Body `{ "deployment_ids": ["7785FABB", …] }` |
+| `POST /api/deployments/backfill-timezones` | Derive `deployments.timezone` from GPS for rows missing it (idempotent) |
 
 ---
 
-### `GET /api/pipeline/effort/{deployment_id}`
+## CamtrapDP Import
 
-Retrieve cached effort statistics from the `deployment_effort` table.
+Prefix `/api/camtrapdp`. Gated by `FF_CAMTRAPDP_IMPORT_ENABLED`.
 
-**Authentication:** Required (JWT Bearer token)
+| Method · Path | Description |
+|---|---|
+| `POST /api/camtrapdp/import` | Import a CamtrapDP `.zip` (multipart `file`) → creates deployments + media + observations |
 
-**Response (200):** Same format as `POST` response above.
+> Public-API export of CamtrapDP is `POST /api/v1/export/camtrapdp` (see [Public Data API](#public-data-api-v1)).
+
+---
+
+## Wildlife Brain — Embeddings & Clustering
+
+DINOv3 embeddings → UMAP → HDBSCAN clustering → Qdrant similarity, and the active-learning review
+queue. JWT required; gated by **`FF_WILDLIFE_BRAIN_ENABLED`** (returns `FEATURE_DISABLED` when off).
+Prefix `/api/brain`. Architecture: [04-AI-PIPELINE](../onboarding/04-AI-PIPELINE.md).
+
+> Distinct from [Image Clustering](#image-clustering) (`/api/clustering`), which is the legacy
+> perceptual-hash near-duplicate grouping. `/api/brain` is the semantic DINOv3 clustering the
+> Annotations grid's *Group by → Cluster* uses.
+
+| Method · Path | Description |
+|---|---|
+| `POST /api/brain/embed/{deployment_id}` | Embed + cluster a deployment (server mode enqueues a GPU job) |
+| `GET /api/brain/clusters/{deployment_id}` | Clusters from the deployment's latest embedding run |
+| `POST /api/brain/clusters/multi` | Aggregate clusters across deployments — body `{ "deployment_ids": [...], "min_confidence": 0 }`; returns `clusters`, `media_clusters` (media→cluster map), `outlier_media_ids` |
+| `GET /api/brain/umap/{deployment_id}` | Persisted 2-D UMAP scatter coordinates |
+| `GET /api/brain/outliers/{deployment_id}` | HDBSCAN-rejected images (expert-review candidates) |
+| `GET /api/brain/similar/{media_id}` | Qdrant nearest-neighbour search (`?n=20&org_scoped=true`) |
+| `POST /api/brain/clusters/{cluster_assignment_id}/confirm` | Confirm a cluster as a taxon → bulk-creates human observations for its members |
+| `GET /api/brain/embedding-runs/{deployment_id}` | List embedding runs (model version, status, image count) |
+| `POST /api/brain/reprocess/deployment/{deployment_id}` | Supersede current runs and re-embed a deployment |
+| `POST /api/brain/reprocess/project/{project_id}` | Reprocess every deployment in a project |
+| `POST /api/brain/reprocess/all` | Platform-wide re-embed — default dry-run returns a cost estimate; `confirm=true` executes |
+| `GET /api/brain/compare-runs` | Compare cluster assignments between two runs (`?run_a=&run_b=`) |
+| `POST /api/brain/backup` | Enqueue a Qdrant snapshot → private Supabase Storage (disaster recovery) |
+
+### Active Learning & Review
+
+Same prefix; the queue/score endpoints are additionally gated by **`FF_ACTIVE_LEARNING_ENABLED`**.
+
+| Method · Path | Description |
+|---|---|
+| `POST /api/brain/recalculate-al-scores/{deployment_id}` | Recompute active-learning scores for a deployment |
+| `GET /api/brain/review-queue/{deployment_id}` | Media ranked by `active_learning_score` DESC with AI label + score reasons (`?limit=50`) |
+| `POST /api/brain/review/{media_id}` | Record a reviewer decision (`approve` / `reassign` / `expert`) → human observation |
+
+---
+
+## Conservation Intelligence
+
+Dataset health, alerts, and ecological summaries. JWT required; gated by **`FF_INTELLIGENCE_ENABLED`**.
+Prefix `/api/intelligence`.
+
+| Method · Path | Description |
+|---|---|
+| `POST /api/intelligence/shift-detection/{deployment_id}` | Detect distribution shift between two time windows |
+| `GET /api/intelligence/health/{project_id}` | Dataset health: species coverage, review funnel, outlier rate |
+| `GET /api/intelligence/alerts/{project_id}` | Active (unacknowledged) conservation alerts |
+| `GET /api/intelligence/unknown-species/{org_id}` | Provisional taxa awaiting expert confirmation |
+| `GET /api/intelligence/occupancy/{project_id}` | Species-assemblage overlap (Jaccard) between deployments |
+| `GET /api/intelligence/accumulation/{deployment_id}` | Species accumulation curve over time |
+
+---
+
+## QA
+
+Prefix `/api/qa`. JWT required.
+
+| Method · Path | Description |
+|---|---|
+| `GET /api/qa/report/{deployment_id}` | AI-vs-human agreement (a precision proxy over images carrying both an AI and a human label) |
+
+---
+
+## Public Data API (v1)
+
+Token-authenticated **read** API for external integrations. Data endpoints authenticate with an
+**`X-API-Key`** header (not the JWT) carrying a `<resource>:read` scope; the key-management endpoints
+use the normal JWT. Gated by **`FF_PUBLIC_API_ENABLED`**. Prefix `/api/v1`.
+
+| Method · Path | Auth | Description |
+|---|---|---|
+| `POST /api/v1/api-keys` | JWT | Create an API key (the secret is returned **once**) |
+| `GET /api/v1/api-keys` | JWT | List your API keys (metadata only, no secrets) |
+| `DELETE /api/v1/api-keys/{key_id}` | JWT | Revoke an API key |
+| `GET /api/v1/deployments` | `X-API-Key` · `deployments:read` | List deployments (filter `?project_id=&status=&limit=&offset=`) |
+| `GET /api/v1/deployments/{deployment_id}` | `X-API-Key` · `deployments:read` | Deployment detail |
+| `GET /api/v1/devices` | `X-API-Key` · `devices:read` | List devices |
+| `GET /api/v1/devices/{device_eui}/telemetry` | `X-API-Key` · `telemetry:read` | Device LoRaWAN telemetry |
+| `GET /api/v1/observations` | `X-API-Key` · `observations:read` | List observations (filterable) |
+| `POST /api/v1/export/camtrapdp` | `X-API-Key` · `export:camtrapdp` | Export a CamtrapDP package |
 
 ---
 

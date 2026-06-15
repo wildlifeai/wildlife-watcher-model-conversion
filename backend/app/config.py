@@ -76,6 +76,21 @@ class Settings(BaseSettings):
     FF_INTELLIGENCE_ENABLED: bool = Field(False, description="Enable conservation intelligence endpoints (health, alerts, shift)")
     FF_LOCAL_EMBEDDING_ENABLED: bool = Field(False, description="Accept client-computed (WebGPU) embedding vectors")
 
+    # ── Motion ROI (SpeciesNet-free crop fallback) ───────────────────
+    FF_MOTION_ROI_FALLBACK_ENABLED: bool = Field(
+        False,
+        description=(
+            "In the Animal Crop step, when SpeciesNet produced no detection bbox for a frame, crop a "
+            "pure-numpy/Pillow motion ROI computed across the frame's burst so DINOv3 still gets an "
+            "animal region. No ML — works on the lean dev-cloud image where SpeciesNet is unavailable."
+        ),
+    )
+    MOTION_ROI_BURST_GAP_SECONDS: float = Field(
+        10.0,
+        ge=0.0,
+        description="Max seconds between consecutive frames to treat them as one motion burst for ROI cropping",
+    )
+
     # ── Qdrant (vector store) ─────────────────────────────────────────
     QDRANT_URL: str = Field("http://qdrant:6333", description="Qdrant service URL (Docker network)")
     QDRANT_API_KEY: str = Field("", description="Qdrant API key (empty for local/self-hosted)")
@@ -108,6 +123,16 @@ class Settings(BaseSettings):
         description="Path to service account JSON file, or inline JSON string",
     )
     GOOGLE_DRIVE_MAX_FILE_SIZE_MB: int = Field(50, description="Max file size in MB accepted for Drive upload")
+    MAX_UPLOAD_IMAGES_PER_REQUEST: int = Field(
+        500, ge=1, description="Max images an authenticated user may submit in one /api/exif/parse call (anti-abuse)"
+    )
+
+    # ── BMP ingest (raw device frames → JPEG in the upload pipeline) ───
+    FF_BMP_INGEST_ENABLED: bool = Field(
+        False,
+        description="Accept raw BMP frames on upload, re-compressing them to JPEG in-pipeline. When off, BMP files are ignored (not stored).",
+    )
+    BMP_JPEG_QUALITY: int = Field(90, ge=1, le=100, description="JPEG quality for re-compressed BMP frames")
 
     # ── Azure Storage (Temporary Image Buffer) ────────────────────────
     AZURE_STORAGE_CONNECTION_STRING: str = Field("", description="Azure Storage Account connection string for blob buffering")

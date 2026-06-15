@@ -97,6 +97,8 @@ export function useConfirmCluster(deploymentId?: string) {
 
 export interface MultiClusterResult {
   clusters: (ClusterAssignment & { model_name?: string })[]
+  /** media_id → cluster_id for non-outlier members (drives grid grouping). */
+  media_clusters: Record<string, number>
   outlier_media_ids: string[]
   model_groups: { model_name: string; deployment_ids: string[] }[]
 }

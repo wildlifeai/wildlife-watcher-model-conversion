@@ -36,19 +36,19 @@ The seed data covers four distinct permission levels. Each level unlocks differe
 | **Organisation Manager** | `kowhai@ww.org`, `tama@ww.org` | View/edit org details. Add/remove org members. Create projects. **Upload Model** page visible. |
 | **Project Admin** | `moana@ww.org`, `ariki@ww.org` | Edit project details. Add/remove project members. Manage deployments within assigned projects. |
 | **Project Member** | `rata@ww.org`, `ngaio@ww.org` | View-only access to assigned projects and their deployments, media, and observations. |
-| **Unassigned Member** | `hemi@ww.org`, `ria@ww.org` | Authenticated but no project assignments — sees empty My Data. |
+| **Unassigned Member** | `hemi@ww.org`, `ria@ww.org` | Authenticated but no project assignments — sees empty Insights. |
 
 ### Feature Visibility by Role
 
 | Website Feature | Platform Admin | Org Manager | Project Admin | Project Member | Unassigned |
 |----------------|:-:|:-:|:-:|:-:|:-:|
 | **Login / Logout** | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **My Data → Projects tab** | All projects | Org projects | Assigned projects | Assigned projects | Empty |
-| **My Data → Deployments tab** | All | Org deployments | Project deployments | Project deployments | Empty |
-| **My Data → Map tab** | All locations | Org locations | Project locations | Project locations | Empty |
-| **My Data → Reports tab** | All | Org data | Project data | Project data | Empty |
-| **My Data → CamtrapDP Import** | ✓ | ✓ | ✓ | ✓ | ✓ |
-| **Analyse Images** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Project selector** (accessible projects) | All projects | Org projects | Assigned projects | Assigned projects | Empty |
+| **Insights → Deployments tab** | All | Org deployments | Project deployments | Project deployments | Empty |
+| **Insights → Deployments → Map view** | All locations | Org locations | Project locations | Project locations | Empty |
+| **Insights → Reports tab** | All | Org data | Project data | Project data | Empty |
+| **Toolkit → CamtrapDP Import** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **Toolkit → Analyse Images** | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **Prepare SD Card (Manifest)** | ✓ | ✓ | ✓ | ✓ | ✓ |
 | **Upload Model** (nav visible) | ✓ | ✓ | ✗ | ✗ | ✗ |
 | **Edit project details** | ✓ | ✓ | ✓ | ✗ | ✗ |
@@ -121,9 +121,9 @@ Using Playwright or Cypress against `http://localhost:5173` (with the backend po
 |--------------|----------|-------|
 | Upload Model nav item visible for managers | `tama@ww.org` | `Upload Model` link present in header nav |
 | Upload Model nav item hidden for members | `rata@ww.org` | `Upload Model` link NOT in header nav |
-| My Data shows correct project count | `ngaio@ww.org` | Projects tab shows exactly 1 project |
-| My Data is empty for unassigned users | `hemi@ww.org` | Projects tab shows "No projects" or empty state |
-| Map tab shows pins only for visible deployments | `ariki@ww.org` | Map rataers correspond to Tuatara Documentation only |
+| Project selector shows correct count | `ngaio@ww.org` | Project selector lists exactly 1 project |
+| Project selector empty for unassigned users | `hemi@ww.org` | Selector shows "No projects" / empty state |
+| Map view shows pins only for visible deployments | `ariki@ww.org` | Insights → Deployments → Map shows Tuatara Documentation only |
 | Edit button visible for project admins | `moana@ww.org` | Edit controls visible on Kiwi Migration Study |
 | Edit button hidden for project members | `kiri@ww.org` | Edit controls NOT visible on Kiwi Migration Study |
 

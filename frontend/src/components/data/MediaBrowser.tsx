@@ -14,6 +14,7 @@ import { isHumanReviewed, isAiLabel } from '../../lib/observations'
 import { getTimeOfDay, formatCaptureTime } from '../../lib/time'
 import { MediaGroup } from './MediaGroup'
 import { useMultiClusters } from '../../hooks/useBrain'
+import { useJobsList } from '../../hooks/useJobs'
 import { MediaBulkActions, type BulkAction } from './MediaBulkActions'
 import { DeleteConfirmModal, AiModelPickerModal, PipelineLogModal } from './BulkActionModals'
 
@@ -110,6 +111,47 @@ function resolveImageUrl(media: MediaRecord): string | null {
   return `${apiBase}/api/media/${media.id}/image?size=thumb`
 }
 
+
+// ── Processing banner ─────────────────────────────────────────────────────────
+// Explains blank thumbnails / missing labels: when an upload or AI run is still
+// processing a deployment the user is looking at, the grid would otherwise show
+// empty cards with no reason. Driven by the user's active jobs (GET /api/jobs),
+// intersected with the deployments currently in view.
+function ProcessingBanner({ deployments }: { deployments: Props['deployments'] }) {
+  const { data: jobs } = useJobsList()
+  const viewIds = new Set(deployments.map(d => d.id))
+  const names = new Map(deployments.map(d => [d.id, d.location_name || d.id.slice(0, 8)]))
+
+  const active = (jobs ?? []).filter(
+    j => (j.status === 'queued' || j.status === 'processing') && (j.deployment_ids ?? []).some(id => viewIds.has(id)),
+  )
+  if (active.length === 0) return null
+
+  const depIds = [...new Set(active.flatMap(j => (j.deployment_ids ?? []).filter(id => viewIds.has(id))))]
+  const depNames = depIds.map(id => names.get(id) || id.slice(0, 8))
+  const shown = depNames.length <= 3 ? depNames.join(', ') : `${depNames.slice(0, 3).join(', ')} +${depNames.length - 3} more`
+  const isOne = depIds.length === 1
+
+  return (
+    <div
+      role="status"
+      style={{
+        display: 'flex', alignItems: 'center', gap: '0.6rem',
+        padding: '0.6rem 0.9rem', marginBottom: '0.75rem',
+        border: '1px solid rgba(59,130,246,0.4)', borderRadius: 'var(--radius)',
+        backgroundColor: 'rgba(59,130,246,0.08)', fontSize: '0.8125rem',
+      }}
+    >
+      <span style={{ fontSize: '1rem', animation: 'spin 1.4s linear infinite' }}>⟳</span>
+      <span>
+        <strong>Processing</strong> — AI analysis is running for {isOne ? 'deployment ' : 'deployments '}
+        <strong>{shown}</strong>. Thumbnails and labels for {isOne ? 'it' : 'these'} will appear as they complete.
+        See <em>Processing history</em> (avatar menu) for live progress.
+      </span>
+      <style>{`@keyframes spin { from { transform: rotate(0) } to { transform: rotate(360deg) } }`}</style>
+    </div>
+  )
+}
 
 // ── Component ────────────────────────────────────────────────────────────────
 
@@ -253,11 +295,12 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
         connectInat()
         return
       }
-      // Redirect to iNat upload using the unified selectedIds
+      // Upload the unified selection. Pass the ids directly: setInatSelected is
+      // async, so uploadToInat() reading inatSelected here would see the stale
+      // (empty) set and silently no-op.
       setInatSelected(selectedIds)
       setInatMode(true)
-      // Trigger upload immediately since photos are already selected
-      uploadToInat()
+      uploadToInat(selectedIds)
     }
     // syncFromInat/uploadToInat are plain (unmemoised) functions declared below;
     // including them would just defeat the memo without changing behaviour.
@@ -354,12 +397,15 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   useEffect(() => { loadInatStates(media.map(m => m.id)) }, [media, loadInatStates])
 
   // Upload the iNat-selected media to iNaturalist (burst-consolidated).
-  const uploadToInat = async () => {
-    if (inatSelected.size === 0 || inatBusy) return
+  // Accepts an explicit id set so callers can avoid the async-state trap;
+  // falls back to inatSelected when called without args.
+  const uploadToInat = async (ids?: Set<string>) => {
+    const toPublish = ids ?? inatSelected
+    if (toPublish.size === 0 || inatBusy) return
     setInatBusy(true)
     setInatMsg('⬆ Uploading to iNaturalist…')
     try {
-      const r = await inat.publish([...inatSelected])
+      const r = await inat.publish([...toPublish])
       setInatMsg(
         `✓ ${r.observations_created} observation(s), ${r.photos_uploaded} photo(s)` +
         (r.skipped_bycatch ? ` · ${r.skipped_bycatch} by-catch skipped` : '') +
@@ -524,23 +570,27 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     const groups = new Map<string, MediaRecord[]>()
     const deploymentNames = new Map(deployments.map(d => [d.id, d.location_name || d.id.slice(0, 8)]))
 
+    // Cluster lookups (from the multi-cluster API): media → cluster_id, the set
+    // of outliers, and any confirmed species name per cluster for nicer labels.
+    const clusterData = clustersQ.data
+    const mediaCluster = clusterData?.media_clusters ?? {}
+    const outlierSet = new Set(clusterData?.outlier_media_ids ?? [])
+    const clusterNames = new Map<number, string>()
+    for (const c of clusterData?.clusters ?? []) {
+      if (c.scientific_name && !clusterNames.has(c.cluster_id)) clusterNames.set(c.cluster_id, c.scientific_name)
+    }
+
     for (const m of filtered) {
       let key: string
       switch (groupBy) {
         case 'cluster': {
-          // Cluster grouping uses the multi-cluster API response
-          if (!clustersQ.data) { key = '(Loading clusters…)'; break }
-          // const memberMap = new Map<string, string>()
-          // clustersQ.data.clusters.forEach(c => {
-            // Map media IDs to cluster labels from cluster_assignments
-            // The actual member media are in media_embeddings, not cluster_assignments
-          // })
-          // For now, check if this media is an outlier
-          if (clustersQ.data.outlier_media_ids.includes(m.id)) {
-            key = '🟡 Outliers'
-          } else {
-            key = '(Unclustered)'
-          }
+          if (!clusterData) { key = '(Loading clusters…)'; break }
+          if (outlierSet.has(m.id)) { key = '🟡 Outliers'; break }
+          const cid = mediaCluster[m.id]
+          // Not in any cluster yet (e.g. blank frame with no animal crop, or
+          // embeddings not run for this deployment).
+          if (cid == null) { key = '⧗ Not yet clustered'; break }
+          key = clusterNames.get(cid) ?? `Cluster ${cid}`
           break
         }
         case 'species':
@@ -757,6 +807,9 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
 
   return (
     <div>
+      {/* ── "Being processed" banner for in-view deployments ───────── */}
+      <ProcessingBanner deployments={deployments} />
+
       {/* ── Ribbon command bar ────────────────────────────────────── */}
       <Ribbon
         status={<span><strong>{totalCount ?? stats.total}</strong> media</span>}

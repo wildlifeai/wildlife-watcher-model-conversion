@@ -88,8 +88,8 @@ npm run dev
 | Swagger | open `http://localhost:8000/docs` | interactive API docs |
 | Frontend up | open `http://localhost:5173` | landing page loads |
 | Auth | click **Login** | Supabase Auth UI appears |
-| Signed-in nav | log in | three tabs: **Annotations · Results · Other** |
-| Data reads | open **Results → Projects** | your projects list |
+| Signed-in nav | log in | top tabs: **Toolkit · Annotations · Insights** (plus **Field** when a deployment is active) |
+| Data reads | open **Insights** | your projects / deployments |
 
 If observation edits fail with `permission denied for table observations`, the database is missing
 write GRANTs for the `authenticated` role — that's a `ww-backend` migration, see

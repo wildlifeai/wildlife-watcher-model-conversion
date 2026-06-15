@@ -30,7 +30,8 @@ per image derived from `review_status` (`lib/observations.ts`):
 |-------|---------|
 | ✓ Reviewed (green) | a human validated the label |
 | AI (teal) | AI-produced label (incl. `blank`) |
-| ✕ Issue (red) | no observations yet (unprocessed) |
+| ⧗ Processing (grey) | no observations yet — still working through the pipeline |
+| ✕ Issue (red) | explicit pipeline error (reserved; see `StatusBadge.tsx`) |
 
 ## The full-screen labeling modal
 

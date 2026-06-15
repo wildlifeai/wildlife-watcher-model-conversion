@@ -69,6 +69,7 @@ def make_service() -> GoogleDriveService:
     svc._dep_folder_memo = {}
     svc._find_folder_by_deployment_id = MagicMock(return_value=None)
     svc._find_folder = MagicMock(return_value=None)
+    svc._find_folder_by_id_suffix = MagicMock(return_value=None)
     svc._patch_folder = MagicMock()
     svc._create_folder = MagicMock(return_value="created-id")
     return svc

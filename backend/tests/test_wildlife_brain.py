@@ -72,12 +72,13 @@ def test_build_cluster_assignment_rows_review_depth():
     assert by_cluster[-1]["is_outlier_cluster"] is True
 
 
-def test_cluster_hdbscan_fallback_for_small_input():
-    # Below the 'small' preset min_cluster_size (15) → single cluster, no hdbscan import.
-    emb = [[0.0, 1.0]] * 5
+def test_cluster_hdbscan_fallback_for_tiny_input():
+    # Below MIN_CLUSTERABLE (4) there is nothing to cluster → single group, and the
+    # hdbscan import is skipped (keeps this test hermetic without the package).
+    emb = [[0.0, 1.0]] * 3
     labels, probs = cluster_hdbscan(emb)
-    assert labels == [0] * 5
-    assert probs == [1.0] * 5
+    assert labels == [0] * 3
+    assert probs == [1.0] * 3
 
 
 def test_reduce_umap_tiny_input_returns_zeros():

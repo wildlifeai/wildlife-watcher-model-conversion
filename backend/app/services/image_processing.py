@@ -27,6 +27,20 @@ def get_dimensions(data: bytes) -> tuple[int, int]:
         return img.width, img.height
 
 
+def to_jpeg(data: bytes, quality: int = 90) -> bytes:
+    """Re-encode any Pillow-readable image (e.g. a raw BMP) to JPEG at full size.
+
+    Used by the upload path to compress device BMP frames in-pipeline at a
+    controlled quality (better than the camera's aggressive on-device JPEG)
+    without downscaling. Raises if the bytes aren't a decodable image.
+    """
+    with Image.open(BytesIO(data)) as img:
+        img = img.convert("RGB")
+        out = BytesIO()
+        img.save(out, format="JPEG", quality=quality)
+        return out.getvalue()
+
+
 def resize_to_max(data: bytes, max_size: int, quality: int = 85) -> bytes:
     """Downscale so the longest edge is ``max_size`` px; never upscale.
 

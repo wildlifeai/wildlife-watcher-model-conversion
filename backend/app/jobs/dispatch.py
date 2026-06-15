@@ -24,6 +24,12 @@ from app.config import settings
 
 logger = structlog.get_logger()
 
+# KEDA scale-to-zero marker. ARQ's own queue is a Redis *sorted set*, which KEDA's
+# stock ``redis`` scaler (LLEN on a list) cannot read — so on every offload we also
+# push the ARQ job id onto this plain LIST, and the worker LREMs it on completion
+# (see app/jobs/worker.py). KEDA scales the GPU worker on this list's length.
+GPU_PENDING_KEY = "ww:gpu:pending"
+
 
 async def enqueue_job(name: str, *args) -> str:
     """Dispatch a job by its definition function name.
@@ -40,7 +46,14 @@ async def enqueue_job(name: str, *args) -> str:
 
             pool = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
             try:
-                await pool.enqueue_job(name, *args)
+                job = await pool.enqueue_job(name, *args)
+                # Mirror a pending marker onto the KEDA-readable list (best-effort:
+                # a missing marker only affects autoscaling, never correctness).
+                if job is not None:
+                    try:
+                        await pool.lpush(GPU_PENDING_KEY, job.job_id)
+                    except Exception as exc:
+                        logger.debug("gpu_pending_marker_push_failed", job=name, error=str(exc))
             finally:
                 await pool.aclose()
             logger.info("job_enqueued_arq", job=name)

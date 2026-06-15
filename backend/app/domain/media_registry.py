@@ -176,6 +176,117 @@ async def generate_animal_crop(media_id: str) -> Optional[str]:
     return crop_url
 
 
+def _parse_timestamp(value) -> Optional[float]:
+    """Parse a media ``timestamp`` (ISO-8601 string) to epoch seconds; None if unparseable."""
+    from datetime import datetime
+
+    if not value:
+        return None
+    try:
+        s = str(value).replace("Z", "+00:00")
+        return datetime.fromisoformat(s).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def group_bursts(media_rows: list[dict], gap_seconds: float) -> list[list[dict]]:
+    """Split timestamp-ordered media into bursts, breaking when the gap exceeds ``gap_seconds``.
+
+    Frames with an unparseable/missing timestamp start their own singleton burst so a bad
+    timestamp can't merge two unrelated triggers. Singletons are dropped by the caller
+    (motion ROI needs ≥2 frames), but kept here so the function is purely structural.
+    """
+    bursts: list[list[dict]] = []
+    cur: list[dict] = []
+    prev_ts: Optional[float] = None
+    for row in media_rows:
+        ts = _parse_timestamp(row.get("timestamp"))
+        same = cur and prev_ts is not None and ts is not None and (ts - prev_ts) <= gap_seconds
+        if same:
+            cur.append(row)
+        else:
+            if cur:
+                bursts.append(cur)
+            cur = [row]
+        prev_ts = ts
+    if cur:
+        bursts.append(cur)
+    return bursts
+
+
+async def generate_motion_roi_crops(
+    deployment_id: str,
+    media_rows: list[dict],
+    *,
+    skip_media_ids: Optional[set[str]] = None,
+    burst_gap_seconds: float = 10.0,
+) -> int:
+    """SpeciesNet-free fallback crop: localise the moving subject per burst via frame differencing.
+
+    Groups ``media_rows`` (already timestamp-ordered) into bursts, computes a per-frame motion
+    ROI (pure numpy + Pillow, no ML), and writes ``animal_crop_url`` for frames that don't already
+    have a detection-based crop — so DINOv3 still receives an animal region when SpeciesNet is
+    unavailable. Returns the number of crops created.
+
+    Only image media participate; frames in ``skip_media_ids`` keep their place in the sequence
+    (they still inform the differencing) but are never overwritten.
+    """
+    from io import BytesIO
+
+    from PIL import Image
+
+    from app.domain.media_resolver import resolve_media
+    from app.domain.motion_roi import compute_motion_roi_per_frame
+    from app.services import image_processing as imgproc
+    from app.services.storage import upload_rendition
+
+    skip = skip_media_ids or set()
+    crops_created = 0
+
+    for burst in group_bursts(media_rows, burst_gap_seconds):
+        if len(burst) < 2:
+            continue  # motion ROI needs at least two frames to difference
+
+        # Download every frame once; keep raw bytes (for cropping) and a decoded image (for ROI).
+        frames: list[tuple[dict, Optional[bytes], Optional[Image.Image]]] = []
+        for m in burst:
+            data = img = None
+            try:
+                resolved = await resolve_media(m["file_path"], size="full")
+                if resolved:
+                    data = resolved[0]
+                    img = await asyncio.to_thread(lambda d=data: Image.open(BytesIO(d)).convert("RGB"))
+            except Exception as exc:  # noqa: BLE001 — a single bad frame must not sink the burst
+                logger.warning("motion_roi_resolve_error", media_id=m.get("id"), error=str(exc))
+            frames.append((m, data, img))
+
+        images = [img for (_m, _data, img) in frames]
+        if sum(im is not None for im in images) < 2:
+            continue
+
+        rois = await asyncio.to_thread(compute_motion_roi_per_frame, images)
+
+        for (m, data, img), roi in zip(frames, rois):
+            if roi is None or img is None or data is None or m["id"] in skip:
+                continue
+            x0, y0, x1, y1 = roi
+            w, h = img.width, img.height
+            # Pixel ROI → normalised (x, y, w, h). The ROI is already padded by compute_motion_roi,
+            # so crop with zero extra padding.
+            norm = (x0 / w, y0 / h, (x1 - x0) / w, (y1 - y0) / h)
+            try:
+                crop = await asyncio.to_thread(imgproc.crop_bbox, data, norm, 0.0)
+                crop_url = await upload_rendition(f"crops/{deployment_id}/{m['id']}.jpg", crop)
+                await _upsert_media_assets({"media_id": m["id"], "animal_crop_url": crop_url})
+                crops_created += 1
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("motion_roi_crop_error", media_id=m.get("id"), error=str(exc))
+
+    if crops_created:
+        logger.info("motion_roi_fallback_crops", deployment_id=deployment_id, crops_created=crops_created)
+    return crops_created
+
+
 async def backfill_thumbnails(deployment_id: str) -> int:
     """Generate thumbnails/previews for deployment media that lack them.
 

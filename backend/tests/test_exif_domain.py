@@ -4,7 +4,13 @@
 
 import struct
 
-from app.domain.exif import _extract_deployment_id, match_deployment, parse_exif_from_bytes
+from app.domain.exif import (
+    _apply_user_comment_fields,
+    _extract_deployment_id,
+    match_deployment,
+    parse_exif_from_bytes,
+    parse_user_comment_fields,
+)
 
 
 def _make_minimal_jpeg_with_exif(exif_data: bytes = b"") -> bytes:
@@ -84,6 +90,49 @@ class TestExtractDeploymentId:
         }
         result = _extract_deployment_id(data)
         assert result == "11111111-1111-1111-1111-111111111111"
+
+
+class TestUserCommentFields:
+    def test_parses_label_value_pairs(self):
+        # On-device NN class scores in the WW500 format.
+        fields = parse_user_comment_fields("kiwi: 80; rat: 12; possum: 3;")
+        assert fields == {"kiwi": "80", "rat": "12", "possum": "3"}
+
+    def test_empty_or_non_string(self):
+        assert parse_user_comment_fields("") == {}
+        assert parse_user_comment_fields(None) == {}
+        assert parse_user_comment_fields(12345) == {}
+
+    def test_strips_exif_charcode_prefix(self):
+        # A spec-compliant UserComment keeps its 8-byte charcode prefix after decode
+        # (interior nulls survive null-stripping), e.g. "ASCII\0\0\0kiwi: 80;".
+        assert parse_user_comment_fields("ASCII\x00\x00\x00kiwi: 80; rat: 12;") == {"kiwi": "80", "rat": "12"}
+        assert parse_user_comment_fields("UNICODE\x00Temp: 14.5;") == {"Temp": "14.5"}
+        # A real key that merely starts with those letters (no null padding) is NOT stripped.
+        assert parse_user_comment_fields("ASCIIart: 5;") == {"ASCIIart": "5"}
+
+    def test_bare_uuid_yields_no_fields(self):
+        # A prepare.py-style UUID UserComment has no "key: value" tokens.
+        assert parse_user_comment_fields("a1b2c3d4-e5f6-7890-abcd-ef1234567890") == {}
+
+    def test_telemetry_surfaced_as_typed_fields(self):
+        data = {"UserComment": "Temp: 14.5; Batt: 87; kiwi: 80;"}
+        _apply_user_comment_fields(data)
+        assert data["temperature_c"] == 14.5
+        assert data["battery_pct"] == 87
+        # The on-device scores remain available too.
+        assert data["user_comment_fields"]["kiwi"] == "80"
+
+    def test_telemetry_absent_is_harmless(self):
+        data = {"UserComment": "kiwi: 80; rat: 12;"}
+        _apply_user_comment_fields(data)
+        assert "temperature_c" not in data
+        assert data["user_comment_fields"]["rat"] == "12"
+
+    def test_no_user_comment(self):
+        data = {}
+        _apply_user_comment_fields(data)
+        assert "user_comment_fields" not in data
 
 
 class TestMatchDeployment:

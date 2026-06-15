@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, Optional, Sequence
 
 import structlog
@@ -65,6 +65,9 @@ class ImagePrediction:
     scientific_name: Optional[str]
     common_name: Optional[str]
     classification_score: Optional[float]
+    # Full parsed lineage (class/order/family/genus/species/common), enabling
+    # confidence-based taxonomic roll-up downstream. Empty when unavailable.
+    taxonomy: dict[str, Optional[str]] = field(default_factory=dict)
 
     @property
     def is_blank(self) -> bool:
@@ -109,6 +112,32 @@ def parse_prediction_string(prediction: Optional[str]) -> tuple[Optional[str], O
     return scientific_name, common_name
 
 
+# SpeciesNet label format (after the leading UUID): class;order;family;genus;species;common.
+# Unknown ranks come through as empty strings, so positional mapping is reliable.
+_TAXONOMY_RANKS = ("class", "order", "family", "genus", "species", "common")
+
+
+def parse_taxonomy(prediction: Optional[str]) -> dict[str, Optional[str]]:
+    """Parse a SpeciesNet taxonomy string into a rank → name dict.
+
+    ``"<uuid>;mammalia;apterygiformes;apterygidae;apteryx;mantelli;… kiwi"`` →
+    ``{"class": "mammalia", "order": "apterygiformes", "family": "apterygidae",
+    "genus": "apteryx", "species": "mantelli", "common": "… kiwi"}``. Missing or
+    empty ranks map to ``None``. Returns ``{}`` for an empty prediction.
+    """
+    if not prediction:
+        return {}
+    parts = [p.strip() for p in prediction.split(";")]
+    # Drop a leading UUID field if present (SpeciesNet prefixes the species GUID).
+    # Match the exact UUID shape (36 chars, 4 hyphens) so a hyphenated taxon name
+    # in an un-prefixed string can't be mistaken for a UUID and dropped.
+    if parts and len(parts[0]) == 36 and parts[0].count("-") == 4:
+        parts = parts[1:]
+    if not parts:
+        return {}
+    return {rank: (parts[i].strip() or None) if i < len(parts) else None for i, rank in enumerate(_TAXONOMY_RANKS)}
+
+
 def _parse_bbox(raw: Any) -> Optional[tuple[float, float, float, float]]:
     """Coerce a SpeciesNet bbox ([x, y, w, h] normalised) into a 4-tuple."""
     if not raw or len(raw) != 4:
@@ -149,6 +178,7 @@ def parse_speciesnet_output(raw: dict[str, Any]) -> list[ImagePrediction]:
                 scientific_name=scientific_name,
                 common_name=common_name,
                 classification_score=float(score) if score is not None else None,
+                taxonomy=parse_taxonomy(pred.get("prediction")),
             )
         )
     return out

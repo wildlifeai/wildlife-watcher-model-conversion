@@ -26,11 +26,12 @@ from fastapi import APIRouter, File, Form, Header, Request, UploadFile
 from fastapi.responses import JSONResponse
 
 from app.config import settings
-from app.dependencies import get_optional_user
+from app.dependencies import get_optional_user, is_email_confirmed
 from app.domain.exif import parse_exif_from_bytes
 from app.jobs.definitions import upload_drive_images_job
 from app.jobs.runner import enqueue_local_job
 from app.jobs.store import create_job
+from app.middleware.rate_limit import limiter
 from app.schemas.common import ApiMeta, ApiResponse
 from app.services.azure_storage import store_blob
 from app.services.supabase_client import create_service_client
@@ -42,6 +43,11 @@ router = APIRouter(prefix="/api/exif", tags=["exif"])
 # Regex to extract the 8-char deployment prefix from the SD card folder path
 # e.g.  MEDIA/655BC4E5/IMAGES.000/file.JPG  →  655BC4E5
 _FOLDER_DEP_RE = re.compile(r"MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]", re.IGNORECASE)
+
+
+def _is_bmp(content: bytes) -> bool:
+    """True if the bytes are a Windows BMP (magic ``BM``)."""
+    return len(content) >= 2 and content[:2] == b"BM"
 
 
 def _hex_filename_to_timestamp(filename: str) -> Optional[str]:
@@ -62,6 +68,7 @@ def _hex_filename_to_timestamp(filename: str) -> Optional[str]:
 
 
 @router.post("/parse")
+@limiter.limit("30/minute")
 async def parse_exif(
     request: Request,
     files: List[UploadFile] = File(...),
@@ -93,19 +100,38 @@ async def parse_exif(
     results = []
     file_contents: List[bytes] = []
 
-    # ── 0. Enforce image limit for unauthenticated users ─────────
+    # ── 0. Per-request image cap (anti-abuse) ────────────────────
+    # Anon: small cap (also drive a login). Authenticated: a generous per-request
+    # ceiling so one call can't enqueue an unbounded batch — the frontend uploads
+    # in chunks of ~10, so this only trips on scripted abuse. Cumulative per-org
+    # storage quota is enforced separately (see the abuse-prevention plan).
     MAX_ANON_IMAGES = 50
+    MAX_AUTH_IMAGES = settings.MAX_UPLOAD_IMAGES_PER_REQUEST
     user = await get_optional_user(authorization)
-    if not user and len(files) > MAX_ANON_IMAGES:
+
+    # Block storage-consuming uploads for authenticated-but-unverified accounts
+    # (anonymous EXIF-only parsing without Drive is still allowed up to the cap).
+    if user and upload_to_drive and not is_email_confirmed(user):
+        return JSONResponse(
+            status_code=403,
+            content={
+                "error": {
+                    "code": "EMAIL_NOT_CONFIRMED",
+                    "message": "Please confirm your email address before uploading images.",
+                }
+            },
+        )
+
+    cap = MAX_ANON_IMAGES if not user else MAX_AUTH_IMAGES
+    if len(files) > cap:
+        who = "Unauthenticated users" if not user else "Each upload request"
+        suffix = " Please log in to raise this limit." if not user else " Split the upload into smaller batches."
         return JSONResponse(
             status_code=403,
             content={
                 "error": {
                     "code": "IMAGE_LIMIT_EXCEEDED",
-                    "message": (
-                        f"Unauthenticated users can analyse up to {MAX_ANON_IMAGES} images. "
-                        f"You uploaded {len(files)}. Please log in to remove this limit."
-                    ),
+                    "message": (f"{who} can submit up to {cap} images per request. You sent {len(files)}.{suffix}"),
                 }
             },
         )
@@ -113,11 +139,36 @@ async def parse_exif(
     # ── 1. Parse EXIF from each file ─────────────────────────────
     for i, upload in enumerate(files):
         content = await upload.read()
+        rel_path = paths[i] if i < len(paths) else None
+        filename = upload.filename
+
+        # Raw BMP frames carry no EXIF container. When enabled, re-compress them
+        # to JPEG in-pipeline (controlled quality, beats the device's) and bind
+        # via folder path + hex-filename timestamp like any other frame. When
+        # disabled, ignore them (kept in the arrays for index alignment, but with
+        # no deployment_id so the Drive step skips them).
+        if _is_bmp(content):
+            if not settings.FF_BMP_INGEST_ENABLED:
+                file_contents.append(content)
+                results.append({"filename": filename, "relative_path": rel_path, "exif": {"error": "BMP ingest disabled"}})
+                continue
+            try:
+                from app.services.image_processing import to_jpeg
+
+                content = to_jpeg(content, quality=settings.BMP_JPEG_QUALITY)
+                filename = re.sub(r"\.bmp$", ".jpg", filename, flags=re.IGNORECASE) if filename else filename
+                parsed: dict = {"deployment_id": None, "converted_from": "bmp"}
+            except Exception as exc:
+                logger.warning("bmp_convert_failed", filename=upload.filename, error=str(exc))
+                file_contents.append(content)
+                results.append({"filename": filename, "relative_path": rel_path, "exif": {"error": "BMP conversion failed"}})
+                continue
+        else:
+            parsed = parse_exif_from_bytes(content)
+
         file_contents.append(content)
-        parsed = parse_exif_from_bytes(content)
 
         # Enrich with folder-path deployment ID if available
-        rel_path = paths[i] if i < len(paths) else None
         folder_dep_id = None
         if rel_path:
             m = _FOLDER_DEP_RE.search(rel_path)
@@ -131,7 +182,8 @@ async def parse_exif(
         if folder_dep_id:
             parsed["deployment_id_source"] = "folder_path"
 
-        # Decode hex filename to timestamp if EXIF datetime is missing
+        # Decode hex filename to timestamp if EXIF datetime is missing (the BMP's
+        # original .bmp stem still decodes — extension is irrelevant).
         if not parsed.get("date") and upload.filename:
             hex_ts = _hex_filename_to_timestamp(upload.filename)
             if hex_ts:
@@ -140,7 +192,7 @@ async def parse_exif(
 
         results.append(
             {
-                "filename": upload.filename,
+                "filename": filename,
                 "relative_path": rel_path,
                 "exif": parsed,
             }
@@ -312,6 +364,8 @@ async def _enqueue_drive_upload(
             return None
 
         exif_data = results[i].get("exif", {}) if i < len(results) else {}
+        # Prefer the post-conversion filename (BMP→.jpg) recorded in results.
+        out_filename = (results[i].get("filename") if i < len(results) else None) or upload.filename
         file_dep_id = exif_data.get("deployment_id")
 
         # Resolve 8-char folder prefix to full UUID if available
@@ -343,7 +397,7 @@ async def _enqueue_drive_upload(
 
         return {
             "blob_id": blob_id,
-            "filename": upload.filename,
+            "filename": out_filename,
             "timestamp": exif_data.get("date"),
             "project": file_context["project"],
             "deployment": file_context["deployment"],
@@ -361,7 +415,11 @@ async def _enqueue_drive_upload(
         return {"enabled": True, "status": "skipped", "reason": "no_files_stored"}
 
     # ── Enqueue ARQ job ──────────────────────────────────────────
-    job_id = await create_job()
+    job_id = await create_job(
+        user_id=user_id,
+        kind="upload",
+        label=f"Upload — {len(storage_entries)} file{'s' if len(storage_entries) != 1 else ''}",
+    )
 
     payload = {
         "files": storage_entries,

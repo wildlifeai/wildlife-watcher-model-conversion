@@ -72,6 +72,10 @@ class ProgressEvent(BaseModel):
     message: str
     batch_index: Optional[int] = None
     job_id: Optional[str] = None
+    child_job_id: Optional[str] = Field(
+        None,
+        description="A spawned follow-on job (e.g. AI analysis offloaded to the GPU worker) the UI should chain onto.",
+    )
 
 
 class ProgressSummary(BaseModel):

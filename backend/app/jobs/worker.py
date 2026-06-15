@@ -23,13 +23,23 @@ try:
 
     from app.config import settings
     from app.jobs.definitions import JOBS
+    from app.jobs.dispatch import GPU_PENDING_KEY
 
     def _arq_adapter(func):
         """Adapt a ctx-free job definition to ARQ's ``func(ctx, *args)`` signature."""
 
         @wraps(func)  # preserves __name__ so ARQ resolves the job by name
         async def wrapper(ctx, *args, **kwargs):
-            return await func(*args, **kwargs)
+            try:
+                return await func(*args, **kwargs)
+            finally:
+                # Drop this job's KEDA scale-to-zero marker so the worker can scale
+                # back to 0 once the queue drains (paired with the LPUSH in
+                # dispatch.enqueue_job). Best-effort — never fails the job.
+                try:
+                    await ctx["redis"].lrem(GPU_PENDING_KEY, 0, ctx["job_id"])
+                except Exception:
+                    pass
 
         return wrapper
 
@@ -56,6 +66,11 @@ try:
 
         # GPU embedding runs can be long; allow generous timeouts.
         max_jobs = 4
+        # No retries: our jobs self-handle errors and return normally (best-effort),
+        # so an ARQ retry would only re-run work AND strand the KEDA pending marker
+        # (removed on the first attempt's completion). max_tries=1 keeps the marker
+        # exactly-once and avoids a deferred retry waking a scaled-to-zero worker.
+        max_tries = 1
         job_timeout = 3600  # 1 hour per job (large deployments / scoped runs)
         keep_result = 3600
         health_check_interval = 30

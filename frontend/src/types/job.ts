@@ -42,6 +42,8 @@ export interface ProgressEvent {
   message: string
   batch_index?: number
   job_id?: string
+  /** A spawned follow-on job (e.g. AI offloaded to the GPU worker) the dock should chain onto. */
+  child_job_id?: string
 }
 
 export interface ProgressSummary {
@@ -65,5 +67,21 @@ export interface JobInfo {
   current_phase: ProgressPhase | null
   summary: ProgressSummary | null
   events: ProgressEvent[]
+  event_count: number
+}
+
+/** Light summary row for the processing-history list (GET /api/jobs). */
+export interface JobSummary {
+  job_id: string
+  status: JobStatusValue
+  kind: string | null
+  label: string | null
+  /** Deployments this job touches — drives the Annotations "being processed" banner. */
+  deployment_ids: string[]
+  progress: number | null
+  summary: ProgressSummary | null
+  error: string | null
+  created_at: string
+  updated_at: string | null
   event_count: number
 }

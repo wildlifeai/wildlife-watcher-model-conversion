@@ -15,7 +15,8 @@ import structlog
 from fastapi import APIRouter, Depends, Query, Request
 
 from app.config import settings
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, get_verified_user
+from app.middleware.rate_limit import limiter
 from app.schemas.brain import ConfirmClusterRequest, EmbedRequest, MultiClusterRequest, ReprocessAllRequest, ReprocessRequest, ReviewDecisionRequest
 from app.schemas.common import ApiError, ApiMeta, ApiResponse
 from app.services.supabase_client import create_service_client
@@ -40,7 +41,8 @@ def _al_disabled(req_id):
 
 
 @router.post("/embed/{deployment_id}")
-async def embed_deployment(request: Request, deployment_id: str, body: EmbedRequest | None = None, user=Depends(get_current_user)):
+@limiter.limit("10/minute")
+async def embed_deployment(request: Request, deployment_id: str, body: EmbedRequest | None = None, user=Depends(get_verified_user)):
     """Embed + cluster a deployment. Server mode enqueues a GPU job."""
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
@@ -61,7 +63,7 @@ async def embed_deployment(request: Request, deployment_id: str, body: EmbedRequ
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="ai_embed", label=f"Embed deployment {deployment_id[:8]}", deployment_ids=[deployment_id])
     await enqueue_job("embed_deployment_job", job_id, deployment_id, body.model_name)
     return ApiResponse(
         data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id},
@@ -118,7 +120,7 @@ async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depen
         return _disabled(req_id)
 
     if not body.deployment_ids:
-        return ApiResponse(data={"clusters": [], "outlier_media_ids": [], "model_groups": []}, meta=ApiMeta(request_id=req_id))
+        return ApiResponse(data={"clusters": [], "media_clusters": {}, "outlier_media_ids": [], "model_groups": []}, meta=ApiMeta(request_id=req_id))
 
     svc = create_service_client()
 
@@ -133,7 +135,7 @@ async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depen
             .execute()
         )
         if not runs_resp.data:
-            return [], [], []
+            return [], {}, [], []
 
         # Keep only the latest run per deployment.
         seen: dict[str, dict] = {}
@@ -170,12 +172,15 @@ async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depen
             c["model_name"] = run_model.get(c.get("embedding_run_id", ""), "unknown")
 
         outlier_ids = [m["media_id"] for m in members if m.get("is_outlier")]
+        # media_id → cluster_id for non-outlier members, so the grid can group
+        # each image under its cluster (not just separate outliers).
+        media_clusters = {m["media_id"]: m["cluster_id"] for m in members if not m.get("is_outlier")}
 
-        return clusters, outlier_ids, [{"model_name": k, "deployment_ids": v} for k, v in model_groups.items()]
+        return clusters, media_clusters, outlier_ids, [{"model_name": k, "deployment_ids": v} for k, v in model_groups.items()]
 
-    clusters, outlier_ids, model_groups = await asyncio.to_thread(_fetch)
+    clusters, media_clusters, outlier_ids, model_groups = await asyncio.to_thread(_fetch)
     return ApiResponse(
-        data={"clusters": clusters, "outlier_media_ids": outlier_ids, "model_groups": model_groups},
+        data={"clusters": clusters, "media_clusters": media_clusters, "outlier_media_ids": outlier_ids, "model_groups": model_groups},
         meta=ApiMeta(request_id=req_id),
     )
 
@@ -338,7 +343,7 @@ async def embedding_runs(request: Request, deployment_id: str, user=Depends(get_
 
 
 @router.post("/reprocess/deployment/{deployment_id}")
-async def reprocess_deployment_endpoint(request: Request, deployment_id: str, body: ReprocessRequest | None = None, user=Depends(get_current_user)):
+async def reprocess_deployment_endpoint(request: Request, deployment_id: str, body: ReprocessRequest | None = None, user=Depends(get_verified_user)):
     """Supersede current runs and re-embed a deployment (new embedding_run)."""
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
@@ -348,13 +353,13 @@ async def reprocess_deployment_endpoint(request: Request, deployment_id: str, bo
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="ai_reprocess", label=f"Reprocess deployment {deployment_id[:8]}", deployment_ids=[deployment_id])
     await enqueue_job("reprocess_deployment_job", job_id, deployment_id, body.model_name)
     return ApiResponse(data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id}, meta=ApiMeta(request_id=req_id))
 
 
 @router.post("/reprocess/project/{project_id}")
-async def reprocess_project_endpoint(request: Request, project_id: str, body: ReprocessRequest | None = None, user=Depends(get_current_user)):
+async def reprocess_project_endpoint(request: Request, project_id: str, body: ReprocessRequest | None = None, user=Depends(get_verified_user)):
     """Reprocess all deployments in a project."""
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
@@ -364,13 +369,13 @@ async def reprocess_project_endpoint(request: Request, project_id: str, body: Re
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="ai_reprocess", label=f"Reprocess project {project_id[:8]}")
     await enqueue_job("reprocess_project_job", job_id, project_id, body.model_name)
     return ApiResponse(data={"job_id": job_id, "status": "queued", "project_id": project_id}, meta=ApiMeta(request_id=req_id))
 
 
 @router.post("/reprocess/all")
-async def reprocess_all_endpoint(request: Request, body: ReprocessAllRequest | None = None, user=Depends(get_current_user)):
+async def reprocess_all_endpoint(request: Request, body: ReprocessAllRequest | None = None, user=Depends(get_verified_user)):
     """Platform-wide re-embed. Default dry-run returns a cost estimate; executing requires confirm=true."""
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
@@ -388,7 +393,7 @@ async def reprocess_all_endpoint(request: Request, body: ReprocessAllRequest | N
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="ai_reprocess", label="Reprocess all deployments")
     await enqueue_job("reprocess_all_job", job_id, body.model_name)
     return ApiResponse(data={"job_id": job_id, "status": "queued", "scope": "global"}, meta=ApiMeta(request_id=req_id))
 
@@ -419,7 +424,9 @@ async def recalculate_al_scores(request: Request, deployment_id: str, user=Depen
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(
+        user_id=user.id, kind="active_learning", label=f"Recompute AL scores {deployment_id[:8]}", deployment_ids=[deployment_id]
+    )
     await enqueue_job("recompute_al_job", job_id, deployment_id)
     return ApiResponse(data={"job_id": job_id, "status": "queued", "deployment_id": deployment_id}, meta=ApiMeta(request_id=req_id))
 
@@ -484,6 +491,6 @@ async def backup_qdrant_endpoint(request: Request, user=Depends(get_current_user
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="maintenance", label="Qdrant backup")
     await enqueue_job("qdrant_backup_job", job_id)
     return ApiResponse(data={"job_id": job_id, "status": "queued"}, meta=ApiMeta(request_id=req_id))

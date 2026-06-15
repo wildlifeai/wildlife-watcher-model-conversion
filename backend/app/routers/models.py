@@ -79,7 +79,7 @@ async def convert_model(
     manager_roles = await get_manager_roles(user)
     org_id = resolve_managed_org(organisation_id, manager_roles)
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="model_upload", label=f"Upload model {model_name}")
 
     # Resolve or create AI Model Family (shared domain helper)
     model_family_id, _ = await resolve_or_create_model_family(client, org_id, model_name)
@@ -247,7 +247,7 @@ async def download_pretrained(
         if not body.architecture or not body.resolution:
             raise HTTPException(400, detail="Architecture and resolution are required for GitHub pre-trained models.")
 
-        job_id = await create_job()
+        job_id = await create_job(user_id=user.id, kind="model_download", label=f"Download model {body.architecture} @ {body.resolution}")
 
         enqueue_local_job(download_github_pretrained_job(job_id, user.id, org_id, body.architecture, body.resolution, body.description))
 
@@ -260,7 +260,7 @@ async def download_pretrained(
         if not body.sscma_uuid:
             raise HTTPException(400, detail="sscma_uuid is required for SenseCap models.")
 
-        job_id = await create_job()
+        job_id = await create_job(user_id=user.id, kind="model_download", label=f"Download SenseCap model {body.model_name or body.sscma_uuid}")
 
         enqueue_local_job(download_pretrained_job(job_id, user.id, body.sscma_uuid, org_id, body.model_name, body.description))
 

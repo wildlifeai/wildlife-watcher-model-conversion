@@ -144,16 +144,33 @@ class AnimalCropStep(PipelineStep):
         deployment_id: str,
         config: dict[str, Any],
     ) -> PipelineStepResult:
-        from app.domain.media_registry import generate_animal_crop
+        from app.config import settings
+        from app.domain.media_registry import generate_animal_crop, generate_motion_roi_crops
 
         start = time.monotonic()
         errors = 0
+        cropped_ids: set[str] = set()
         for m in media:
             try:
-                await generate_animal_crop(m["id"])
+                if await generate_animal_crop(m["id"]):
+                    cropped_ids.add(m["id"])
             except Exception as exc:
                 logger.warning("animal_crop_error", media_id=m.get("id"), error=str(exc))
                 errors += 1
+
+        # SpeciesNet-free fallback: for frames with no detection crop, crop the motion ROI
+        # across each burst so DINOv3 still gets an animal region (e.g. on the lean dev-cloud
+        # image where SpeciesNet can't load). Gated, off by default.
+        if settings.FF_MOTION_ROI_FALLBACK_ENABLED and len(cropped_ids) < len(media):
+            try:
+                await generate_motion_roi_crops(
+                    deployment_id,
+                    media,
+                    skip_media_ids=cropped_ids,
+                    burst_gap_seconds=settings.MOTION_ROI_BURST_GAP_SECONDS,
+                )
+            except Exception as exc:
+                logger.warning("motion_roi_fallback_error", deployment_id=deployment_id, error=str(exc))
 
         return PipelineStepResult(
             step=self.step_type,
@@ -165,6 +182,48 @@ class AnimalCropStep(PipelineStep):
 
 
 # ── SpeciesNet Step (detector + classifier) ──────────────────────────
+
+# Confidence-based taxonomic roll-up: SpeciesNet's species guess is only trusted
+# when the classification score clears SPECIES_CONFIDENCE; below that we back off
+# to genus, then to the most specific available higher rank. This prevents shaky
+# species-level claims (e.g. a 0.4 "Apteryx mantelli" recorded as "Apteryx").
+SPECIES_CONFIDENCE = 0.5
+GENUS_CONFIDENCE = 0.35
+
+
+def rollup_taxon(
+    taxonomy: dict,
+    score: Optional[float],
+    fallback_scientific: Optional[str] = None,
+    fallback_vernacular: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """Choose the (scientific_name, vernacular_name) at a confidence-appropriate rank.
+
+    - score ≥ SPECIES_CONFIDENCE and a binomial exists → "Genus species" + common name.
+    - score ≥ GENUS_CONFIDENCE and a genus exists → "Genus" (no common name).
+    - otherwise → the most specific of family/order/class that is present.
+    When ``taxonomy`` is empty (older predictions), fall back to the raw values.
+    """
+    if not taxonomy:
+        return fallback_scientific, fallback_vernacular
+
+    s = score if score is not None else 0.0
+    genus = (taxonomy.get("genus") or "").strip()
+    species = (taxonomy.get("species") or "").strip()
+    common = taxonomy.get("common")
+
+    if s >= SPECIES_CONFIDENCE and genus and species:
+        return f"{genus} {species}".capitalize(), common
+    if s >= GENUS_CONFIDENCE and genus:
+        return genus.capitalize(), None
+    for rank in ("family", "order", "class"):
+        name = (taxonomy.get(rank) or "").strip()
+        if name:
+            return name.capitalize(), None
+    # No confident higher rank — keep whatever binomial we have rather than nothing.
+    if genus and species:
+        return f"{genus} {species}".capitalize(), common
+    return fallback_scientific, fallback_vernacular
 
 
 def build_speciesnet_observations(
@@ -178,9 +237,14 @@ def build_speciesnet_observations(
     """Map a SpeciesNet ImagePrediction to CamtrapDP observation rows (pure).
 
     Detections below ``confidence_threshold`` are dropped; an image with no kept
-    detections yields a single ``blank`` observation. Animal detections carry the
-    classifier's species name + probability. bbox fields are set as a complete
-    quad or omitted entirely (honours the observations chk_bbox_complete check).
+    detections yields a single ``blank`` observation.
+
+    SpeciesNet classifies **one species per image** but may emit several detection
+    boxes, so same-type boxes are collapsed into **one** observation carrying a
+    ``count`` (number of boxes) and the highest-confidence box as the
+    representative bbox — instead of N duplicate rows that clutter review. The
+    animal observation's species is taxonomically rolled up (see ``rollup_taxon``).
+    bbox fields are set as a complete quad or omitted (honours chk_bbox_complete).
     """
     base = {
         "deployment_id": deployment_id,
@@ -198,21 +262,35 @@ def build_speciesnet_observations(
     if not kept:
         return [{**base, "id": str(uuid.uuid4()), "observation_type": "blank"}]
 
-    rows: list[dict] = []
+    # Collapse boxes by observation_type (animal / human / vehicle / unknown).
+    by_type: dict[str, list] = {}
     for det in kept:
+        by_type.setdefault(det.observation_type, []).append(det)
+
+    sci_name, vern_name = rollup_taxon(
+        getattr(prediction, "taxonomy", {}) or {},
+        prediction.classification_score,
+        prediction.scientific_name,
+        prediction.common_name,
+    )
+
+    rows: list[dict] = []
+    for obs_type, dets in by_type.items():
+        best = max(dets, key=lambda d: d.confidence)
         row = {
             **base,
             "id": str(uuid.uuid4()),
-            "observation_type": det.observation_type,
-            "classifier_category": det.category,
-            "confidence": det.confidence,
+            "observation_type": obs_type,
+            "classifier_category": best.category,
+            "confidence": best.confidence,
+            "count": len(dets),
         }
-        if det.observation_type == "animal":
-            row["scientific_name"] = prediction.scientific_name
-            row["vernacular_name"] = prediction.common_name
+        if obs_type == "animal":
+            row["scientific_name"] = sci_name
+            row["vernacular_name"] = vern_name
             row["classification_probability"] = prediction.classification_score
-        if det.bbox is not None:
-            x, y, w, h = det.bbox
+        if best.bbox is not None:
+            x, y, w, h = best.bbox
             row.update(bbox_x=x, bbox_y=y, bbox_w=w, bbox_h=h)
         rows.append(row)
     return rows
@@ -356,14 +434,21 @@ def build_bioclip_observations(
 
 
 class BioCLIPStep(PipelineStep):
-    """BioCLIP secondary classifier — runs on animal crops, not raw frames.
+    """Classify stage — labels animal crops with a pluggable classifier.
 
-    Prefers each media's ``media_assets.animal_crop_url`` (produced by
-    AnimalCropStep) and falls back to the full image. Writes one extra ``animal``
-    observation per crop tagged with BioCLIP's model version — a second opinion
-    that complements SpeciesNet rather than replacing it.
+    The "Classify" node of the detect → crop → classify tree. Prefers each
+    media's ``media_assets.animal_crop_url`` (produced by AnimalCropStep) and
+    falls back to the full image. Writes one extra ``animal`` observation per
+    crop tagged with the classifier's model version — a second opinion that
+    complements SpeciesNet rather than replacing it.
+
+    The classifier is resolved from the registry (``domain/classifiers.py``):
+    BioCLIP by default, or whatever ``config['classifier']`` selects, so a
+    project can route its crops to a custom species model. Keeps the BIOCLIP
+    step type + flag for back-compat.
 
     Config overrides:
+      - ``classifier``:    str       → registry id (default 'bioclip').
       - ``bioclip_labels``: list[str] → constrain to a custom label set.
       - ``bioclip_rank``:   str       → Tree-of-Life rank (default 'species').
       - ``confidence_threshold``: float (shared with the run).
@@ -383,20 +468,23 @@ class BioCLIPStep(PipelineStep):
         import tempfile
 
         from app.config import settings
+        from app.domain.classifiers import resolve_classifier, resolve_classifier_name
         from app.domain.media_resolver import resolve_media
-        from app.services.bioclip_service import get_bioclip_service
 
         start = time.monotonic()
         if not settings.FF_BIOCLIP_ENABLED:
-            logger.info("bioclip_step_skipped_disabled", deployment_id=deployment_id)
+            logger.info("classify_step_skipped_disabled", deployment_id=deployment_id)
             return PipelineStepResult(step=self.step_type, media_processed=0, model_version=self.model_version)
 
+        # Resolve which classifier labels these crops (config → project → default).
+        classifier = resolve_classifier(resolve_classifier_name(config))
+        model_version = classifier.version
+
         threshold = config.get("confidence_threshold", 0.0)
-        labels = config.get("bioclip_labels")
-        rank = config.get("bioclip_rank", settings.BIOCLIP_RANK)
         svc = create_service_client()
         errors = 0
         observations_created = 0
+        skipped_confident = 0
 
         # Prefer the animal crop (better signal) over the full frame.
         media_ids = [m["id"] for m in media]
@@ -406,6 +494,29 @@ class BioCLIPStep(PipelineStep):
             return {r["media_id"]: r["animal_crop_url"] for r in (resp.data or []) if r.get("animal_crop_url")}
 
         crop_map = await asyncio.to_thread(_fetch_crops)
+
+        # Avoid showing the user three rows for one cat: BioCLIP is a *second opinion*,
+        # so only emit it where SpeciesNet was NOT already confident. Where SpeciesNet
+        # produced a confident animal label, skip BioCLIP so a single observation shows.
+        # Set config['bioclip_always']=True to keep the full ensemble (disagreement views).
+        suppress_when_confident = not config.get("bioclip_always", False)
+
+        def _fetch_confident_speciesnet() -> set[str]:
+            if not media_ids:
+                return set()
+            resp = (
+                svc.table("observations")
+                .select("media_id")
+                .in_("media_id", media_ids)
+                .eq("source_type", "ai")
+                .eq("observation_type", "animal")
+                .like("source_model_version", "speciesnet%")
+                .gte("confidence", SPECIES_CONFIDENCE)
+                .execute()
+            )
+            return {r["media_id"] for r in (resp.data or [])}
+
+        confident_ids = await asyncio.to_thread(_fetch_confident_speciesnet) if suppress_when_confident else set()
 
         tmpdir = tempfile.mkdtemp(prefix="bioclip_")
         path_to_media: dict[str, dict] = {}
@@ -428,7 +539,7 @@ class BioCLIPStep(PipelineStep):
                     logger.warning("bioclip_resolve_error", media_id=m.get("id"), error=str(exc))
                     errors += 1
 
-            predictions = await get_bioclip_service().predict(list(path_to_media.keys()), labels=labels, rank=rank)
+            predictions = await classifier.classify(list(path_to_media.keys()), config)
 
             timestamp = datetime.now(timezone.utc).isoformat()
             obs_batch: list[dict] = []
@@ -436,7 +547,10 @@ class BioCLIPStep(PipelineStep):
                 m = path_to_media.get(pred.filepath)
                 if not m:
                     continue
-                obs_batch.extend(build_bioclip_observations(m, deployment_id, pred, self.model_version, timestamp, threshold))
+                if m["id"] in confident_ids:
+                    skipped_confident += 1
+                    continue  # SpeciesNet already labelled this animal confidently — no redundant row
+                obs_batch.extend(build_bioclip_observations(m, deployment_id, pred, model_version, timestamp, threshold))
 
             if obs_batch:
 
@@ -454,10 +568,12 @@ class BioCLIPStep(PipelineStep):
 
         duration = time.monotonic() - start
         logger.info(
-            "bioclip_step_complete",
+            "classify_step_complete",
             deployment_id=deployment_id,
+            classifier=classifier.name,
             media_processed=len(media),
             observations_created=observations_created,
+            skipped_confident_speciesnet=skipped_confident,
             errors=errors,
             duration_seconds=round(duration, 2),
         )
@@ -467,7 +583,7 @@ class BioCLIPStep(PipelineStep):
             media_processed=len(media),
             errors=errors,
             duration_seconds=round(duration, 2),
-            model_version=self.model_version,
+            model_version=model_version,
         )
 
 
@@ -500,6 +616,7 @@ async def run_pipeline(
     config: dict[str, Any] | None = None,
     user_id: str | None = None,
     only_unannotated: bool = True,
+    force: bool = False,
     on_step: Optional[Callable[[str, int, int], Awaitable[None]]] = None,
 ) -> PipelineRunResult:
     """Execute a sequence of pipeline steps on a deployment.
@@ -519,6 +636,16 @@ async def run_pipeline(
     Returns:
         PipelineRunResult with per-step and aggregate metrics.
     """
+    # Guard: a non-UUID deployment_id can never match a real deployment — e.g. an
+    # unresolved SD-card folder prefix like "00000000" from an unconfigured camera.
+    # Passing it to Postgres raises 'invalid input syntax for type uuid', failing the
+    # whole AI phase. Skip cleanly instead.
+    try:
+        uuid.UUID(str(deployment_id))
+    except (ValueError, TypeError, AttributeError):
+        logger.warning("pipeline_skipped_invalid_deployment_id", deployment_id=deployment_id)
+        return PipelineRunResult(deployment_id=str(deployment_id))
+
     overall_start = time.monotonic()
     # Wall-clock start for the annotation_runs row. Must be set explicitly: if we let
     # started_at fall back to the DB default now(), it is evaluated at INSERT time —
@@ -529,10 +656,23 @@ async def run_pipeline(
     config["confidence_threshold"] = confidence_threshold
     svc = create_service_client()
 
-    # 1. Fetch media for the deployment.
-    # Guard 2: by default skip media that already have an AI observation, so the
-    # pipeline is idempotent + incremental — re-running only processes NEW images
-    # (and a manual run can pass only_unannotated=False to force a full re-run).
+    # Model versions whose observations this run would (re)create. Used for the
+    # idempotency guard below — re-running the same model on the same media is a
+    # no-op, so skip it and don't burn GPU.
+    _step_versions = {
+        PipelineStepType.SPECIESNET: SPECIESNET_VERSION,
+        PipelineStepType.BIOCLIP: BIOCLIP_VERSION,
+    }
+    run_versions = [_step_versions[s] for s in steps if s in _step_versions]
+
+    # 1. Fetch media for the deployment, applying the abuse/idempotency guards.
+    #  - **Idempotency (always, unless force):** skip media already annotated by
+    #    *this run's model versions*. This makes repeated triggers / re-uploads /
+    #    even a manual `only_unannotated=False` re-run a no-op on identical
+    #    content+model — the key defence against running AI on the same images
+    #    continuously. ``force=True`` (privileged) is the only true reprocess.
+    #  - **Incremental (only_unannotated, the default):** additionally skip any
+    #    AI-annotated media, so a normal run only touches NEW images.
     def _fetch_media():
         resp = (
             svc.table("media")
@@ -542,7 +682,23 @@ async def run_pipeline(
             .execute()
         )
         rows = resp.data or []
-        if only_unannotated and rows:
+        if force or not rows:
+            return rows
+
+        skip: set[str] = set()
+        if run_versions:
+            done = (
+                svc.table("observations")
+                .select("media_id")
+                .eq("deployment_id", deployment_id)
+                .in_("source_model_version", run_versions)
+                .not_.is_("media_id", "null")
+                .execute()
+                .data
+                or []
+            )
+            skip |= {o["media_id"] for o in done}
+        if only_unannotated:
             ai = (
                 svc.table("observations")
                 .select("media_id")
@@ -553,9 +709,8 @@ async def run_pipeline(
                 .data
                 or []
             )
-            annotated = {o["media_id"] for o in ai}
-            rows = [m for m in rows if m["id"] not in annotated]
-        return rows
+            skip |= {o["media_id"] for o in ai}
+        return [m for m in rows if m["id"] not in skip]
 
     media = await asyncio.to_thread(_fetch_media)
 
