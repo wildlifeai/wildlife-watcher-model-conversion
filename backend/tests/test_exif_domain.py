@@ -103,6 +103,14 @@ class TestUserCommentFields:
         assert parse_user_comment_fields(None) == {}
         assert parse_user_comment_fields(12345) == {}
 
+    def test_strips_exif_charcode_prefix(self):
+        # A spec-compliant UserComment keeps its 8-byte charcode prefix after decode
+        # (interior nulls survive null-stripping), e.g. "ASCII\0\0\0kiwi: 80;".
+        assert parse_user_comment_fields("ASCII\x00\x00\x00kiwi: 80; rat: 12;") == {"kiwi": "80", "rat": "12"}
+        assert parse_user_comment_fields("UNICODE\x00Temp: 14.5;") == {"Temp": "14.5"}
+        # A real key that merely starts with those letters (no null padding) is NOT stripped.
+        assert parse_user_comment_fields("ASCIIart: 5;") == {"ASCIIart": "5"}
+
     def test_bare_uuid_yields_no_fields(self):
         # A prepare.py-style UUID UserComment has no "key: value" tokens.
         assert parse_user_comment_fields("a1b2c3d4-e5f6-7890-abcd-ef1234567890") == {}

@@ -266,6 +266,13 @@ def parse_user_comment_fields(user_comment: Any) -> Dict[str, str]:
     fields: Dict[str, str] = {}
     if not user_comment or not isinstance(user_comment, str):
         return fields
+    # An EXIF UserComment carries an 8-byte character-code prefix ("ASCII\0\0\0",
+    # "UNICODE\0", "JIS\0\0\0\0\0"). The all-zero (undefined) prefix is already
+    # dropped by null-stripping, but the named ones start with a letter and survive
+    # decoding as e.g. "ASCII\0\0\0kiwi: 80;…" — strip the prefix (only when it's
+    # followed by the spec's null padding, so a real key can't be mis-stripped) plus
+    # any stray interior nulls, so the first key isn't corrupted.
+    user_comment = re.sub(r"^(?:ASCII|UNICODE|JIS|UNDEFINED)\x00+", "", user_comment).replace("\x00", "")
     for part in user_comment.split(";"):
         if ":" not in part:
             continue

@@ -502,6 +502,8 @@ class BioCLIPStep(PipelineStep):
         suppress_when_confident = not config.get("bioclip_always", False)
 
         def _fetch_confident_speciesnet() -> set[str]:
+            if not media_ids:
+                return set()
             resp = (
                 svc.table("observations")
                 .select("media_id")
