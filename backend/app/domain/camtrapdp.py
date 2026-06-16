@@ -399,6 +399,9 @@ def import_package(
     # Map ww_media_id → ww_dep_id for Drive upload URL backfill
     media_dep_map: dict[str, str] = {}
     media_inserted = 0
+    # IDs that actually landed in the DB — only these may receive a blank
+    # observation below, so a failed media batch can't FK-violate the blanks.
+    inserted_media_ids: set[str] = set()
     media_batch: list[dict] = []
     pending_drive_uploads: list[PendingDriveUpload] = []
     BULK_CHUNK = 100  # PostgREST bulk insert chunk size
@@ -465,6 +468,7 @@ def import_package(
             try:
                 svc.table("media").insert(media_batch).execute()
                 media_inserted += len(media_batch)
+                inserted_media_ids.update(r["id"] for r in media_batch)
             except Exception as e:
                 warnings.append(f"Failed to insert media batch: {e}")
             media_batch = []
@@ -474,6 +478,7 @@ def import_package(
         try:
             svc.table("media").insert(media_batch).execute()
             media_inserted += len(media_batch)
+            inserted_media_ids.update(r["id"] for r in media_batch)
         except Exception as e:
             warnings.append(f"Failed to insert media batch: {e}")
 
@@ -688,7 +693,7 @@ def import_package(
                 "review_status": "human_reviewed",
             }
             for mid, dep in media_dep_map.items()
-            if mid not in media_with_obs
+            if mid not in media_with_obs and mid in inserted_media_ids
         ]
         for i in range(0, len(empty_batch), BULK_CHUNK):
             chunk = empty_batch[i : i + BULK_CHUNK]

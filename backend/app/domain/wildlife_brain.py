@@ -38,6 +38,31 @@ from app.registries.embedding_registry import (
 
 logger = structlog.get_logger()
 
+
+async def _resolve_crops_concurrent(crops: list[dict], *, concurrency: int = 10) -> list[tuple[str, Optional[str], bytes]]:
+    """Resolve crop URLs to bytes with bounded concurrency, preserving input order.
+
+    Returns ``(media_id, deployment_id, image_bytes)`` per successfully-resolved
+    crop. Replaces a sequential ``await resolve_media`` loop that was very slow for
+    large deployments/projects (each resolve is network I/O to Drive / a public URL).
+    """
+    from app.domain.media_resolver import resolve_media
+
+    sem = asyncio.Semaphore(concurrency)
+
+    async def _one(c: dict):
+        async with sem:
+            try:
+                resolved = await resolve_media(c["crop_url"], size="full")
+            except Exception as exc:  # noqa: BLE001 — one bad crop must not sink the run
+                logger.warning("crop_resolve_failed", media_id=c.get("id"), error=str(exc))
+                return None
+        return (c["id"], c.get("deployment_id"), resolved[0]) if resolved else None
+
+    results = await asyncio.gather(*[_one(c) for c in crops])
+    return [r for r in results if r is not None]
+
+
 OUTLIER_LABEL = -1
 
 
@@ -404,7 +429,6 @@ async def embed_and_cluster_deployment(
 
     Returns a summary dict. ``progress`` is an optional async callable(float, str).
     """
-    from app.domain.media_resolver import resolve_media
     from app.services.dinov3 import get_dinov3_service
     from app.services.qdrant_client import build_payload, get_qdrant_service
     from app.services.supabase_client import create_service_client
@@ -430,13 +454,9 @@ async def embed_and_cluster_deployment(
         media_ids = [c["id"] for c in crops]
 
         await _tick(0.15, f"Downloading {len(crops)} crops…")
-        images: list[bytes] = []
-        kept_ids: list[str] = []
-        for c in crops:
-            resolved = await resolve_media(c["crop_url"], size="full")
-            if resolved:
-                images.append(resolved[0])
-                kept_ids.append(c["id"])
+        resolved_crops = await _resolve_crops_concurrent(crops)
+        images: list[bytes] = [img for (_mid, _dep, img) in resolved_crops]
+        kept_ids: list[str] = [mid for (mid, _dep, _img) in resolved_crops]
         media_ids = kept_ids
         if not images:
             await _finish_embedding_run(run_id, "complete", 0)
@@ -613,7 +633,6 @@ async def embed_and_cluster_scope(
     ``scope='project'`` requires ``scope_id == project_id``. ``scope='global'`` uses
     ``scope_id=None`` and considers every deployment the caller can see.
     """
-    from app.domain.media_resolver import resolve_media
     from app.services.dinov3 import get_dinov3_service
     from app.services.qdrant_client import build_payload, get_qdrant_service
     from app.services.supabase_client import create_service_client
@@ -656,15 +675,10 @@ async def embed_and_cluster_scope(
             }
 
         await _tick(0.2, f"Downloading {len(crops)} crops…")
-        images: list[bytes] = []
-        kept_ids: list[str] = []
-        kept_deps: list[str] = []
-        for c in crops:
-            resolved = await resolve_media(c["crop_url"], size="full")
-            if resolved:
-                images.append(resolved[0])
-                kept_ids.append(c["id"])
-                kept_deps.append(c["deployment_id"])
+        resolved_crops = await _resolve_crops_concurrent(crops)
+        images: list[bytes] = [img for (_mid, _dep, img) in resolved_crops]
+        kept_ids: list[str] = [mid for (mid, _dep, _img) in resolved_crops]
+        kept_deps: list[str] = [dep for (_mid, dep, _img) in resolved_crops]
         if not images:
             await _finish_embedding_run(run_id, "complete", 0)
             return {"embedding_run_id": run_id, "image_count": 0, "clusters": 0, "deployments": len(deployment_ids), "message": "crops unresolvable"}

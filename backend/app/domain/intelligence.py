@@ -131,7 +131,9 @@ async def detect_distribution_shift(deployment_id: str, period_a: tuple[str, str
         me = r.get("media_embeddings")
         if isinstance(me, list):
             me = me[0] if me else None
-        if not me or me.get("is_outlier"):
+        # Skip outliers and not-yet-clustered media (cluster_id is None) — a None
+        # bucket would pollute the Jensen-Shannon divergence and the changed list.
+        if not me or me.get("is_outlier") or me.get("cluster_id") is None:
             continue
         cid = me.get("cluster_id")
         ts = r.get("timestamp")
