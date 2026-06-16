@@ -128,13 +128,22 @@ async def accessible_deployment_ids(user_id: str, deployment_ids: list[str]) -> 
     """Filter a list of deployment IDs to those the caller may access (for body lists)."""
 
     def _check() -> list[str]:
+        if not deployment_ids:
+            return []
         svc = create_service_client()
         roles = _fetch_active_roles(svc, user_id)
+        # One query (deployment → project → org via embed) instead of 2 per id —
+        # avoids an N+1 when the body lists many deployments.
+        resp = svc.table("deployments").select("id, project_id, projects(organisation_id)").in_("id", deployment_ids).execute()
         out: list[str] = []
-        for dep_id in deployment_ids:
-            org_id, project_id = _resolve_org_project(svc, deployment_id=dep_id)
+        for row in resp.data or []:
+            proj = row.get("projects")
+            if isinstance(proj, list):  # PostgREST may nest a to-one as a 1-element list
+                proj = proj[0] if proj else None
+            org_id = proj.get("organisation_id") if isinstance(proj, dict) else None
+            project_id = row.get("project_id")
             if (org_id or project_id) and _has_access(roles, org_id, project_id):
-                out.append(dep_id)
+                out.append(row["id"])
         return out
 
     return await asyncio.to_thread(_check)
