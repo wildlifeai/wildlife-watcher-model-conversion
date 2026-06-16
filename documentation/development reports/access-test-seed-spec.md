@@ -3,11 +3,11 @@
 > **Status:** 🔧 Active spec — current engineering hand-off; kept current until shipped.
 
 **Audience:** whoever maintains `ww-backend/supabase/seeds`.
-**Goal:** seed the deployments that back the `sdcard/access-scenarios/` fixtures so a fresh dev DB
+**Goal:** seed the deployments that back the `sdcard/dev-sdcard/` fixtures so a fresh dev DB
 can reproduce the **valid / no-access / not-found / no-id** upload paths every time.
 
 The fixture images live in
-[`ww-website/test-fixtures/camera-trap/sdcard/access-scenarios/MEDIA/`](../../test-fixtures/camera-trap/README.md#access-control-test-scenarios-sdcardaccess-scenarios).
+[`ww-website/test-fixtures/camera-trap/sdcard/dev-sdcard/MEDIA/`](../../test-fixtures/camera-trap/README.md#dev-sd-card-fixtures-sdcarddev-sdcard).
 Each camera folder carries a real `Deployment_ID` UUID in its EXIF; that UUID is what the backend
 binds on. This report specifies the rows to seed for each scenario.
 

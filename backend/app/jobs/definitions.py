@@ -963,7 +963,6 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         async def _cleanup_blobs():
             nonlocal last_event_ts
             completed = 0
-            total = len(blob_ids)
             for bid in blob_ids:
                 try:
                     await delete_blob(bid)
@@ -971,26 +970,19 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                     pass
                 completed += 1
 
-                last_event_ts = time.monotonic()
-                if completed % max(1, total // 10) == 0 or completed == total:
-                    await emit_event(
-                        job_id,
-                        ProgressEvent(
-                            type=EventType.PROGRESS,
-                            phase=ProgressPhase.CLEANUP,
-                            current=completed,
-                            total=total,
-                            message=f"🧹 Cleaning up temporary buffers ({completed}/{total})",
-                        ),
-                    )
-                    progress = 0.47 + (0.03 * (completed / total))
-                    await update_job(job_id, progress=min(progress, 0.50))
+                last_event_ts = time.monotonic()  # keep the stall heartbeat fresh
             return completed
 
         deleted = await _cleanup_blobs()
         if deleted:
             logger.info("drive_upload_intermediate_files_cleaned", count=deleted)
-
+            # One summary line instead of one event per buffer (which flooded the
+            # dock log on small batches, where total // 10 rounded to 0 → emit-every).
+            await emit_event(
+                job_id,
+                ProgressEvent(type=EventType.PROGRESS, phase=ProgressPhase.CLEANUP, message=f"🧹 Cleaned up {deleted} temporary buffer(s)"),
+            )
+        await update_job(job_id, progress=0.50)
         await complete_phase(job_id, ProgressPhase.CLEANUP)
 
         # ── Phase 4: AI PIPELINE (auto-run once per deployment after Drive sync) ─

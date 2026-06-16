@@ -81,7 +81,7 @@ it cannot carry is the EXIF payload (NN scores, telemetry, Make/Model).
 - **Config:** `FF_BMP_INGEST_ENABLED` (default off in code; **on** in `docker-compose.yml` for the dev
   trial — set it on the Azure Container App for dev-cloud), `BMP_JPEG_QUALITY` (90).
 - **Tests:** `test_bmp_ingest.py` (sniff, convert, dimensions, quality/size, real-device round-trip).
-- **Fixtures:** `sdcard/access-scenarios/MEDIA/{7785FABB,242025DF}/` now include the raw `.BMP` frames
+- **Fixtures:** `sdcard/dev-sdcard/MEDIA/{7785FABB,242025DF}/` now include the raw `.BMP` frames
   alongside the JPGs.
 
 ## Possible follow-ups (not needed for the current trial)

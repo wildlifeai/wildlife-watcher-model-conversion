@@ -160,12 +160,14 @@ Owner for all template projects: **alice@ww.org** (`a0000000-…-000001`), Gener
 
 ---
 
-## Access-control test scenarios (`sdcard/access-scenarios/`)
+## Dev SD-card fixtures (`sdcard/dev-sdcard/`)
 
-Real WW500 SD-card images for exercising **how upload behaves when a photo's embedded
-`Deployment_ID` resolves to different access states.** Drag the `MEDIA/` folder into the
-website upload. Each camera folder carries a real `Deployment_ID` UUID in its EXIF
-(`0xF200`) — that UUID, not the folder name, is what the backend binds on.
+The single merged dev SD-card (formerly `tests-in-new-plymouth/` + `access-scenarios/`). Real WW500
+images for exercising the full upload → bind → pipeline path **and** the access-control states. Drag
+`dev-sdcard/MEDIA/` into the website upload. Each camera folder carries a real `Deployment_ID` UUID in
+its EXIF (`0xF200`) — that UUID, not the folder name, is what the backend binds on. **Most folders are
+seeded so they bind; only the *not-found* (08702E50) and *no-id* (00000000 / IMAGES.000) cases
+deliberately don't.**
 
 > ⚠️ **Log in as a _non-admin_ seed user to test `no_access`** (e.g. Tama Jones, `a0…002`).
 > alice (`a0…001`) is a global **`ww_admin`** (`system` scope) and therefore sees *every*
@@ -177,6 +179,8 @@ website upload. Each camera folder carries a real `Deployment_ID` UUID in its EX
 |--------|----------------------|----------|-------|
 | `MEDIA/7785FABB/` (8 JPG + 8 BMP) | `7785fabb-e00e-4da2-aed6-a0fb906e6d79` | **Valid** — matches a deployment the logged-in user can access → media bind, pipeline runs (night skinks / blanks) | Seed in **General** org; grant the test user a project role |
 | `MEDIA/E005A4AB/` (11 JPG + 11 BMP) | `e005a4ab-a287-4efe-9878-56568f5c30bb` | **Valid — diverse content (cats & birds)** — recognisable animals; the best folder for exercising SpeciesNet classification | Seed in **General** org, owner `a0…001` (same as the valid row) |
+| `MEDIA/472E4095/` | `472e4095-1dd9-470d-9fae-a244ae3ec681` | **Valid — New Plymouth** | Seeded in **General** org, owner `a0…001` (`access_test_deployments.sql`) |
+| `MEDIA/32f55229/` | `32f55229-25b3-4887-a253-b2aae9edec05` | **Valid — New Plymouth night session** | Seeded by `fixtures.generated.sql` |
 | `MEDIA/242025DF/` (3 JPG + 3 BMP) | `242025df-5d55-47d6-b245-e1690ef44126` | **No access** — deployment exists but in an org the **non-admin** test user is not in → `no_access` warning | Seeded in org **`b0…003`** (owner `a0…004`); Tama `a0…002` is not a member → no access |
 | `MEDIA/08702E50/` (1) | `08702e50-f7c6-499f-8b9d-3ecf9cfe050a` | **Not found** — UUID not in the DB → `not_found` warning | **Do not seed** |
 | `MEDIA/00000000/` (4) | _(none — tag absent)_ | **No deployment ID** — camera captured while unconfigured → no binding | n/a |
