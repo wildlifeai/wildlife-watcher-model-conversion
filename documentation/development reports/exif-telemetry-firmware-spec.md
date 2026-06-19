@@ -25,8 +25,15 @@ was updated to:
    | `RSSI` | `lorawan_rssi` | int |
    | `SNR` | `lorawan_snr` | float |
 
-   Every `key: value` token is also preserved in `user_comment_fields` (so the on-device NN class
-   scores you already write are no longer discarded).
+   Every `key: value` token is also preserved in `user_comment_fields` (so on-device NN class
+   scores are not discarded by the parser).
+
+   > ⚠️ **Correction (2026-06-19):** the device does **not** currently write the NN scores to
+   > `UserComment`. The `UserComment` tag is omitted entirely because the firmware `USE_PERCENTAGE`
+   > flag is disabled (while `ENABLE_EXIF_CONFIDENCE` is on), so the confidence producer is compiled
+   > out — see [firmware NN_confidence_EXIF_not_written](../../../Seeed_Grove_Vision_AI_Module_V2/EPII_CM55M_APP_S/app/ww_projects/ww500_md/doc/NN_confidence_EXIF_not_written.md).
+   > The parser is ready; the firmware flag is the blocker. Full flow:
+   > [Embedded model lifecycle](../resources/embedded-model-lifecycle.md).
 
 **So the only firmware change required to get temperature end-to-end is: include
 `Temp: <celsius>;` in the `UserComment` string.** No new EXIF tag, no parser change, no DB migration.

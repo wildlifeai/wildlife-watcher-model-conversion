@@ -58,7 +58,17 @@ async def run_vela_conversion(
         result = subprocess.run(cmd, capture_output=True, text=True, check=True, timeout=timeout)
         logger.info("vela_conversion_success", stdout=result.stdout[:500])
     except subprocess.CalledProcessError as e:
-        raise VelaConversionError(f"Vela failed (code {e.returncode}): {e.stderr[:500]}") from e
+        # The real reason (unsupported operator / not int8-quantized) is at the END
+        # of Vela's output, after the Python traceback header — so surface the tail,
+        # not the first 500 chars, and add an actionable hint.
+        detail = ((e.stderr or "") + "\n" + (e.stdout or "")).strip()
+        logger.error("vela_conversion_failed", returncode=e.returncode, detail=detail[-2000:])
+        raise VelaConversionError(
+            f"Vela failed (code {e.returncode}). The model must be a fully int8-quantized "
+            "TFLite model compatible with the Ethos-U NPU — the usual causes are a float or "
+            "only partially-quantized model, or an unsupported operator.\n\n"
+            f"Vela output:\n{detail[-1200:]}"
+        ) from e
     except FileNotFoundError:
         raise VelaConversionError("Vela command not found. Ensure ethos-u-vela is installed.")
     except subprocess.TimeoutExpired:

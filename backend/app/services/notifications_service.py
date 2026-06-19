@@ -2,12 +2,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """In-app notifications — emit rows into the `notifications` table (service role).
 
-After an AI run, notify a project's users of species detections, honouring each user's
-`notification_rules` (which species, which channels). Users *without* a rule fall back to
-a sensible default: pest species → web notification. Everything is best-effort and
-resilient — missing tables or query failures silently no-op so the pipeline is never
-affected. Email goes through the provider-agnostic `email_channel` (a no-op stub until a
-provider is configured). Phase 5.
+After an AI run, notify a project's users of species detections. Notifications are
+strictly **opt-in**: a user is notified only when they have an active
+`notification_rules` row for the event with at least one channel selected. Users who
+have not configured (or have cleared) their preferences get nothing — no default watch
+set. Everything is best-effort and resilient — missing tables or query failures silently
+no-op so the pipeline is never affected. Email goes through the provider-agnostic
+`email_channel` (a no-op stub until a provider is configured). Phase 5.
 """
 
 import asyncio
@@ -20,30 +21,6 @@ from app.services.email_channel import send_email
 from app.services.supabase_client import create_service_client
 
 logger = structlog.get_logger()
-
-# Default watch set for users with no explicit rule (case-insensitive substring match).
-# Superseded per-user by notification_rules.
-WATCHED_KEYWORDS = [
-    "rat",
-    "rattus",
-    "stoat",
-    "weasel",
-    "mustela",
-    "ferret",
-    "possum",
-    "trichosurus",
-    "cat",
-    "felis",
-    "hedgehog",
-    "erinaceus",
-]
-
-
-def _is_watched(name: str | None) -> bool:
-    if not name:
-        return False
-    low = name.lower()
-    return any(k in low for k in WATCHED_KEYWORDS)
 
 
 def _project_member_ids(svc, project_id: str) -> list[str]:
@@ -95,9 +72,10 @@ def _emails(svc, user_ids: list[str]) -> dict:
 async def emit_detection_notifications(deployment_id: str, recent_minutes: int = 30) -> int:
     """Notify project users of species detections from the latest AI run.
 
-    Honours per-user notification_rules; users without a rule get the pest default on the
-    web channel. Only observations created in the last ``recent_minutes`` count, so re-runs
-    don't re-notify. Returns the number of web notifications created.
+    Opt-in only: a user is notified solely for species matching their active
+    notification_rules, on the channels they selected. Members without an active rule
+    are skipped. Only observations created in the last ``recent_minutes`` count, so
+    re-runs don't re-notify. Returns the number of web notifications created.
     """
 
     def _gather() -> tuple[list[tuple[str, str, str]], int]:
@@ -139,13 +117,16 @@ async def emit_detection_notifications(deployment_id: str, recent_minutes: int =
 
         for uid in members:
             rule = rules.get(uid)
-            if rule is not None:
-                channels = rule.get("channels") or ["web"]
-                filt = (rule.get("species_filter") or "").lower()
-                matching = {n: c for n, c in detected.items() if not filt or filt in n.lower()}
-            else:
-                channels = ["web"]
-                matching = {n: c for n, c in detected.items() if _is_watched(n)}
+            # Opt-in: no active rule → no notification (no default watch set).
+            if rule is None:
+                continue
+            # Respect the selected channels literally — an empty set means "off",
+            # never silently fall back to web.
+            channels = rule.get("channels") or []
+            if not channels:
+                continue
+            filt = (rule.get("species_filter") or "").lower()
+            matching = {n: c for n, c in detected.items() if not filt or filt in n.lower()}
             if not matching:
                 continue
 
@@ -165,7 +146,7 @@ async def emit_detection_notifications(deployment_id: str, recent_minutes: int =
                         "data": {"species": matching, "count": sum(matching.values()), "link": link},
                     }
                 )
-            if "email" in channels and (rule or {}).get("digest", "immediate") == "immediate":
+            if "email" in channels and rule.get("digest", "immediate") == "immediate":
                 to = emails.get(uid)
                 if to:
                     email_tasks.append((to, title, f"{body}\n\nView in Wildlife Watcher: {link}"))

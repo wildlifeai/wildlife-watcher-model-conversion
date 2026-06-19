@@ -105,6 +105,42 @@ def test_build_observations_blank_image():
     assert rows[0]["observation_type"] == "blank"
 
 
+def test_delete_superseded_ai_observations_scopes_to_model_and_unreviewed():
+    """Replace-on-rerun deletes only this model's machine rows for the given
+    media, never human-reviewed ones."""
+    from unittest.mock import MagicMock
+
+    from app.domain.pipeline import delete_superseded_ai_observations
+
+    captured = {}
+    table = MagicMock()
+    table.delete.return_value = table
+    table.in_.side_effect = lambda col, vals: (captured.update(in_col=col, in_vals=vals), table)[1]
+    table.eq.side_effect = lambda col, val: (captured.setdefault("eq", {}).update({col: val}), table)[1]
+    svc = MagicMock()
+    svc.table.return_value = table
+
+    delete_superseded_ai_observations(svc, ["m1", "m2"], "speciesnet-v4.0.1a")
+
+    svc.table.assert_called_with("observations")
+    table.delete.assert_called_once()
+    assert captured["in_col"] == "media_id"
+    assert captured["in_vals"] == ["m1", "m2"]
+    # Scoped to this model version and only the unreviewed machine state.
+    assert captured["eq"] == {"source_model_version": "speciesnet-v4.0.1a", "review_status": "ai_reviewed"}
+    table.execute.assert_called_once()
+
+
+def test_delete_superseded_ai_observations_noop_on_empty():
+    from unittest.mock import MagicMock
+
+    from app.domain.pipeline import delete_superseded_ai_observations
+
+    svc = MagicMock()
+    delete_superseded_ai_observations(svc, [], "speciesnet-v4.0.1a")
+    svc.table.assert_not_called()
+
+
 # ── Taxonomy parsing + confidence-based roll-up (Tier 2 #5) ──────────────────
 
 

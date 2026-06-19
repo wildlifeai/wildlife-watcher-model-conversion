@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiClient } from '../../lib/apiClient'
 import { JobProgress } from '../common'
+import { useJob } from '../../hooks/useJob'
+import { ModelLabelMapper } from './ModelLabelMapper'
 
 interface PretrainedModel {
   architecture: string
@@ -21,6 +23,9 @@ export function UploadModel() {
 
   const [file, setFile] = useState<File | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
+  // Captured from the convert response so we can offer label-mapping once the
+  // conversion job validates the model.
+  const [modelId, setModelId] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -158,7 +163,8 @@ export function UploadModel() {
         return apiClient.upload('/api/models/convert', formData)
       }
     },
-    onSuccess: (response: { data?: { job_id?: string; status?: string } }) => {
+    onSuccess: (response: { data?: { job_id?: string; status?: string; model_id?: string } }) => {
+      if (response?.data?.model_id) setModelId(response.data.model_id)
       if (response?.data?.job_id) {
         setJobId(response.data.job_id)
       } else if (response?.data?.status === 'validated') {
@@ -462,7 +468,19 @@ export function UploadModel() {
       )}
 
       <JobProgress jobId={jobId} />
+
+      {/* Once the conversion job validates the model, offer label mapping. */}
+      <ModelLabelMapperGate jobId={jobId} modelId={modelId} />
     </div>
   )
+}
+
+// Renders the label mapper only after the conversion job completes successfully,
+// so the model row has its detection_capabilities populated by the worker.
+function ModelLabelMapperGate({ jobId, modelId }: { jobId: string | null; modelId: string | null }) {
+  const { data: job } = useJob(jobId)
+  const done = job?.status === 'completed' || job?.status === 'completed_with_errors'
+  if (!modelId || !done) return null
+  return <ModelLabelMapper modelId={modelId} />
 }
 

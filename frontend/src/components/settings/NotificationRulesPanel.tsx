@@ -32,7 +32,7 @@ const CHANNELS: { id: Channel; label: string; disabled?: boolean; note?: string 
 
 const key = (p: string, e: string) => `${p}:${e}`
 
-export function NotificationRulesPanel() {
+export function NotificationRulesPanel({ projectId }: { projectId?: string } = {}) {
   const { user } = useAuth()
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([])
   const [rules, setRules] = useState<Record<string, Rule>>({})
@@ -43,8 +43,11 @@ export function NotificationRulesPanel() {
     if (!user) return
     let cancelled = false
     setLoading(true)
+    // Scope to one project when opened as a per-project action; otherwise list all.
+    let projQuery = supabase.from('projects').select('id, name').order('name')
+    if (projectId) projQuery = projQuery.eq('id', projectId)
     Promise.all([
-      supabase.from('projects').select('id, name').order('name'),
+      projQuery,
       supabase.from('notification_rules').select('project_id, event_type, species_filter, channels, digest, is_active'),
     ]).then(([projRes, ruleRes]) => {
       if (cancelled) return
@@ -59,7 +62,7 @@ export function NotificationRulesPanel() {
       setLoading(false)
     })
     return () => { cancelled = true }
-  }, [user])
+  }, [user, projectId])
 
   const ruleFor = (p: string, e: string): Rule =>
     rules[key(p, e)] ?? { project_id: p, event_type: e, species_filter: null, channels: [], digest: 'immediate', is_active: false }
@@ -109,9 +112,12 @@ export function NotificationRulesPanel() {
       </p>
       {projects.map(p => (
         <div key={p.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }}>
-          <div style={{ padding: '0.6rem 0.9rem', fontWeight: 600, fontSize: '0.9rem', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
-            {p.name}
-          </div>
+          {/* The slide-over header already names the project when scoped to one. */}
+          {!projectId && (
+            <div style={{ padding: '0.6rem 0.9rem', fontWeight: 600, fontSize: '0.9rem', background: 'var(--surface)', borderBottom: '1px solid var(--border)' }}>
+              {p.name}
+            </div>
+          )}
           <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.82rem' }}>
             <thead>
               <tr style={{ opacity: 0.6, fontSize: '0.72rem', textAlign: 'left' }}>

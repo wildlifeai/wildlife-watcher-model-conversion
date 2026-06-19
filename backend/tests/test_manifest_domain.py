@@ -98,3 +98,41 @@ class TestFirmware83Filename:
         from app.domain.manifest import firmware_83_filename
 
         assert firmware_83_filename("invalid") == "output.img"
+
+
+# ── Nullable model paths: unconverted models must be skipped, never NULL-dereffed ──
+
+
+class TestNullableModelPaths:
+    @pytest.mark.asyncio
+    async def test_download_from_storage_returns_none_for_null_path(self):
+        from app.services.storage import download_from_storage
+
+        # NULL/empty path = nothing to download; must not touch the client.
+        assert await download_from_storage("ai-models", None) is None  # type: ignore[arg-type]
+        assert await download_from_storage("ai-models", "") is None
+
+    @pytest.mark.asyncio
+    async def test_resolve_project_model_treats_null_paths_as_no_model(self, monkeypatch):
+        from unittest.mock import MagicMock
+
+        from app.domain import manifest
+
+        # A project whose assigned model is still converting (NULL paths).
+        client = MagicMock()
+        table = MagicMock()
+        table.select.return_value = table
+        table.eq.return_value = table
+        table.execute.return_value = MagicMock(data=[{
+            "model_id": "m1",
+            "ai_models": {
+                "id": "m1", "name": "Rat v3", "version": "3.0.0",
+                "model_path": None, "labels_path": None,
+                "model_family_id": "f1", "version_number": 3,
+                "ai_model_families": {"firmware_model_id": 42},
+            },
+        }])
+        client.table.return_value = table
+
+        result = await manifest._resolve_project_model(client, "proj-1")
+        assert result == {"has_model": False}

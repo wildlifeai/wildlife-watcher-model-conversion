@@ -24,7 +24,7 @@ const CAPTURE_LABEL: Record<string, string> = {
   timeLapse: 'Timelapse',
 }
 
-export function ProjectDefaultsPanel() {
+export function ProjectDefaultsPanel({ projectId }: { projectId?: string } = {}) {
   const { user } = useAuth()
   const [projects, setProjects] = useState<Project[]>([])
   const [methods, setMethods] = useState<CaptureMethod[]>([])
@@ -36,8 +36,11 @@ export function ProjectDefaultsPanel() {
     if (!user) return
     let cancelled = false
     setLoading(true)
+    // Scope to one project when opened as a per-project action; otherwise list all.
+    let projQuery = supabase.from('projects').select('id, name, capture_method_id, model_id').order('name')
+    if (projectId) projQuery = projQuery.eq('id', projectId)
     Promise.all([
-      supabase.from('projects').select('id, name, capture_method_id, model_id').order('name'),
+      projQuery,
       supabase.from('capture_methods').select('id, value, description').eq('is_active', true),
       supabase.from('ai_models').select('id, name, version').eq('status', 'deployed').order('name'),
     ]).then(([p, c, m]) => {
@@ -48,7 +51,7 @@ export function ProjectDefaultsPanel() {
       setLoading(false)
     })
     return () => { cancelled = true }
-  }, [user])
+  }, [user, projectId])
 
   const save = async (id: string, patch: Partial<Project>) => {
     setProjects(prev => prev.map(p => p.id === id ? { ...p, ...patch } : p))
@@ -68,8 +71,9 @@ export function ProjectDefaultsPanel() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
       {projects.map(p => (
-        <div key={p.id} style={{ border: '1px solid var(--border)', borderRadius: 'var(--radius)', padding: '0.75rem 0.9rem' }}>
-          <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>{p.name}</div>
+        <div key={p.id} style={{ border: projectId ? 'none' : '1px solid var(--border)', borderRadius: 'var(--radius)', padding: projectId ? 0 : '0.75rem 0.9rem' }}>
+          {/* The slide-over header already names the project when scoped to one. */}
+          {!projectId && <div style={{ fontWeight: 600, fontSize: '0.9rem', marginBottom: '0.5rem' }}>{p.name}</div>}
           <div style={{ display: 'flex', gap: '1.5rem', flexWrap: 'wrap' }}>
             <label style={{ fontSize: '0.78rem', display: 'flex', flexDirection: 'column', gap: '0.25rem' }}>
               <span style={{ opacity: 0.7 }}>Default triggering method</span>

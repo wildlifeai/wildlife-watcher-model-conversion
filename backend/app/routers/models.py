@@ -97,11 +97,11 @@ async def convert_model(
     next_ver = max(existing_versions) + 1 if existing_versions else 1
     version_string = f"{next_ver}.0.0-{uuid.uuid4().hex[:6]}"
 
-    # Insert ai_models row (paths updated by worker after conversion).
-    # model_path / labels_path are NOT NULL UNIQUE, so a shared placeholder like
-    # "" collides on the second upload (23505). Use a per-upload unique placeholder
-    # keyed on job_id (a UUID); the worker overwrites both with the real storage
-    # paths once conversion succeeds.
+    # Insert ai_models row. model_path / labels_path are nullable (and UNIQUE), so
+    # an unconverted model carries NULL until the worker writes the real storage
+    # paths on success. (Postgres allows many NULLs under UNIQUE, so concurrent
+    # pending uploads don't collide — this replaced an earlier "_pending/{job_id}"
+    # placeholder hack once the NOT NULL constraint was dropped backend-side.)
     model_insert = (
         client.table("ai_models")
         .insert(
@@ -115,8 +115,8 @@ async def convert_model(
                 "uploaded_by": user.id,
                 "modified_by": user.id,
                 "file_type": "uploading",
-                "model_path": f"_pending/{job_id}.TFL",
-                "labels_path": f"_pending/{job_id}.TXT",
+                "model_path": None,
+                "labels_path": None,
             }
         )
     )

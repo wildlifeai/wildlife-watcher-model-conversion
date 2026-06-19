@@ -96,3 +96,39 @@ class TestBuildFirmwareFilename:
             name = _build_firmware_filename(Path(f.name))
 
         assert name == "MOD00001.tfl"
+
+
+class TestConvertUploadedModelDiscovery:
+    """tflite/labels discovery in convert_uploaded_model (paths that don't run Vela)."""
+
+    @staticmethod
+    def _zip(files: dict[str, bytes]) -> bytes:
+        import io
+        import zipfile
+
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w") as z:
+            for name, data in files.items():
+                z.writestr(name, data)
+        return buf.getvalue()
+
+    @pytest.mark.asyncio
+    async def test_precompiled_tfl_with_nested_labels_returns_without_vela(self):
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = self._zip({
+            "out/MOD00001.tfl": b"\x00\x01tflcontent",
+            "out/labels.txt": b"rat\nstoat\n",
+        })
+        tfl, txt, labels = await convert_uploaded_model(zip_bytes, "precompiled.zip")
+        assert tfl == b"\x00\x01tflcontent"
+        assert labels == ["rat", "stoat"]
+        assert txt == b"rat\nstoat\n"
+
+    @pytest.mark.asyncio
+    async def test_missing_tflite_lists_present_files(self):
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = self._zip({"readme.txt": b"hi", "weights.bin": b"x"})
+        with pytest.raises(ModelDomainError, match="No .tflite model found"):
+            await convert_uploaded_model(zip_bytes, "bad.zip")

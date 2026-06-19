@@ -50,6 +50,10 @@ export interface RibbonProps {
   brandLabel?: string
   /** Right-aligned status content in the menu bar (e.g. result counts). */
   status?: React.ReactNode
+  /** Keep the ribbon pinned below the app header while the page scrolls. */
+  sticky?: boolean
+  /** Offset from the top when sticky (defaults to the 56px app header height). */
+  stickyTop?: number
 }
 
 // ── Styles ───────────────────────────────────────────────────────────────────
@@ -130,14 +134,20 @@ function tabStyle(active: boolean): React.CSSProperties {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function Ribbon({ tabs, activeTabId, defaultTabId, onTabChange, brandLabel, status }: RibbonProps) {
+export function Ribbon({ tabs, activeTabId, defaultTabId, onTabChange, brandLabel, status, sticky, stickyTop = 56 }: RibbonProps) {
   const [internal, setInternal] = useState(defaultTabId ?? tabs[0]?.id)
   const active = activeTabId ?? internal
   const setActive = (id: string) => { onTabChange?.(id); if (activeTabId === undefined) setInternal(id) }
   const current = tabs.find(t => t.id === active) ?? tabs[0]
 
+  // Pin below the app header (z 100) so it stays usable while the grid scrolls.
+  // Sits under the full-screen modal (z 300) and slide-overs (z 200).
+  const containerStyle: React.CSSProperties = sticky
+    ? { ...CONTAINER, position: 'sticky', top: stickyTop, zIndex: 50 }
+    : CONTAINER
+
   return (
-    <div style={CONTAINER}>
+    <div style={containerStyle}>
       {/* ── Menu bar ──────────────────────────────────────── */}
       <div style={MENUBAR}>
         <div style={BRAND}>

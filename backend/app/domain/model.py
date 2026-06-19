@@ -212,28 +212,52 @@ async def convert_uploaded_model(zip_content: bytes, filename: str) -> Tuple[byt
         with zipfile.ZipFile(uploaded_zip_path, "r") as z:
             z.extractall(work_dir)
 
-        tflite_path = work_dir / "trained.tflite"
         vars_h_path = work_dir / "model-parameters" / "model_variables.h"
+
+        # macOS zips carry AppleDouble shadow files (__MACOSX/, ._name). Ignore
+        # them everywhere — a "._model.tflite" shadow must never be picked as the
+        # model, and it shouldn't clutter the "files present" diagnostic.
+        def _real(paths) -> list[Path]:
+            return [p for p in paths if not p.name.startswith("._") and "__MACOSX" not in p.parts]
 
         # Check if the user uploaded an ALREADY converted firmware package
         # containing a .tfl file and labels.txt
-        precompiled_tfl = list(work_dir.glob("*.tfl")) + list(work_dir.glob("*.TFL"))
-        if precompiled_tfl and (work_dir / "labels.txt").exists():
+        precompiled_tfl = _real(sorted(work_dir.rglob("*.tfl")) + sorted(work_dir.rglob("*.TFL")))
+        labels_txt = next(iter(_real(work_dir.rglob("labels.txt"))), None)
+        if precompiled_tfl and labels_txt:
             tfl_file = precompiled_tfl[0]
             logger.info("model_already_converted", file=tfl_file.name)
 
-            labels = (work_dir / "labels.txt").read_text().splitlines()
+            labels = labels_txt.read_text().splitlines()
             labels = [lbl.strip() for lbl in labels if lbl.strip()]
 
             tfl_bytes = tfl_file.read_bytes()
-            txt_bytes = (work_dir / "labels.txt").read_bytes()
+            txt_bytes = labels_txt.read_bytes()
 
             return tfl_bytes, txt_bytes, labels
 
+        # Locate the source .tflite. Prefer Edge Impulse's conventional
+        # ``trained.tflite``; otherwise accept any .tflite anywhere in the ZIP
+        # (custom exports name/nest it differently).
+        tflite_path = work_dir / "trained.tflite"
         if not tflite_path.exists():
-            raise ModelDomainError("trained.tflite not found in ZIP")
-        if not vars_h_path.exists():
-            raise ModelDomainError("model_variables.h not found in ZIP")
+            found = _real(sorted(work_dir.rglob("*.tflite")) + sorted(work_dir.rglob("*.TFLITE")))
+            if found:
+                tflite_path = found[0]
+                logger.info("tflite_found_by_search", file=str(tflite_path.relative_to(work_dir)))
+
+        if not tflite_path.exists():
+            present = sorted(p.name for p in _real(work_dir.rglob("*")) if p.is_file())[:25]
+            raise ModelDomainError(
+                "No .tflite model found in the ZIP. Expected a quantized TFLite model "
+                "(e.g. Edge Impulse's 'TensorFlow Lite (int8 quantized)' export, which "
+                "contains 'trained.tflite') — not the C++/firmware library export. "
+                "Files present: " + ", ".join(present)
+            )
+
+        # model_variables.h is optional — _build_firmware_filename falls back to a
+        # default firmware name when it's absent or unparseable (custom exports
+        # don't include Edge Impulse project metadata).
 
         logger.info("model_extracted", model=container_name)
 

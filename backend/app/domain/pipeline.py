@@ -296,6 +296,32 @@ def build_speciesnet_observations(
     return rows
 
 
+def delete_superseded_ai_observations(svc, media_ids, model_version: str) -> None:
+    """Delete prior *machine* observations for these media + model version.
+
+    Makes a (re)run replace rather than append: without this, every run on the
+    same media inserts a fresh set of AI rows, so re-uploads / force reprocess /
+    a re-run with a new model accumulate duplicate detections (the cause of the
+    "10 identical human rows on one image" bug).
+
+    Only rows still in the ``ai_reviewed`` state are removed. A human who
+    confirms or edits an AI label keeps ``source_type='ai'`` but advances
+    ``review_status`` to ``human_reviewed`` (see lib/observations) — those are
+    preserved, so reprocessing never discards human work.
+    """
+    ids = list(media_ids)
+    for i in range(0, len(ids), 100):
+        chunk = ids[i : i + 100]
+        (
+            svc.table("observations")
+            .delete()
+            .in_("media_id", chunk)
+            .eq("source_model_version", model_version)
+            .eq("review_status", "ai_reviewed")
+            .execute()
+        )
+
+
 class SpeciesNetStep(PipelineStep):
     """SpeciesNet ensemble — detection + species classification in one pass.
 
@@ -357,8 +383,13 @@ class SpeciesNetStep(PipelineStep):
                 obs_batch.extend(build_speciesnet_observations(m, deployment_id, pred, self.model_version, timestamp, threshold))
 
             if obs_batch:
+                # Replace, don't append: clear this model's prior machine rows for the
+                # media we just re-ran, then insert the fresh set. Idempotent under
+                # re-uploads / force reprocess; human-reviewed rows are kept.
+                resolved_ids = {m["id"] for m in path_to_media.values()}
 
-                def _insert():
+                def _persist():
+                    delete_superseded_ai_observations(svc, resolved_ids, self.model_version)
                     inserted = 0
                     for i in range(0, len(obs_batch), 50):
                         batch = obs_batch[i : i + 50]
@@ -366,7 +397,7 @@ class SpeciesNetStep(PipelineStep):
                         inserted += len(batch)
                     return inserted
 
-                observations_created = await asyncio.to_thread(_insert)
+                observations_created = await asyncio.to_thread(_persist)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 
@@ -553,8 +584,13 @@ class BioCLIPStep(PipelineStep):
                 obs_batch.extend(build_bioclip_observations(m, deployment_id, pred, model_version, timestamp, threshold))
 
             if obs_batch:
+                # Replace this classifier's prior machine rows for the media it just
+                # re-ran (keyed by the classifier's own model version, so SpeciesNet
+                # rows are untouched), then insert fresh. Idempotent on re-run.
+                written_ids = {o["media_id"] for o in obs_batch}
 
-                def _insert():
+                def _persist():
+                    delete_superseded_ai_observations(svc, written_ids, model_version)
                     inserted = 0
                     for i in range(0, len(obs_batch), 50):
                         batch = obs_batch[i : i + 50]
@@ -562,7 +598,7 @@ class BioCLIPStep(PipelineStep):
                         inserted += len(batch)
                     return inserted
 
-                observations_created = await asyncio.to_thread(_insert)
+                observations_created = await asyncio.to_thread(_persist)
         finally:
             shutil.rmtree(tmpdir, ignore_errors=True)
 

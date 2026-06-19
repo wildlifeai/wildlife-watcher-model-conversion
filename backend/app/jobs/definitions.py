@@ -180,18 +180,20 @@ async def convert_model_job(job_id: str, user_id: str, model_id: str):
         result_path_tfl = f"{org_id}/{firmware_id}/{version_num}/{name_stem}.TFL"
         result_path_txt = f"{org_id}/{firmware_id}/{version_num}/{name_stem}.TXT"
 
-        # Offload blocking upload to thread
+        # Offload blocking upload to thread. upsert must be the STRING "true": the
+        # storage client passes file_options as HTTP headers, and a bool raises
+        # "Header value must be str or bytes, not <class 'bool'>".
         await asyncio.to_thread(
             client.storage.from_("ai-models").upload,
             path=result_path_tfl,
             file=tfl_bytes,
-            file_options={"content-type": "application/octet-stream", "upsert": True},
+            file_options={"content-type": "application/octet-stream", "upsert": "true"},
         )
         await asyncio.to_thread(
             client.storage.from_("ai-models").upload,
             path=result_path_txt,
             file=txt_bytes,
-            file_options={"content-type": "text/plain", "upsert": True},
+            file_options={"content-type": "text/plain", "upsert": "true"},
         )
         logger.info("convert_job_upload_complete", path_tfl=result_path_tfl, path_txt=result_path_txt, **log_ctx)
 
