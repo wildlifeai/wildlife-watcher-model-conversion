@@ -438,14 +438,26 @@ export function UploadModel() {
             </div>
           )}
 
-          {uploadMutation.isError && (
-            <div style={{ color: 'var(--error)' }}>
-              ❌ <strong>Failed:</strong> {(uploadMutation.error as Error).message}
-              <div style={{ marginTop: '0.5rem', opacity: 0.7, fontSize: '0.75rem' }}>
-                Check that the backend is running on port 8000 and your user has the <code>organisation_manager</code> role.
+          {uploadMutation.isError && (() => {
+            const err = uploadMutation.error as { message: string; code?: string }
+            // Distinguish the failure modes so the hint isn't misleading: a transport
+            // failure (server unreachable / upload dropped) is not a permission problem —
+            // and the role check already passed to render this form.
+            const isNetwork = err.code === 'NETWORK_ERROR' || /failed to fetch|network/i.test(err.message)
+            const isPermission = err.code === 'FORBIDDEN' || /403|permission|manager|not authoris|not authoriz/i.test(err.message)
+            return (
+              <div style={{ color: 'var(--error)' }}>
+                ❌ <strong>Failed:</strong> {err.message}
+                <div style={{ marginTop: '0.5rem', opacity: 0.7, fontSize: '0.75rem' }}>
+                  {isNetwork
+                    ? 'The server couldn\'t be reached for this request. Check the backend is running and reachable; for large model files, the connection may have been dropped or the file may exceed the size limit.'
+                    : isPermission
+                      ? <>You need the <code>organisation_manager</code> role on the selected organisation to upload models.</>
+                      : 'See the message above; check the browser console / Network tab for the request details.'}
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
         </div>
       )}
 

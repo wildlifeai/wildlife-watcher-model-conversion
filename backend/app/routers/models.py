@@ -97,7 +97,11 @@ async def convert_model(
     next_ver = max(existing_versions) + 1 if existing_versions else 1
     version_string = f"{next_ver}.0.0-{uuid.uuid4().hex[:6]}"
 
-    # Insert ai_models row (paths updated by worker after conversion)
+    # Insert ai_models row (paths updated by worker after conversion).
+    # model_path / labels_path are NOT NULL UNIQUE, so a shared placeholder like
+    # "" collides on the second upload (23505). Use a per-upload unique placeholder
+    # keyed on job_id (a UUID); the worker overwrites both with the real storage
+    # paths once conversion succeeds.
     model_insert = (
         client.table("ai_models")
         .insert(
@@ -105,14 +109,16 @@ async def convert_model(
                 "organisation_id": org_id,
                 "model_family_id": model_family_id,
                 "version": version_string,
+                "version_number": next_ver,
                 "name": model_name,
                 "description": description,
                 "uploaded_by": user.id,
                 "modified_by": user.id,
                 "file_type": "uploading",
+                "model_path": f"_pending/{job_id}.TFL",
+                "labels_path": f"_pending/{job_id}.TXT",
             }
         )
-        .select("id")
     )
     model_row = await asyncio.to_thread(model_insert.execute)
     if not model_row.data:

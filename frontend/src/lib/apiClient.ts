@@ -22,14 +22,28 @@ async function request(path: string, options: RequestInit = {}) {
   const { data: session } = await supabase.auth.getSession()
   const token = session?.session?.access_token
 
-  const response = await fetch(`${API_BASE_URL}${path}`, {
-    ...options,
-    headers: {
-      ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      ...options.headers,
-    },
-  })
+  let response: Response
+  try {
+    response = await fetch(`${API_BASE_URL}${path}`, {
+      ...options,
+      headers: {
+        ...(options.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
+        ...(token ? { Authorization: `Bearer ${token}` } : {}),
+        ...options.headers,
+      },
+    })
+  } catch {
+    // fetch() rejects with a TypeError ("Failed to fetch") only for transport-level
+    // failures — the request never got an HTTP response: backend unreachable, CORS
+    // preflight blocked, connection reset, or the upload was cut off. This is NOT an
+    // auth/permission error (those come back as a 401/403 response), so classify it
+    // distinctly and let callers show accurate guidance.
+    throw new ApiError(
+      'NETWORK_ERROR',
+      `Could not reach the server at ${API_BASE_URL}. Check that the backend is running and reachable (and, for large uploads, that the connection wasn't dropped).`,
+      true,
+    )
+  }
 
   let body
   try {

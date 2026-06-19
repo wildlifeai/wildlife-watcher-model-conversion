@@ -117,12 +117,20 @@ async def convert_model_job(job_id: str, user_id: str, model_id: str):
             await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0)
             return
 
-        # ── Transition to 'validating' ───────────────────────────
-        await update_model_status("validating")
-        logger.info("convert_job_validating", **log_ctx)
+        # ── Mark in-progress: binary is in the blob store, conversion/validation
+        # underway. 'uploaded' is the enum's "in storage, not yet validated" state
+        # (ai_model_status has no separate 'validating' value — writing one fails
+        # with a 22P02 enum error and kills the job at ~10%).
+        await update_model_status("uploaded")
+        logger.info("convert_job_processing", **log_ctx)
 
+        # The convert endpoint stores the upload via blob_store (local, in-process —
+        # jobs run in this same container via enqueue_local_job), so retrieve/delete
+        # from the same backend. (Previously imported from azure_storage, a leftover
+        # from the ARQ/Redis era → "file not found" because store and retrieve used
+        # different backends.)
         from app.domain.model import convert_uploaded_model
-        from app.services.azure_storage import delete_blob, retrieve_blob
+        from app.services.blob_store import delete_blob, retrieve_blob
 
         # Fetch model row to get org_id, family_id, version
         res_query = client.table("ai_models").select("*, ai_model_families(firmware_model_id)").eq("id", model_id)
@@ -224,9 +232,9 @@ async def convert_model_job(job_id: str, user_id: str, model_id: str):
             logger.warning("failed_to_update_model_status_on_error", error=str(status_err))
         await update_job(job_id, status=JobStatus.FAILED, error=str(e))
         logger.error("convert_job_failed", error=str(e), **log_ctx)
-        # Clean up blob even on failure
+        # Clean up blob even on failure (same backend the endpoint stored it in)
         try:
-            from app.services.azure_storage import delete_blob
+            from app.services.blob_store import delete_blob
 
             await delete_blob(job_id)
         except Exception:

@@ -95,6 +95,30 @@ app.add_middleware(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+# ── Unhandled-exception handler (CORS-safe) ──────────────────────────
+# An uncaught exception is turned into a 500 by Starlette's ServerErrorMiddleware,
+# which sits OUTSIDE the CORS middleware — so by default a 500 response carries no
+# Access-Control-Allow-Origin header, and the browser reports a misleading "blocked
+# by CORS policy" error that hides the real server error. Reflect the CORS headers
+# here so 500s surface as actual errors to the frontend.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc):
+    from fastapi.responses import JSONResponse
+
+    logger.error("unhandled_exception", path=str(request.url.path), error=str(exc))
+    headers: dict[str, str] = {}
+    origin = request.headers.get("origin")
+    if origin and origin in settings.cors_origins:
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Vary"] = "Origin"
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "retryable": False}},
+        headers=headers,
+    )
+
 # ── Routers ──────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(jobs.router)

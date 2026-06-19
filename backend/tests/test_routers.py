@@ -75,3 +75,39 @@ def test_sscma_catalog(client):
     assert response.status_code == 200
     body = response.json()
     assert "data" in body
+
+
+def test_unhandled_exception_returns_cors_headers():
+    """A 500 must carry CORS headers for an allowed origin, so the browser shows the
+    real error instead of a misleading "blocked by CORS policy" message."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from app.config import settings
+    from app.main import unhandled_exception_handler
+
+    origin = settings.cors_origins[0]
+    req = MagicMock()
+    req.url.path = "/api/whatever"
+    req.headers = {"origin": origin}
+
+    resp = asyncio.run(unhandled_exception_handler(req, RuntimeError("boom")))
+    assert resp.status_code == 500
+    assert resp.headers.get("access-control-allow-origin") == origin
+    assert resp.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_unhandled_exception_no_cors_for_unknown_origin():
+    """An origin that isn't allow-listed gets no ACAO header (no origin reflection)."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from app.main import unhandled_exception_handler
+
+    req = MagicMock()
+    req.url.path = "/api/whatever"
+    req.headers = {"origin": "https://evil.example"}
+
+    resp = asyncio.run(unhandled_exception_handler(req, RuntimeError("boom")))
+    assert resp.status_code == 500
+    assert resp.headers.get("access-control-allow-origin") is None
