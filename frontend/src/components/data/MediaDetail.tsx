@@ -427,8 +427,20 @@ export function MediaDetail({ media, timezone, mediaList, onSelect, onClose, onU
       ? [selectedObs]
       : media.observations.filter(o => isAiLabel(o) && !isHumanReviewed(o))
     if (targets.length === 0) { onNext?.(); return }
-    for (const o of targets) await updateObservation(o.id, {})
-    onNext?.()
+    // One batched update instead of N sequential requests (no per-row flicker).
+    setSaving(true); setSaveMsg(null)
+    const patch = humanReviewFields({ userId: user?.id, userEmail: user?.email })
+    const ids = targets.map(t => t.id)
+    const { error } = await supabase.from('observations').update(patch).in('id', ids)
+    if (error) {
+      setSaveMsg(`Error: ${error.message}`)
+    } else {
+      onUpdated({ ...media, observations: media.observations.map(o => ids.includes(o.id) ? { ...o, ...patch } : o) })
+      setSaveMsg('Saved ✓')
+      setTimeout(() => setSaveMsg(null), 1800)
+      onNext?.()
+    }
+    setSaving(false)
   }
 
   const blank = async () => {

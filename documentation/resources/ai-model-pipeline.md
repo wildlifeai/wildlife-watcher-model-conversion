@@ -1,6 +1,11 @@
 # AI Model & Manifest Pipeline
 
 > Architecture guide for the Wildlife Watcher AI model upload, conversion, storage, and manifest generation systems.
+>
+> **Scope:** this doc covers the **website/backend** side (upload → convert → store → manifest).
+> For the full cross-repo picture — including device deployment (mobile/SD), on-device
+> inference, and how predictions return to the website — see the
+> [Embedded Model Lifecycle](./embedded-model-lifecycle.md).
 
 ---
 
@@ -166,21 +171,46 @@ Individual model versions with storage paths and metadata.
 | `name` | text | Display name |
 | `version` | text | Semantic version string (e.g. "1.0.0-abc123") |
 | `version_number` | integer | Major version integer (used by firmware) |
-| `model_path` | text | Supabase Storage path to `.TFL` file |
-| `labels_path` | text | Supabase Storage path to `.TXT` file |
-| `status` | text | `uploading` → `validating` → `validated` → `deployed` / `failed` |
+| `model_path` | text, **nullable**, UNIQUE | Supabase Storage path to `.TFL` file. NULL until conversion completes (the worker writes the real path on success). |
+| `labels_path` | text, **nullable**, UNIQUE | Supabase Storage path to `.TXT` labels file. NULL until conversion completes. |
+| `status` | `ai_model_status` enum | `uploading` → `uploaded` → `validated` → `deployed` / `failed` (there is no `validating` state) |
 | `file_hash` | text | SHA-256 hash of the `.TFL` binary |
 | `file_size_bytes` | integer | Combined size of TFL + TXT |
-| `detection_capabilities` | jsonb | Array of label strings |
+| `detection_capabilities` | **`text[]`** | Ordered class-label list extracted from the model (e.g. `{not rat, rat}`). The canonical label record. |
+| `label_map` | `jsonb` | Per-class interpretation set by the uploader: target species (→ taxon) vs background/negative. See [Labels](#labels). |
 | `processing_log` | jsonb | Array of status transition entries |
 
 **Status Lifecycle:**
 
 ```
-uploading → validating → validated → deployed
+uploading → uploaded → validated → deployed
                 ↓
               failed
 ```
+
+(`uploaded` is the in-progress state while Vela conversion runs; there is no
+`validating` value in the `ai_model_status` enum.)
+
+---
+
+## Labels
+
+A model's class labels are tracked in three complementary places on the `ai_models`
+row, and flow through to the device:
+
+| Where | What | Set by |
+|---|---|---|
+| `detection_capabilities` (`text[]`) | the **ordered class list** (e.g. `{not rat, rat}`) — the canonical record | conversion worker, extracted from the model |
+| `labels_path` → `.TXT` in storage | the **deployable labels file** (one label per line, in class order) | conversion worker |
+| `label_map` (`jsonb`) | per-class **meaning** — target species (with `taxon_id`/names) vs background/negative | uploader, via the post-validation `ModelLabelMapper` |
+
+**Origin → device:** labels are extracted from the uploaded model (for Edge Impulse,
+`deployment-metadata.json` / `model_variables.h`) during conversion, written to both
+`detection_capabilities` and the `.TXT`, then packaged into the manifest's `labels.txt`
+(or downloaded by the mobile app) so the device can map output class *i* → `labels[i]`.
+Keeping `labels.txt` in the model's own class order is what keeps device, website, and
+`label_map` aligned. Full cross-repo flow:
+[Embedded Model Lifecycle](./embedded-model-lifecycle.md).
 
 ---
 

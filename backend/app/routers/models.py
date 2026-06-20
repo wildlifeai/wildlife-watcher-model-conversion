@@ -119,6 +119,9 @@ async def convert_model(
                 "labels_path": None,
             }
         )
+        # supabase-py returns the inserted row by default; .select("id") makes
+        # that explicit (and version-independent) since we read model_row.data[0]["id"].
+        .select("id")
     )
     model_row = await asyncio.to_thread(model_insert.execute)
     if not model_row.data:
