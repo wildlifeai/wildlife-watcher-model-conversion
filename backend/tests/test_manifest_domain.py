@@ -123,15 +123,23 @@ class TestNullableModelPaths:
         table = MagicMock()
         table.select.return_value = table
         table.eq.return_value = table
-        table.execute.return_value = MagicMock(data=[{
-            "model_id": "m1",
-            "ai_models": {
-                "id": "m1", "name": "Rat v3", "version": "3.0.0",
-                "model_path": None, "labels_path": None,
-                "model_family_id": "f1", "version_number": 3,
-                "ai_model_families": {"firmware_model_id": 42},
-            },
-        }])
+        table.execute.return_value = MagicMock(
+            data=[
+                {
+                    "model_id": "m1",
+                    "ai_models": {
+                        "id": "m1",
+                        "name": "Rat v3",
+                        "version": "3.0.0",
+                        "model_path": None,
+                        "labels_path": None,
+                        "model_family_id": "f1",
+                        "version_number": 3,
+                        "ai_model_families": {"firmware_model_id": 42},
+                    },
+                }
+            ]
+        )
         client.table.return_value = table
 
         result = await manifest._resolve_project_model(client, "proj-1")

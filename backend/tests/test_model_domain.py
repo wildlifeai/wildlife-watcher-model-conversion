@@ -116,10 +116,12 @@ class TestConvertUploadedModelDiscovery:
     async def test_precompiled_tfl_with_nested_labels_returns_without_vela(self):
         from app.domain.model import convert_uploaded_model
 
-        zip_bytes = self._zip({
-            "out/MOD00001.tfl": b"\x00\x01tflcontent",
-            "out/labels.txt": b"rat\nstoat\n",
-        })
+        zip_bytes = self._zip(
+            {
+                "out/MOD00001.tfl": b"\x00\x01tflcontent",
+                "out/labels.txt": b"rat\nstoat\n",
+            }
+        )
         tfl, txt, labels = await convert_uploaded_model(zip_bytes, "precompiled.zip")
         assert tfl == b"\x00\x01tflcontent"
         assert labels == ["rat", "stoat"]

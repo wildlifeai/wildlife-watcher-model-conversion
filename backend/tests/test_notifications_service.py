@@ -36,9 +36,11 @@ def _svc_with(observations, members, rules):
         elif name == "users":
             t.execute.return_value = MagicMock(data=[{"id": u, "email": f"{u}@ww.org"} for u in members])
         elif name == "notifications":
+
             def _insert(rows):
                 inserted.extend(rows)
                 return MagicMock(execute=lambda: MagicMock(data=rows))
+
             t.insert.side_effect = _insert
         return t
 
@@ -52,8 +54,8 @@ async def test_member_without_rule_gets_no_notification():
     """A project member who has selected nothing must not be notified."""
     svc, inserted = _svc_with(
         observations=[{"scientific_name": "Rattus rattus", "vernacular_name": "ship rat"}],
-        members=["tui"],            # member of the project
-        rules=[],                   # but has NO active notification rule
+        members=["tui"],  # member of the project
+        rules=[],  # but has NO active notification rule
     )
     with patch.object(ns, "create_service_client", return_value=svc):
         count = await ns.emit_detection_notifications("dep-1")

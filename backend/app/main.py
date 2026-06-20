@@ -119,6 +119,7 @@ async def unhandled_exception_handler(request, exc):
         headers=headers,
     )
 
+
 # ── Routers ──────────────────────────────────────────────────────────
 app.include_router(auth.router)
 app.include_router(jobs.router)

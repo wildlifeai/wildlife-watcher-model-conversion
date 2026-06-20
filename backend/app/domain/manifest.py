@@ -324,12 +324,7 @@ async def _fetch_default_model(client, manifest_dir: Path) -> bool:
         try:
             # Only models whose conversion finished have storage paths; an
             # unconverted model carries NULL paths and must never be picked.
-            q = (
-                client.table("ai_models")
-                .select("model_path, labels_path, name")
-                .is_("deleted_at", "null")
-                .not_.is_("model_path", "null")
-            )
+            q = client.table("ai_models").select("model_path, labels_path, name").is_("deleted_at", "null").not_.is_("model_path", "null")
             if query_type == "ilike":
                 q = q.ilike(field, pattern)
             response = q.order("created_at", desc=True).limit(1).execute()
@@ -680,8 +675,7 @@ async def generate_manifest(
                         # finished converting (NULL paths), say so clearly.
                         if not model.get("model_path") or not model.get("labels_path"):
                             raise ManifestDomainError(
-                                f"Model '{model.get('name')}' is still converting (or its conversion failed); "
-                                "it has no stored files yet."
+                                f"Model '{model.get('name')}' is still converting (or its conversion failed); it has no stored files yet."
                             )
                         version_str = model.get("version", "1")
                         version = version_str.split(".")[0] if "." in version_str else version_str
