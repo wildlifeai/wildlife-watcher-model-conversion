@@ -22,7 +22,7 @@ import { FaqPage } from './pages/FaqPage'
 // Guides are lazy-loaded so the markdown renderer stays out of the main bundle.
 const GuidesPage = React.lazy(() => import('./pages/GuidesPage'))
 const GuideDetailPage = React.lazy(() => import('./pages/GuideDetailPage'))
-import { EventReviewPage } from './pages/EventReviewPage'
+
 import { AnalysisPage } from './pages/AnalysisPage'
 import { ReportingPage } from './pages/ReportingPage'
 import { ImageExplorerPage } from './pages/ImageExplorerPage'
@@ -473,7 +473,7 @@ export default function App() {
               <Route path="/clusters/:deployment_id" element={<RequireAuth><ClusterReviewPage /></RequireAuth>} />
               <Route path="/umap/:deployment_id"     element={<RequireAuth><UmapExplorerPage /></RequireAuth>} />
               <Route path="/review/:deployment_id"   element={<RequireAuth><ReviewQueuePage /></RequireAuth>} />
-              <Route path="/events/:deployment_id"   element={<RequireAuth><EventReviewPage /></RequireAuth>} />
+
 
               {/* Analysis / reporting deep-links (preserved) */}
               <Route path="/intelligence/:project_id" element={<RequireAuth><DatasetHealthPage /></RequireAuth>} />
