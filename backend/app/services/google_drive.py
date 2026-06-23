@@ -474,7 +474,7 @@ class GoogleDriveService:
                                 filename=file_info.get("filename", ""),
                                 index=completed_count,
                                 total=total_files,
-                                error="Missing project or deployment context",
+                                error="no matching deployment — this camera's Deployment_ID isn't set up here (seed it, or remove these images)",
                             )
                         return
 

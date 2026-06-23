@@ -1,0 +1,185 @@
+# Copyright (c) 2026
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""Object-level authorization for resource-scoped endpoints.
+
+Many endpoints read/write a deployment / project / org / media via the
+**service-role client** (which bypasses RLS). Authenticating the caller
+(`get_current_user`) is not enough — we must also check the caller may access
+*that* resource, or any logged-in (even unverified) user could read another
+organisation's data by supplying its IDs.
+
+Access model (mirrors ``user_roles`` + the ww-backend RLS): a user may access a
+resource when they hold an active, non-deleted role at:
+  - ``system`` scope (ww_admin / system manager) → all resources, or
+  - the resource's ``organisation``, or
+  - the resource's ``project``.
+
+These are FastAPI dependencies meant for a route's ``dependencies=[...]`` list,
+so they run alongside the endpoint's existing user dependency without changing
+its signature. They raise **404** (not 403) on denial so resource IDs in other
+tenants can't be probed for existence.
+"""
+
+from __future__ import annotations
+
+import asyncio
+from datetime import datetime, timezone
+from typing import Optional
+
+from fastapi import Depends, HTTPException
+
+from app.dependencies import get_current_user
+from app.services.supabase_client import create_service_client
+
+
+def _role_active(row: dict, now: datetime) -> bool:
+    exp = row.get("expires_at")
+    if not exp:
+        return True
+    try:
+        return datetime.fromisoformat(str(exp).replace("Z", "+00:00")) > now
+    except (ValueError, TypeError):
+        return True  # unparseable expiry → don't lock the user out on a bad value
+
+
+def _has_access(roles: list[dict], org_id: Optional[str], project_id: Optional[str]) -> bool:
+    """Decide access from the caller's active role rows (pure — unit-tested)."""
+    now = datetime.now(timezone.utc)
+    for r in roles:
+        if not _role_active(r, now):
+            continue
+        scope = r.get("scope_type")
+        sid = r.get("scope_id")
+        if scope == "system":
+            return True  # ww_admin / system-scope manager → global
+        if scope == "organisation" and org_id and sid == org_id:
+            return True
+        if scope == "project" and project_id and sid == project_id:
+            return True
+    return False
+
+
+def _resolve_org_project(
+    svc,
+    *,
+    deployment_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    media_id: Optional[str] = None,
+    cluster_assignment_id: Optional[str] = None,
+    org_id: Optional[str] = None,
+) -> tuple[Optional[str], Optional[str]]:
+    """Resolve a resource to its ``(organisation_id, project_id)`` via the chain
+    media → deployment → project → organisation. Returns ``(None, None)`` when the
+    resource doesn't exist (treated as no-access → 404)."""
+
+    def _one(table: str, col: str, key: str) -> Optional[str]:
+        resp = svc.table(table).select(col).eq("id", key).limit(1).execute()
+        rows = resp.data or []
+        return rows[0][col] if rows else None
+
+    if cluster_assignment_id and not deployment_id:
+        deployment_id = _one("cluster_assignments", "deployment_id", cluster_assignment_id)
+        if not deployment_id:
+            return (None, None)
+    if media_id and not deployment_id:
+        deployment_id = _one("media", "deployment_id", media_id)
+        if not deployment_id:
+            return (None, None)
+    if deployment_id and not project_id:
+        project_id = _one("deployments", "project_id", deployment_id)
+        if not project_id:
+            return (None, None)
+    if project_id and not org_id:
+        org_id = _one("projects", "organisation_id", project_id)
+        if not org_id:
+            return (None, None)
+    return (org_id, project_id)
+
+
+def _fetch_active_roles(svc, user_id: str) -> list[dict]:
+    resp = (
+        svc.table("user_roles")
+        .select("role, scope_type, scope_id, expires_at")
+        .eq("user_id", user_id)
+        .eq("is_active", True)
+        .is_("deleted_at", "null")
+        .execute()
+    )
+    return resp.data or []
+
+
+async def assert_access(user_id: str, **resource) -> None:
+    """Raise 404 unless ``user_id`` may access the resolved resource."""
+
+    def _check() -> bool:
+        svc = create_service_client()
+        org_id, project_id = _resolve_org_project(svc, **resource)
+        # org-scoped resources pass org_id straight through, so (None, None) here
+        # means the resource genuinely doesn't exist.
+        if org_id is None and project_id is None:
+            return False
+        return _has_access(_fetch_active_roles(svc, user_id), org_id, project_id)
+
+    if not await asyncio.to_thread(_check):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+async def accessible_deployment_ids(user_id: str, deployment_ids: list[str]) -> list[str]:
+    """Filter a list of deployment IDs to those the caller may access (for body lists)."""
+
+    def _check() -> list[str]:
+        if not deployment_ids:
+            return []
+        svc = create_service_client()
+        roles = _fetch_active_roles(svc, user_id)
+        # One query (deployment → project → org via embed) instead of 2 per id —
+        # avoids an N+1 when the body lists many deployments.
+        resp = svc.table("deployments").select("id, project_id, projects(organisation_id)").in_("id", deployment_ids).execute()
+        out: list[str] = []
+        for row in resp.data or []:
+            proj = row.get("projects")
+            if isinstance(proj, list):  # PostgREST may nest a to-one as a 1-element list
+                proj = proj[0] if proj else None
+            org_id = proj.get("organisation_id") if isinstance(proj, dict) else None
+            project_id = row.get("project_id")
+            if (org_id or project_id) and _has_access(roles, org_id, project_id):
+                out.append(row["id"])
+        return out
+
+    return await asyncio.to_thread(_check)
+
+
+async def is_system_admin(user_id: str) -> bool:
+    def _check() -> bool:
+        svc = create_service_client()
+        return any(r.get("scope_type") == "system" for r in _fetch_active_roles(svc, user_id))
+
+    return await asyncio.to_thread(_check)
+
+
+# ── FastAPI dependencies (use in a route's dependencies=[...]) ────────────────
+
+
+async def require_deployment_access(deployment_id: str, user=Depends(get_current_user)) -> None:
+    await assert_access(user.id, deployment_id=deployment_id)
+
+
+async def require_project_access(project_id: str, user=Depends(get_current_user)) -> None:
+    await assert_access(user.id, project_id=project_id)
+
+
+async def require_org_access(org_id: str, user=Depends(get_current_user)) -> None:
+    await assert_access(user.id, org_id=org_id)
+
+
+async def require_media_access(media_id: str, user=Depends(get_current_user)) -> None:
+    await assert_access(user.id, media_id=media_id)
+
+
+async def require_cluster_access(cluster_assignment_id: str, user=Depends(get_current_user)) -> None:
+    await assert_access(user.id, cluster_assignment_id=cluster_assignment_id)
+
+
+async def require_system_admin(user=Depends(get_current_user)) -> None:
+    if not await is_system_admin(user.id):
+        raise HTTPException(status_code=403, detail="Administrator access required")

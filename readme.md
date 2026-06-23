@@ -287,6 +287,7 @@ All documentation lives under [`documentation/`](./documentation) — see the
 | [LoRaWAN Webhook Setup](./documentation/resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server configuration |
 | [CamtrapDP Import](./documentation/resources/camtrapdp-import.md) | Importing CamtrapDP packages |
 | [AI Model Pipeline](./documentation/resources/ai-model-pipeline.md) | Edge Impulse → Vela model conversion |
+| [Embedded Model Lifecycle](./documentation/resources/embedded-model-lifecycle.md) | End-to-end on-device model flow across website / backend / mobile / firmware |
 | [UI Components](./documentation/resources/ui-components.md) | Shared frontend design-system primitives |
 | [Testing with Seed Users](./documentation/resources/testing-with-seed-users.md) | Role-based test users and validation |
 

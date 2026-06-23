@@ -117,12 +117,20 @@ async def convert_model_job(job_id: str, user_id: str, model_id: str):
             await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0)
             return
 
-        # ── Transition to 'validating' ───────────────────────────
-        await update_model_status("validating")
-        logger.info("convert_job_validating", **log_ctx)
+        # ── Mark in-progress: binary is in the blob store, conversion/validation
+        # underway. 'uploaded' is the enum's "in storage, not yet validated" state
+        # (ai_model_status has no separate 'validating' value — writing one fails
+        # with a 22P02 enum error and kills the job at ~10%).
+        await update_model_status("uploaded")
+        logger.info("convert_job_processing", **log_ctx)
 
+        # The convert endpoint stores the upload via blob_store (local, in-process —
+        # jobs run in this same container via enqueue_local_job), so retrieve/delete
+        # from the same backend. (Previously imported from azure_storage, a leftover
+        # from the ARQ/Redis era → "file not found" because store and retrieve used
+        # different backends.)
         from app.domain.model import convert_uploaded_model
-        from app.services.azure_storage import delete_blob, retrieve_blob
+        from app.services.blob_store import delete_blob, retrieve_blob
 
         # Fetch model row to get org_id, family_id, version
         res_query = client.table("ai_models").select("*, ai_model_families(firmware_model_id)").eq("id", model_id)
@@ -172,18 +180,20 @@ async def convert_model_job(job_id: str, user_id: str, model_id: str):
         result_path_tfl = f"{org_id}/{firmware_id}/{version_num}/{name_stem}.TFL"
         result_path_txt = f"{org_id}/{firmware_id}/{version_num}/{name_stem}.TXT"
 
-        # Offload blocking upload to thread
+        # Offload blocking upload to thread. upsert must be the STRING "true": the
+        # storage client passes file_options as HTTP headers, and a bool raises
+        # "Header value must be str or bytes, not <class 'bool'>".
         await asyncio.to_thread(
             client.storage.from_("ai-models").upload,
             path=result_path_tfl,
             file=tfl_bytes,
-            file_options={"content-type": "application/octet-stream", "upsert": True},
+            file_options={"content-type": "application/octet-stream", "upsert": "true"},
         )
         await asyncio.to_thread(
             client.storage.from_("ai-models").upload,
             path=result_path_txt,
             file=txt_bytes,
-            file_options={"content-type": "text/plain", "upsert": True},
+            file_options={"content-type": "text/plain", "upsert": "true"},
         )
         logger.info("convert_job_upload_complete", path_tfl=result_path_tfl, path_txt=result_path_txt, **log_ctx)
 
@@ -224,9 +234,9 @@ async def convert_model_job(job_id: str, user_id: str, model_id: str):
             logger.warning("failed_to_update_model_status_on_error", error=str(status_err))
         await update_job(job_id, status=JobStatus.FAILED, error=str(e))
         logger.error("convert_job_failed", error=str(e), **log_ctx)
-        # Clean up blob even on failure
+        # Clean up blob even on failure (same backend the endpoint stored it in)
         try:
-            from app.services.azure_storage import delete_blob
+            from app.services.blob_store import delete_blob
 
             await delete_blob(job_id)
         except Exception:
@@ -963,7 +973,6 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         async def _cleanup_blobs():
             nonlocal last_event_ts
             completed = 0
-            total = len(blob_ids)
             for bid in blob_ids:
                 try:
                     await delete_blob(bid)
@@ -971,26 +980,19 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                     pass
                 completed += 1
 
-                last_event_ts = time.monotonic()
-                if completed % max(1, total // 10) == 0 or completed == total:
-                    await emit_event(
-                        job_id,
-                        ProgressEvent(
-                            type=EventType.PROGRESS,
-                            phase=ProgressPhase.CLEANUP,
-                            current=completed,
-                            total=total,
-                            message=f"🧹 Cleaning up temporary buffers ({completed}/{total})",
-                        ),
-                    )
-                    progress = 0.47 + (0.03 * (completed / total))
-                    await update_job(job_id, progress=min(progress, 0.50))
+                last_event_ts = time.monotonic()  # keep the stall heartbeat fresh
             return completed
 
         deleted = await _cleanup_blobs()
         if deleted:
             logger.info("drive_upload_intermediate_files_cleaned", count=deleted)
-
+            # One summary line instead of one event per buffer (which flooded the
+            # dock log on small batches, where total // 10 rounded to 0 → emit-every).
+            await emit_event(
+                job_id,
+                ProgressEvent(type=EventType.PROGRESS, phase=ProgressPhase.CLEANUP, message=f"🧹 Cleaned up {deleted} temporary buffer(s)"),
+            )
+        await update_job(job_id, progress=0.50)
         await complete_phase(job_id, ProgressPhase.CLEANUP)
 
         # ── Phase 4: AI PIPELINE (auto-run once per deployment after Drive sync) ─

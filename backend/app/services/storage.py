@@ -25,6 +25,11 @@ async def download_from_storage(bucket: str, path: str, *, silent: bool = False)
     Returns:
         File content as bytes, or None on failure.
     """
+    # Defence-in-depth: a NULL/empty path (e.g. an ai_model still converting, whose
+    # model_path/labels_path are NULL) is "nothing to download", not an error.
+    if not path:
+        return None
+
     client = create_service_client()
 
     # Step 1: SDK download

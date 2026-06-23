@@ -213,7 +213,7 @@ async def _publish_one_burst(svc, user_id, dep, burst, geoprivacy, result) -> No
     inat_uri = obs.get("uri") or (f"https://www.inaturalist.org/observations/{inat_id}" if inat_id else None)
 
     def _insert_obs():
-        return (
+        resp = (
             svc.table("inat_observations")
             .insert(
                 {
@@ -228,10 +228,22 @@ async def _publish_one_burst(svc, user_id, dep, burst, geoprivacy, result) -> No
                 }
             )
             .execute()
-            .data[0]
         )
+        return resp.data[0] if resp.data else None
 
-    row = await asyncio.to_thread(_insert_obs)
+    # The iNat observation is already created remotely at this point. If recording
+    # it locally fails, isolate the error (count it, skip this burst's photos) rather
+    # than letting the exception abort the whole batch and orphan more remote obs.
+    try:
+        row = await asyncio.to_thread(_insert_obs)
+    except Exception as exc:  # noqa: BLE001 — per-burst isolation
+        logger.error("inat_publish_db_insert_failed", deployment=dep.get("id"), inat_observation_id=inat_id, error=str(exc))
+        result["errors"] += 1
+        return
+    if not row:
+        logger.error("inat_publish_db_insert_empty", deployment=dep.get("id"), inat_observation_id=inat_id)
+        result["errors"] += 1
+        return
     result["observations_created"] += 1
 
     photo_errors = 0

@@ -35,13 +35,24 @@ async def list_user_jobs(
     )
 
 
+def _authorize_job(job, user) -> None:
+    """404 if the job isn't the caller's. Hidden (not 403) so job ids can't be probed.
+
+    Owner-less jobs (legacy / system / machine API jobs that carry no ``user_id``)
+    are readable by any authenticated user; per-user jobs are scoped to the owner.
+    """
+    if job.user_id and job.user_id != user.id:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+
 @router.get("/{job_id}")
-async def get_job_status(job_id: str, request: Request):
-    """Poll the current status of an async job."""
+async def get_job_status(job_id: str, request: Request, user=Depends(get_current_user)):
+    """Poll the current status of an async job (scoped to the caller)."""
     job = await get_job(job_id)
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    _authorize_job(job, user)
 
     return ApiResponse(
         data=job.model_dump(),
@@ -50,12 +61,13 @@ async def get_job_status(job_id: str, request: Request):
 
 
 @router.get("/{job_id}/result")
-async def get_job_result(job_id: str, request: Request):
+async def get_job_result(job_id: str, request: Request, user=Depends(get_current_user)):
     """Get the result of a completed job (download URL or streamed file)."""
     job = await get_job(job_id)
 
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
+    _authorize_job(job, user)
 
     if job.status.value not in ("completed", "completed_with_errors"):
         raise HTTPException(

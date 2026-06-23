@@ -91,3 +91,28 @@ def test_chunk_batches():
     assert chunk([], 3) == []
     with pytest.raises(ValueError):
         chunk([1], 0)
+
+
+async def test_resolve_crops_concurrent_preserves_order_and_filters(monkeypatch):
+    # Order alignment is correctness-critical: images[k] must stay paired with
+    # kept_ids[k] (and the embeddings computed from them). Failures are dropped.
+    import app.domain.media_resolver as mr
+    from app.domain.wildlife_brain import _resolve_crops_concurrent
+
+    async def fake_resolve(url, size="full"):
+        if url == "bad":
+            return None  # unresolvable crop → dropped
+        return (f"bytes:{url}".encode(), "image/jpeg")
+
+    monkeypatch.setattr(mr, "resolve_media", fake_resolve)
+
+    crops = [
+        {"id": "m1", "deployment_id": "d1", "crop_url": "u1"},
+        {"id": "m2", "deployment_id": "d1", "crop_url": "bad"},
+        {"id": "m3", "deployment_id": "d2", "crop_url": "u3"},
+    ]
+    out = await _resolve_crops_concurrent(crops, concurrency=2)
+
+    assert [mid for (mid, _d, _b) in out] == ["m1", "m3"]  # m2 dropped, order kept
+    assert [dep for (_m, dep, _b) in out] == ["d1", "d2"]
+    assert out[0][2] == b"bytes:u1"

@@ -49,7 +49,12 @@ jobs:
 
       - name: Build Docker image
         run: |
+          # --target api: build the lean uvicorn API stage. WITHOUT this, Docker
+          # builds the LAST stage in the Dockerfile (the ARQ `worker`, CMD `arq …`),
+          # which serves no HTTP and fails the health check — the whole backend
+          # API would be unreachable. The GPU worker is deployed separately.
           docker build \
+            --target api \
             -t ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ steps.target.outputs.image_tag }} \
             -t ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ github.sha }} \
             -f backend/Dockerfile \

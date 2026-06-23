@@ -3,6 +3,13 @@
 How AI annotations are produced. Two tracks: the **SpeciesNet inference pipeline** (detect +
 classify) and the **Wildlife Brain** (DINOv3 embeddings → clustering → active learning).
 
+> **This is the *cloud* AI pipeline** — server-side models that run when images are uploaded
+> to the website. It is distinct from the **on-device (embedded) model** that runs on the camera
+> itself; for that — custom model upload, conversion, deployment, and how its predictions return
+> via EXIF — see [AI Model Pipeline](../resources/ai-model-pipeline.md) and the
+> [Embedded Model Lifecycle](../resources/embedded-model-lifecycle.md). The two are complementary:
+> a given image can carry both an on-device prediction and a cloud SpeciesNet result.
+
 > **Running it locally** (the heavy ML deps live in the `dev` Docker image, feature flags, model
 > weights, HF token) → see [Running the AI/ML pipeline locally](../../readme.md#running-the-aiml-pipeline-locally).
 

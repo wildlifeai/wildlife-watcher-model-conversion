@@ -810,8 +810,10 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
       {/* ── "Being processed" banner for in-view deployments ───────── */}
       <ProcessingBanner deployments={deployments} />
 
-      {/* ── Ribbon command bar ────────────────────────────────────── */}
+      {/* ── Ribbon command bar (sticky so filters/actions stay reachable
+          while scrolling the photo grid) ──────────────────────────── */}
       <Ribbon
+        sticky
         status={<span><strong>{totalCount ?? stats.total}</strong> media</span>}
         tabs={[
           {
@@ -1028,6 +1030,8 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
           <MediaDetail
             media={selectedMedia}
             timezone={tzByDeployment.get(selectedMedia.deployment_id)}
+            mediaList={filtered}
+            onSelect={setSelectedMediaId}
             onClose={() => setSelectedMediaId(null)}
             onUpdated={handleMediaUpdated}
             onNext={advanceToNext}

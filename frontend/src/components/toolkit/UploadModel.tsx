@@ -2,6 +2,8 @@ import { useState, useRef, useEffect, useMemo } from 'react'
 import { useMutation, useQuery } from '@tanstack/react-query'
 import { apiClient } from '../../lib/apiClient'
 import { JobProgress } from '../common'
+import { useJob } from '../../hooks/useJob'
+import { ModelLabelMapper } from './ModelLabelMapper'
 
 interface PretrainedModel {
   architecture: string
@@ -21,6 +23,9 @@ export function UploadModel() {
 
   const [file, setFile] = useState<File | null>(null)
   const [jobId, setJobId] = useState<string | null>(null)
+  // Captured from the convert response so we can offer label-mapping once the
+  // conversion job validates the model.
+  const [modelId, setModelId] = useState<string | null>(null)
   const [dragActive, setDragActive] = useState(false)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -158,7 +163,8 @@ export function UploadModel() {
         return apiClient.upload('/api/models/convert', formData)
       }
     },
-    onSuccess: (response: { data?: { job_id?: string; status?: string } }) => {
+    onSuccess: (response: { data?: { job_id?: string; status?: string; model_id?: string } }) => {
+      if (response?.data?.model_id) setModelId(response.data.model_id)
       if (response?.data?.job_id) {
         setJobId(response.data.job_id)
       } else if (response?.data?.status === 'validated') {
@@ -438,19 +444,43 @@ export function UploadModel() {
             </div>
           )}
 
-          {uploadMutation.isError && (
-            <div style={{ color: 'var(--error)' }}>
-              ❌ <strong>Failed:</strong> {(uploadMutation.error as Error).message}
-              <div style={{ marginTop: '0.5rem', opacity: 0.7, fontSize: '0.75rem' }}>
-                Check that the backend is running on port 8000 and your user has the <code>organisation_manager</code> role.
+          {uploadMutation.isError && (() => {
+            const err = uploadMutation.error as { message: string; code?: string }
+            // Distinguish the failure modes so the hint isn't misleading: a transport
+            // failure (server unreachable / upload dropped) is not a permission problem —
+            // and the role check already passed to render this form.
+            const isNetwork = err.code === 'NETWORK_ERROR' || /failed to fetch|network/i.test(err.message)
+            const isPermission = err.code === 'FORBIDDEN' || /403|permission|manager|not authoris|not authoriz/i.test(err.message)
+            return (
+              <div style={{ color: 'var(--error)' }}>
+                ❌ <strong>Failed:</strong> {err.message}
+                <div style={{ marginTop: '0.5rem', opacity: 0.7, fontSize: '0.75rem' }}>
+                  {isNetwork
+                    ? 'The server couldn\'t be reached for this request. Check the backend is running and reachable; for large model files, the connection may have been dropped or the file may exceed the size limit.'
+                    : isPermission
+                      ? <>You need the <code>organisation_manager</code> role on the selected organisation to upload models.</>
+                      : 'See the message above; check the browser console / Network tab for the request details.'}
+                </div>
               </div>
-            </div>
-          )}
+            )
+          })()}
         </div>
       )}
 
       <JobProgress jobId={jobId} />
+
+      {/* Once the conversion job validates the model, offer label mapping. */}
+      <ModelLabelMapperGate jobId={jobId} modelId={modelId} />
     </div>
   )
+}
+
+// Renders the label mapper only after the conversion job completes successfully,
+// so the model row has its detection_capabilities populated by the worker.
+function ModelLabelMapperGate({ jobId, modelId }: { jobId: string | null; modelId: string | null }) {
+  const { data: job } = useJob(jobId)
+  const done = job?.status === 'completed' || job?.status === 'completed_with_errors'
+  if (!modelId || !done) return null
+  return <ModelLabelMapper modelId={modelId} />
 }
 
