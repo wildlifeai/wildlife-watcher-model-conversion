@@ -105,20 +105,30 @@ def test_build_observations_blank_image():
     assert rows[0]["observation_type"] == "blank"
 
 
-def test_delete_superseded_ai_observations_scopes_to_model_and_unreviewed():
+def test_delete_superseded_ai_observations_scopes_and_cleans_crops():
     """Replace-on-rerun deletes only this model's machine rows for the given
-    media, never human-reviewed ones."""
+    media (never human-reviewed ones) and removes their orphaned crops."""
     from unittest.mock import MagicMock
 
     from app.domain.pipeline import delete_superseded_ai_observations
 
     captured = {}
     table = MagicMock()
+    table.select.return_value = table
     table.delete.return_value = table
     table.in_.side_effect = lambda col, vals: (captured.update(in_col=col, in_vals=vals), table)[1]
     table.eq.side_effect = lambda col, val: (captured.setdefault("eq", {}).update({col: val}), table)[1]
+    # The doomed rows the select returns → drive crop-path construction.
+    table.execute.return_value = MagicMock(
+        data=[
+            {"id": "o1", "media_id": "m1", "deployment_id": "dep1"},
+            {"id": "o2", "media_id": "m2", "deployment_id": "dep1"},
+        ]
+    )
     svc = MagicMock()
     svc.table.return_value = table
+    removed = {}
+    svc.storage.from_.return_value.remove.side_effect = lambda paths: removed.update(paths=paths)
 
     delete_superseded_ai_observations(svc, ["m1", "m2"], "speciesnet-v4.0.1a")
 
@@ -128,7 +138,8 @@ def test_delete_superseded_ai_observations_scopes_to_model_and_unreviewed():
     assert captured["in_vals"] == ["m1", "m2"]
     # Scoped to this model version and only the unreviewed machine state.
     assert captured["eq"] == {"source_model_version": "speciesnet-v4.0.1a", "review_status": "ai_reviewed"}
-    table.execute.assert_called_once()
+    # Per-observation crops removed at their deterministic paths.
+    assert removed["paths"] == ["crops/dep1/m1/o1.jpg", "crops/dep1/m2/o2.jpg"]
 
 
 def test_delete_superseded_ai_observations_noop_on_empty():
