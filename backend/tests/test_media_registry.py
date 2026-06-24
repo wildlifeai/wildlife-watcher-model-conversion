@@ -3,12 +3,19 @@
 """Tests for Media Registry URL resolution (pure)."""
 
 from io import BytesIO
+from unittest.mock import MagicMock
 
 import numpy as np
 from PIL import Image
 
 from app.domain import media_registry
-from app.domain.media_registry import generate_motion_roi_crops, group_bursts, resolve_url, with_resolved_urls
+from app.domain.media_registry import (
+    generate_motion_roi_crops,
+    generate_observation_crops,
+    group_bursts,
+    resolve_url,
+    with_resolved_urls,
+)
 
 
 def test_thumbnail_prefers_thumbnail_url():
@@ -162,3 +169,89 @@ def test_generate_motion_roi_crops_singleton_burst_noops():
     import asyncio
 
     assert asyncio.run(generate_motion_roi_crops("dep1", rows)) == 0
+
+
+def _obs_svc(media_row, obs_rows, crop_updates):
+    """Mock service client: media + observations fetch, and crop_url updates."""
+    svc = MagicMock()
+
+    def table(name):
+        t = MagicMock()
+        for m in ("select", "eq", "not_", "order", "limit"):
+            getattr(t, m).return_value = t
+        t.not_.is_.return_value = t
+        t.maybe_single.return_value = t
+        if name == "media":
+            t.execute.return_value = MagicMock(data=media_row)
+        elif name == "observations":
+            t.execute.return_value = MagicMock(data=obs_rows)  # the select/fetch path
+
+            def _update(patch):
+                u = MagicMock()
+
+                def _eq(_col, obs_id):
+                    crop_updates[obs_id] = patch["crop_url"]
+                    return MagicMock(execute=lambda: MagicMock(data=[]))
+
+                u.eq.side_effect = _eq
+                return u
+
+            t.update.side_effect = _update
+        return t
+
+    svc.table.side_effect = table
+    return svc
+
+
+async def test_generate_observation_crops_one_per_box(monkeypatch):
+    """Every AI animal detection gets its own crop_url; hero = highest confidence."""
+    media_row = {"id": "m1", "deployment_id": "dep1", "file_path": "gdrive://m1"}
+    obs_rows = [  # already confidence-desc ordered (mirrors the .order() query)
+        {"id": "o-hi", "bbox_x": 0.5, "bbox_y": 0.5, "bbox_w": 0.2, "bbox_h": 0.2, "confidence": 0.9},
+        {"id": "o-lo", "bbox_x": 0.1, "bbox_y": 0.1, "bbox_w": 0.2, "bbox_h": 0.2, "confidence": 0.4},
+    ]
+    frame = _frame_bytes(square=(120, 90, 160, 130))
+    crop_updates: dict[str, str] = {}
+    uploaded: list[str] = []
+    upserts: list[dict] = []
+
+    async def fake_resolve(file_path, size="full"):
+        return frame, "image/jpeg"
+
+    async def fake_upload(path, data):
+        uploaded.append(path)
+        return f"cdn/{path}"
+
+    async def fake_upsert(patch):
+        upserts.append(patch)
+
+    monkeypatch.setattr("app.services.supabase_client.create_service_client", lambda: _obs_svc(media_row, obs_rows, crop_updates))
+    monkeypatch.setattr("app.domain.media_resolver.resolve_media", fake_resolve)
+    monkeypatch.setattr("app.services.storage.upload_rendition", fake_upload)
+    monkeypatch.setattr(media_registry, "_upsert_media_assets", fake_upsert)
+
+    hero = await generate_observation_crops("m1")
+
+    # One crop per observation, stored at per-observation paths.
+    assert sorted(uploaded) == ["crops/dep1/m1/o-hi.jpg", "crops/dep1/m1/o-lo.jpg"]
+    # crop_url written for each observation.
+    assert crop_updates == {"o-hi": "cdn/crops/dep1/m1/o-hi.jpg", "o-lo": "cdn/crops/dep1/m1/o-lo.jpg"}
+    # Hero (media_assets.animal_crop_url) = highest-confidence crop.
+    assert hero == "cdn/crops/dep1/m1/o-hi.jpg"
+    assert upserts == [{"media_id": "m1", "animal_crop_url": "cdn/crops/dep1/m1/o-hi.jpg"}]
+
+
+async def test_generate_observation_crops_no_detections_noops(monkeypatch):
+    media_row = {"id": "m1", "deployment_id": "dep1", "file_path": "gdrive://m1"}
+    crop_updates: dict[str, str] = {}
+    upserts: list[dict] = []
+
+    async def fake_upsert(patch):
+        upserts.append(patch)
+
+    monkeypatch.setattr("app.services.supabase_client.create_service_client", lambda: _obs_svc(media_row, [], crop_updates))
+    monkeypatch.setattr(media_registry, "_upsert_media_assets", fake_upsert)
+
+    assert await generate_observation_crops("m1") is None
+    assert crop_updates == {}
+    assert upserts == []

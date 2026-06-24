@@ -215,9 +215,15 @@ async def cluster_deployment_events(
             batch = all_events[i : i + chunk_size]
             svc.table("observation_events").insert(batch).execute()
 
-        # Link observations to their events
+        # Link observations to their events — grouped so each event is one bulk
+        # UPDATE rather than one query per observation.
+        from collections import defaultdict
+
+        event_to_obs: dict[str, list[str]] = defaultdict(list)
         for obs_id, event_id in obs_to_event.items():
-            svc.table("observations").update({"observation_event_id": event_id}).eq("id", obs_id).execute()
+            event_to_obs[event_id].append(obs_id)
+        for event_id, obs_ids in event_to_obs.items():
+            svc.table("observations").update({"observation_event_id": event_id}).in_("id", obs_ids).execute()
 
     await asyncio.to_thread(_write_events)
 

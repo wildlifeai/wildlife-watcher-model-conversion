@@ -14,10 +14,11 @@
  *   failure → shows a "View Logs" link.
  *   The user dismisses the dock manually via the × button.
  */
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { useUploadStore } from '../../contexts/UploadContext'
 import { PipelineStatusBox } from '../toolkit/PipelineStatusBox'
+import { supabase } from '../../config/supabase'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Helpers
@@ -44,6 +45,75 @@ function dockLabel(phase: string, totalFiles: number, activeJobPhase?: string | 
     case 'failed':     return 'Upload failed'
     default:           return 'Upload'
   }
+}
+
+function fmtHour(h: number): string {
+  const ampm = h < 12 ? 'am' : 'pm'
+  const h12 = h % 12 === 0 ? 12 : h % 12
+  return `${h12}${ampm}`
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// UploadSummaryLine — one-line headline of what the AI found in this upload, so
+// the user gets the gist without leaving the page (species · detections · peak).
+// ─────────────────────────────────────────────────────────────────────────────
+
+interface Summary { species: number; detections: number; peakHour: number | null }
+
+function UploadSummaryLine({ deploymentIds }: { deploymentIds: string[] }) {
+  const [summary, setSummary] = useState<Summary | null>(null)
+  const [loading, setLoading] = useState(true)
+  const key = deploymentIds.join(',')
+
+  useEffect(() => {
+    if (deploymentIds.length === 0) { setLoading(false); return }
+    let cancelled = false
+    setLoading(true)
+    supabase
+      .from('observations')
+      .select('scientific_name, observation_type, media(timestamp)')
+      .in('deployment_id', deploymentIds)
+      .eq('source_type', 'ai')
+      .then(({ data, error }) => {
+        if (cancelled) return
+        if (error) { setSummary(null); setLoading(false); return }
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const rows = (data ?? []) as any[]
+        const species = new Set(rows.map(r => r.scientific_name).filter(Boolean)).size
+        const detections = rows.filter(r => r.observation_type && r.observation_type !== 'blank').length
+        const hourCounts = new Array(24).fill(0)
+        let any = false
+        for (const r of rows) {
+          const m = Array.isArray(r.media) ? r.media[0] : r.media
+          const ts = m?.timestamp
+          if (!ts) continue
+          const h = new Date(ts).getHours()
+          if (!Number.isNaN(h)) { hourCounts[h]++; any = true }
+        }
+        const peakHour = any ? hourCounts.indexOf(Math.max(...hourCounts)) : null
+        setSummary({ species, detections, peakHour })
+        setLoading(false)
+      })
+    return () => { cancelled = true }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [key])
+
+  if (loading) return <span style={{ fontSize: '0.78rem', opacity: 0.6 }}>Summarising results…</span>
+  if (!summary) return null
+
+  if (summary.detections === 0) {
+    return <span style={{ fontSize: '0.8125rem', opacity: 0.8 }}>📊 No animals detected in this upload</span>
+  }
+  const parts = [
+    `${summary.species} species`,
+    `${summary.detections} detection${summary.detections !== 1 ? 's' : ''}`,
+  ]
+  if (summary.peakHour != null) parts.push(`peak ${fmtHour(summary.peakHour)}`)
+  return (
+    <span style={{ fontSize: '0.8125rem', fontWeight: 600 }}>
+      📊 {parts.join(' · ')}
+    </span>
+  )
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -107,6 +177,13 @@ export function ProgressDock() {
   const annotationsLink = uploadedDeploymentIds.length === 1
     ? `/annotations?deployment=${uploadedDeploymentIds[0]}`
     : '/annotations'
+
+  // Results/insights — species diversity + activity summaries. For a single
+  // deployment, the per-deployment Reporting page (real species × time charts);
+  // otherwise the project-wide Insights → Reports tab.
+  const insightsLink = uploadedDeploymentIds.length === 1
+    ? `/reporting/${uploadedDeploymentIds[0]}`
+    : '/insights?tab=reports'
 
   // ── Shared styles ──────────────────────────────────────────────────────────
   const DOCK_BASE: React.CSSProperties = {
@@ -247,20 +324,35 @@ export function ProgressDock() {
         <div style={{
           padding: '0.625rem 0.875rem',
           borderTop: '1px solid var(--border)',
-          display: 'flex', gap: '0.75rem', alignItems: 'center',
+          display: 'flex', flexDirection: 'column', gap: '0.5rem',
           backgroundColor: 'var(--surface)',
           fontSize: '0.8125rem',
         }}>
+          {/* One-line headline of what the AI found in this upload */}
+          {phase === 'completed' && !hasErrors && uploadedDeploymentIds.length > 0 && (
+            <UploadSummaryLine deploymentIds={uploadedDeploymentIds} />
+          )}
+          <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center' }}>
           {phase === 'completed' && !hasErrors && (
-            <Link
-              to={annotationsLink}
-              style={{ color: 'var(--primary)', fontWeight: 600, textDecoration: 'none' }}
-              // Keep the upload state + logs around (minimised) instead of clearing,
-              // so the user can still see what happened after navigating to Annotations.
-              onClick={() => setDockState('minimised')}
-            >
-              🏷️ View Annotations →
-            </Link>
+            <>
+              {/* See the AI results straight away — species diversity + activity. */}
+              <Link
+                to={insightsLink}
+                style={{ color: 'var(--primary)', fontWeight: 600, textDecoration: 'none' }}
+                onClick={() => setDockState('minimised')}
+              >
+                📊 See Insights →
+              </Link>
+              <Link
+                to={annotationsLink}
+                style={{ color: 'var(--text-color)', fontWeight: 600, textDecoration: 'none', opacity: 0.75 }}
+                // Keep the upload state + logs around (minimised) instead of clearing,
+                // so the user can still see what happened after navigating away.
+                onClick={() => setDockState('minimised')}
+              >
+                🏷️ Review &amp; label
+              </Link>
+            </>
           )}
           {(phase === 'failed' || hasErrors) && (
             <Link
@@ -280,6 +372,7 @@ export function ProgressDock() {
           >
             Dismiss
           </button>
+          </div>
         </div>
       )}
 

@@ -135,8 +135,17 @@ async def prepare_media_assets(media_row: dict) -> dict:
     return patch
 
 
-async def generate_animal_crop(media_id: str) -> Optional[str]:
-    """Crop the highest-confidence AI animal detection and store animal_crop_url."""
+async def generate_observation_crops(media_id: str) -> Optional[str]:
+    """Crop every AI animal detection on a frame, one crop per observation.
+
+    Writes each detection's bbox crop to ``observations.crop_url`` (so multi-animal
+    frames get a crop per box) and points the media's hero
+    ``media_assets.animal_crop_url`` at the highest-confidence crop. The source
+    frame is fetched once and reused for all boxes.
+
+    Returns the hero crop URL, or ``None`` when there's nothing to crop, so the
+    pipeline can tell which frames were handled (and fall back to motion ROI).
+    """
     from app.domain.media_resolver import resolve_media
     from app.services import image_processing as imgproc
     from app.services.storage import upload_rendition
@@ -148,13 +157,12 @@ async def generate_animal_crop(media_id: str) -> Optional[str]:
         media = svc.table("media").select("id, deployment_id, file_path").eq("id", media_id).maybe_single().execute()
         obs = (
             svc.table("observations")
-            .select("bbox_x, bbox_y, bbox_w, bbox_h, confidence")
+            .select("id, bbox_x, bbox_y, bbox_w, bbox_h, confidence")
             .eq("media_id", media_id)
             .eq("source_type", "ai")
             .eq("observation_type", "animal")
             .not_.is_("bbox_x", "null")
-            .order("confidence", desc=True)
-            .limit(1)
+            .order("confidence", desc=True)  # first row → hero
             .execute()
         )
         return media.data, obs.data
@@ -163,17 +171,30 @@ async def generate_animal_crop(media_id: str) -> Optional[str]:
     if not media_row or not obs_rows:
         return None
 
-    o = obs_rows[0]
-    bbox = (o["bbox_x"], o["bbox_y"], o["bbox_w"], o["bbox_h"])
     resolved = await resolve_media(media_row["file_path"], size="full")
     if not resolved:
         return None
     data, _content_type = resolved
 
-    crop = await asyncio.to_thread(imgproc.crop_bbox, data, bbox, CROP_PADDING)
-    crop_url = await upload_rendition(f"crops/{media_row['deployment_id']}/{media_id}.jpg", crop)
-    await _upsert_media_assets({"media_id": media_id, "animal_crop_url": crop_url})
-    return crop_url
+    deployment_id = media_row["deployment_id"]
+
+    def _set_crop_url(obs_id: str, url: str):
+        svc.table("observations").update({"crop_url": url}).eq("id", obs_id).execute()
+
+    hero_url: Optional[str] = None
+    for o in obs_rows:
+        bbox = (o["bbox_x"], o["bbox_y"], o["bbox_w"], o["bbox_h"])
+        crop = await asyncio.to_thread(imgproc.crop_bbox, data, bbox, CROP_PADDING)
+        url = await upload_rendition(f"crops/{deployment_id}/{media_id}/{o['id']}.jpg", crop)
+        if not url:
+            continue
+        await asyncio.to_thread(_set_crop_url, o["id"], url)
+        if hero_url is None:
+            hero_url = url
+
+    if hero_url:
+        await _upsert_media_assets({"media_id": media_id, "animal_crop_url": hero_url})
+    return hero_url
 
 
 def _parse_timestamp(value) -> Optional[float]:

@@ -129,8 +129,10 @@ class MediaPreparationStep(PipelineStep):
 
 
 class AnimalCropStep(PipelineStep):
-    """Crop each media's best AI animal detection into media_assets.animal_crop_url.
+    """Crop every AI animal detection on each frame.
 
+    Writes one crop per observation to observations.crop_url and points the
+    media's hero media_assets.animal_crop_url at the highest-confidence crop.
     Runs after SpeciesNet (needs the detection bboxes it wrote). Creates no
     observations; produces the crop DINOv3 consumes in Phase 5.
     """
@@ -145,14 +147,14 @@ class AnimalCropStep(PipelineStep):
         config: dict[str, Any],
     ) -> PipelineStepResult:
         from app.config import settings
-        from app.domain.media_registry import generate_animal_crop, generate_motion_roi_crops
+        from app.domain.media_registry import generate_motion_roi_crops, generate_observation_crops
 
         start = time.monotonic()
         errors = 0
         cropped_ids: set[str] = set()
         for m in media:
             try:
-                if await generate_animal_crop(m["id"]):
+                if await generate_observation_crops(m["id"]):
                     cropped_ids.add(m["id"])
             except Exception as exc:
                 logger.warning("animal_crop_error", media_id=m.get("id"), error=str(exc))
@@ -308,10 +310,33 @@ def delete_superseded_ai_observations(svc, media_ids, model_version: str) -> Non
     confirms or edits an AI label keeps ``source_type='ai'`` but advances
     ``review_status`` to ``human_reviewed`` (see lib/observations) — those are
     preserved, so reprocessing never discards human work.
+
+    Each removed observation's per-observation crop
+    (``crops/{deployment}/{media}/{observation}.jpg``) is deleted from storage
+    first so reprocessing doesn't leak orphaned crops. Storage cleanup is
+    best-effort — a failure there never blocks the row deletion.
     """
+    from app.config import settings
+
     ids = list(media_ids)
+    bucket = settings.SUPABASE_MEDIA_BUCKET
     for i in range(0, len(ids), 100):
         chunk = ids[i : i + 100]
+        # Identify the rows about to be deleted so their crops can be removed too.
+        doomed = (
+            svc.table("observations")
+            .select("id, media_id, deployment_id")
+            .in_("media_id", chunk)
+            .eq("source_model_version", model_version)
+            .eq("review_status", "ai_reviewed")
+            .execute()
+        ).data or []
+        crop_paths = [f"crops/{r['deployment_id']}/{r['media_id']}/{r['id']}.jpg" for r in doomed if r.get("media_id") and r.get("deployment_id")]
+        if crop_paths:
+            try:
+                svc.storage.from_(bucket).remove(crop_paths)
+            except Exception as exc:  # best-effort; never block the row deletion
+                logger.warning("superseded_crop_cleanup_failed", count=len(crop_paths), error=str(exc))
         (
             svc.table("observations")
             .delete()

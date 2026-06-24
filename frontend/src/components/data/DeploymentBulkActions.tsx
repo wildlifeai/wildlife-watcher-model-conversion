@@ -3,8 +3,8 @@
 //
 // DeploymentBulkActions — selection toolbar for the Insights ▸ Deployments table.
 // Replaces the per-row Actions column: the user ticks rows, then picks one action from
-// this dropdown. Some actions only make sense for a single deployment (Explore/Analysis/
-// Report); those appear only when exactly one row is selected.
+// this dropdown. Some actions only make sense for a single deployment (Results);
+// those appear only when exactly one row is selected.
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectSelection } from '../../hooks/useProjectSelection'
@@ -81,9 +81,7 @@ export function DeploymentBulkActions({ selected, rows, onClear, onShowMap }: Pr
             {single && (
               <>
                 <div style={{ height: 1, background: 'var(--border)', margin: '0.25rem 0' }} />
-                <button style={item} onClick={() => run(() => navigate(`/explore/${single.id}`))}>🔍 Explore images</button>
-                <button style={item} onClick={() => run(() => navigate(`/analysis/${single.id}`))}>📈 Analysis</button>
-                <button style={item} onClick={() => run(() => navigate(`/reporting/${single.id}`))}>📋 Report</button>
+                <button style={item} onClick={() => run(() => navigate(`/reporting/${single.id}`))}>📊 Results</button>
               </>
             )}
           </div>

@@ -534,9 +534,9 @@ export function ClusterReviewPage() {
             style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>
             ✦ UMAP
           </Link>
-          <Link to={`/explore/${deployment_id}`} className="btn"
+          <Link to={`/annotations?deployment=${deployment_id}`} className="btn"
             style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>
-            🖼 Explore
+            🏷️ Annotations
           </Link>
         </div>
       </div>

@@ -4,13 +4,14 @@
  * Charts are rendered with Vega-Lite via the <VegaChart> primitive.
  * All aggregation happens inside Vega-Lite transforms (no useMemo pivots).
  *
- * The ChartBuilder below this component handles user-defined charts (WS6-T3).
+ * This fixed summary is still used by MyData. The editable Insights ▸ Reports
+ * dashboard (ReportsDashboard) reuses these types and the shared chartSpec.
  */
 import { useMemo } from 'react'
 import { VegaChart, VEGA_CONFIG } from '../ui/VegaChart'
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Types (exported so ChartBuilder can reuse)
+// Types (exported so the reports dashboard / chartSpec can reuse)
 // ─────────────────────────────────────────────────────────────────────────────
 
 export interface Observation {

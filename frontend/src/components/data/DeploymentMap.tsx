@@ -17,12 +17,20 @@ interface Deployment {
   deployment_end: string | null
   project_name?: string
   observation_count?: number
+  // Optional analytics, supplied by the Insights Map tab. When omitted (e.g. the
+  // Field page) markers fall back to the plain project-coloured / count behaviour.
+  metricValue?: number   // value used for circle sizing (total or per-day)
+  perDay?: number        // detections per active day
+  activeDays?: number    // deployment duration in days (min 1)
+  present?: boolean      // is the filtered species present here? undefined ⇒ n/a
 }
 
 interface DeploymentMapProps {
   deployments: Deployment[]
   onSelectDeployment?: (id: string) => void
   selectedDeploymentId?: string | null
+  metric?: 'total' | 'perDay'
+  speciesLabel?: string | null   // when set, the map is in present/absent mode
 }
 
 const PROJECT_COLOURS = [
@@ -30,8 +38,14 @@ const PROJECT_COLOURS = [
   '#9c27b0', '#00bcd4', '#ff5722', '#607d8b',
 ]
 
-export function DeploymentMap({ deployments, onSelectDeployment, selectedDeploymentId }: DeploymentMapProps) {
+export function DeploymentMap({ deployments, onSelectDeployment, selectedDeploymentId, metric = 'total', speciesLabel = null }: DeploymentMapProps) {
   const mapped = deployments.filter(d => d.latitude != null && d.longitude != null)
+
+  // A site counts as "absent" only when we're filtering by a species and it has
+  // no detections there. Without a species filter every site is just "shown".
+  const sizeValue = (d: Deployment) => d.metricValue ?? d.observation_count ?? 0
+  const isAbsent = (d: Deployment) => speciesLabel != null && d.present === false
+  const metricLabel = metric === 'perDay' ? 'detections / active day' : 'detection count'
 
   // Build a colour index by project name
   const projectNames = [...new Set(deployments.map(d => d.project_name ?? ''))]
@@ -45,7 +59,10 @@ export function DeploymentMap({ deployments, onSelectDeployment, selectedDeploym
       ]
     : [20, 0] // world default
 
-  const maxObs = Math.max(...mapped.map(d => d.observation_count ?? 0), 1)
+  // Size scale is driven by the present sites only, so a swarm of absent
+  // (zero) sites can't flatten the contrast between the present ones.
+  const maxVal = Math.max(...mapped.filter(d => !isAbsent(d)).map(sizeValue), 1)
+  const fmt = (n: number) => (Number.isInteger(n) ? String(n) : n.toFixed(2))
 
   // Suppress SSR hydration issue with dynamic import
   useEffect(() => { /* trigger re-render once CSS is loaded */ }, [])
@@ -83,17 +100,20 @@ export function DeploymentMap({ deployments, onSelectDeployment, selectedDeploym
         {mapped.map(d => {
           const isSelected = d.id === selectedDeploymentId
           const obsCount = d.observation_count ?? 0
-          const radius = 8 + Math.round((obsCount / maxObs) * 10)
+          const absent = isAbsent(d)
           const colour = colourOf(d.project_name ?? '')
+          // Absent sites: small hollow grey ring. Present/plain sites: filled,
+          // colour by project, radius scaled by the chosen metric.
+          const radius = absent ? 5 : 8 + Math.round((sizeValue(d) / maxVal) * 12)
           return (
             <CircleMarker
               key={d.id}
               center={[d.latitude!, d.longitude!]}
               radius={radius}
               pathOptions={{
-                color: isSelected ? '#fff' : colour,
-                fillColor: colour,
-                fillOpacity: 0.8,
+                color: isSelected ? '#fff' : absent ? '#9e9e9e' : colour,
+                fillColor: absent ? '#9e9e9e' : colour,
+                fillOpacity: absent ? 0.12 : 0.8,
                 weight: isSelected ? 3 : 1.5,
               }}
               eventHandlers={{ click: () => onSelectDeployment?.(d.id) }}
@@ -103,7 +123,24 @@ export function DeploymentMap({ deployments, onSelectDeployment, selectedDeploym
                 {d.project_name && <span style={{ opacity: 0.8 }}>{d.project_name}<br /></span>}
                 {d.deployment_start && <span>{new Date(d.deployment_start).toLocaleDateString()}</span>}
                 {d.deployment_end && <span> → {new Date(d.deployment_end).toLocaleDateString()}</span>}<br />
-                {obsCount > 0 && <span>{obsCount} observation{obsCount !== 1 ? 's' : ''}</span>}
+                {speciesLabel != null ? (
+                  absent ? (
+                    <span><em>{speciesLabel}</em>: not detected</span>
+                  ) : (
+                    <span>
+                      <em>{speciesLabel}</em>: {obsCount} detection{obsCount !== 1 ? 's' : ''}
+                      {d.activeDays != null && <span> over {d.activeDays} day{d.activeDays !== 1 ? 's' : ''}</span>}
+                      {d.perDay != null && <><br />{fmt(d.perDay)} / day</>}
+                    </span>
+                  )
+                ) : (
+                  obsCount > 0 && (
+                    <span>
+                      {obsCount} detection{obsCount !== 1 ? 's' : ''}
+                      {metric === 'perDay' && d.perDay != null && <> · {fmt(d.perDay)} / day</>}
+                    </span>
+                  )
+                )}
               </Tooltip>
             </CircleMarker>
           )
@@ -130,8 +167,18 @@ export function DeploymentMap({ deployments, onSelectDeployment, selectedDeploym
             {name || 'Unknown project'}
           </span>
         ))}
+        {speciesLabel != null && (
+          <span style={{ display: 'flex', alignItems: 'center', gap: '0.375rem' }}>
+            <span style={{
+              width: 10, height: 10, borderRadius: '50%',
+              border: '1.5px solid #9e9e9e', backgroundColor: 'rgba(158,158,158,0.12)',
+              display: 'inline-block',
+            }} />
+            absent ({speciesLabel})
+          </span>
+        )}
         <span style={{ marginLeft: 'auto', opacity: 0.6 }}>
-          Circle size ∝ observation count · {mapped.length} of {deployments.length} deployment{deployments.length !== 1 ? 's' : ''} have GPS
+          Circle size ∝ {metricLabel} · {mapped.length} of {deployments.length} deployment{deployments.length !== 1 ? 's' : ''} have GPS
         </span>
       </div>
     </div>

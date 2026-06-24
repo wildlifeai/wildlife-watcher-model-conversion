@@ -407,6 +407,8 @@ Prefer:
 * Strong typing
 * Explicit validation
 * Real API testing
+* Follow YAGNI (You Aren't Gonna Need It) principles
+* Prefer simple, one-liner solutions where readable and appropriate
 
 Avoid:
 

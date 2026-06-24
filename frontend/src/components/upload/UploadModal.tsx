@@ -36,12 +36,12 @@ interface CamtrapImportResult {
 // ─────────────────────────────────────────────────────────────────────────────
 
 const CAMTRAP_STAGES: { label: string; pct: number; after: number }[] = [
-  { label: 'Uploading package…',         pct: 10, after: 500   },
-  { label: 'Parsing deployments…',       pct: 25, after: 3000  },
-  { label: 'Registering taxa via iNat…', pct: 45, after: 8000  },
-  { label: 'Importing media records…',   pct: 65, after: 15000 },
-  { label: 'Importing observations…',    pct: 80, after: 22000 },
-  { label: 'Finalising import…',         pct: 92, after: 30000 },
+  { label: 'Uploading package…', pct: 10, after: 500 },
+  { label: 'Parsing deployments…', pct: 25, after: 3000 },
+  { label: 'Registering taxa via iNat…', pct: 45, after: 8000 },
+  { label: 'Importing media records…', pct: 65, after: 15000 },
+  { label: 'Importing observations…', pct: 80, after: 22000 },
+  { label: 'Finalising import…', pct: 92, after: 30000 },
 ]
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -55,6 +55,7 @@ export function UploadModal() {
   const [files, setFiles] = useState<File[]>([])
   const [filePaths, setFilePaths] = useState<string[]>([])
   const [zipFile, setZipFile] = useState<File | null>(null)
+  const [selectionError, setSelectionError] = useState<string | null>(null)
 
 
   // Deployment data (fetched once for stats + validation)
@@ -79,6 +80,7 @@ export function UploadModal() {
       setFiles([])
       setFilePaths([])
       setZipFile(null)
+      setSelectionError(null)
       setInvalidDeployments({})
       setCamtrapResult(null)
       setCamtrapError(null)
@@ -112,6 +114,7 @@ export function UploadModal() {
 
   // ── File processing (routing image vs ZIP) ─────────────────────────────────
   const processFiles = async (incoming: File[]) => {
+    setSelectionError(null)
     const zips = incoming.filter((f) => f.name.toLowerCase().endsWith('.zip'))
     const images = incoming.filter(
       (f) =>
@@ -119,6 +122,17 @@ export function UploadModal() {
         f.name.toLowerCase().endsWith('.jpg') ||
         f.name.toLowerCase().endsWith('.jpeg'),
     )
+
+    if (incoming.length > 0 && zips.length === 0 && images.length === 0) {
+      setSelectionError('No images or zip files found in the selected folder.')
+      setFiles([])
+      setFilePaths([])
+      setZipFile(null)
+      setInvalidDeployments({})
+      setCamtrapResult(null)
+      setCamtrapError(null)
+      return
+    }
 
     if (zips.length > 0 && images.length === 0) {
       setZipFile(zips[0])
@@ -212,6 +226,7 @@ export function UploadModal() {
     setFiles([])
     setFilePaths([])
     setZipFile(null)
+    setSelectionError(null)
     setInvalidDeployments({})
     setCamtrapResult(null)
     setCamtrapError(null)
@@ -276,31 +291,46 @@ export function UploadModal() {
     >
       {/* ── Drop zone (idle) ─────────────────────────────────────────────── */}
       {uploadMode === 'idle' && (
-        <div
-          {...bind}
-          style={ZONE_STYLE}
-          onClick={() => folderInputRef.current?.click()}
-        >
-          <div style={{ pointerEvents: 'none' }}>
-            <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem', opacity: 0.7 }}>
-              {isDragging ? '📥' : '📂'}
+        <>
+          <div
+            {...bind}
+            style={ZONE_STYLE}
+            onClick={() => folderInputRef.current?.click()}
+          >
+            <div style={{ pointerEvents: 'none' }}>
+              <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem', opacity: 0.7 }}>
+                {isDragging ? '📥' : '📂'}
+              </div>
+              <p style={{ fontWeight: 500, marginBottom: '0.25rem', fontSize: '0.9375rem' }}>
+                {isDragging ? 'Drop to select' : 'Click to select folder or drag & drop here'}
+              </p>
+              <p style={{ fontSize: '0.75rem', opacity: 0.55, margin: 0 }}>
+                Wildlife Watcher SD card folder (MEDIA/…) or CamtrapDP .zip package
+              </p>
             </div>
-            <p style={{ fontWeight: 500, marginBottom: '0.25rem', fontSize: '0.9375rem' }}>
-              {isDragging ? 'Drop to select' : 'Click to select folder or drag & drop here'}
-            </p>
-            <p style={{ fontSize: '0.75rem', opacity: 0.55, margin: 0 }}>
-              Wildlife Watcher SD card folder (MEDIA/…) or CamtrapDP .zip package
-            </p>
+            <input
+              ref={folderInputRef}
+              type="file"
+              multiple
+              {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
+              style={{ display: 'none' }}
+              onChange={handleInputChange}
+            />
           </div>
-          <input
-            ref={folderInputRef}
-            type="file"
-            multiple
-            {...({ webkitdirectory: '', directory: '' } as React.InputHTMLAttributes<HTMLInputElement>)}
-            style={{ display: 'none' }}
-            onChange={handleInputChange}
-          />
-        </div>
+          {selectionError && (
+            <div style={{
+              marginTop: '1rem',
+              padding: '0.75rem',
+              borderRadius: 'var(--radius)',
+              backgroundColor: 'rgba(244,67,54,0.08)',
+              color: 'var(--error, #f44336)',
+              fontSize: '0.8125rem',
+              textAlign: 'center'
+            }}>
+              ⚠ {selectionError}
+            </div>
+          )}
+        </>
       )}
 
       {/* ── Image mode: stats + options ──────────────────────────────────── */}

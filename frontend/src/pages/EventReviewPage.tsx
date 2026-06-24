@@ -381,8 +381,8 @@ export function EventReviewPage() {
           <button className="btn" onClick={() => navigate('/insights')} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)' }}>
             My Data
           </button>
-          <button className="btn" onClick={() => navigate(`/analysis/${deployment_id}`)} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', color: 'var(--primary)' }}>
-            Analytics Dashboard 📊
+          <button className="btn" onClick={() => navigate(`/reporting/${deployment_id}`)} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', color: 'var(--primary)' }}>
+            Results 📊
           </button>
         </div>
       </div>

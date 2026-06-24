@@ -1,11 +1,10 @@
 // Copyright (c) 2024
 // SPDX-License-Identifier: GPL-3.0-or-later
-/* eslint-disable react-hooks/set-state-in-effect */
 /**
  * InsightsPage — /insights
  *
  * Two sub-tabs via ?tab=reports|deployments (default reports).
- * Reports = ObservationReports + ChartBuilder. Deployments = table with a Table/Map
+ * Reports = ReportsDashboard (editable widgets). Deployments = table with a Table/Map
  * view toggle (the standalone Map gets its own home — the Field page — in P3; until
  * then it lives here as a view so nothing disappears).
  * Projects & members moved to Settings (P2).
@@ -19,8 +18,7 @@ import { DataTable, type Column } from '../components/ui/DataTable'
 import { FilterSelect } from '../components/ui/ControlBar'
 import { Ribbon, type RibbonGroupDef } from '../components/ui/Ribbon'
 import { DeploymentMap } from '../components/data/DeploymentMap'
-import { ObservationReports } from '../components/data/ObservationReports'
-import { ChartBuilder } from '../components/data/ChartBuilder'
+import { ReportsDashboard } from '../components/data/ReportsDashboard'
 import { DeploymentBulkActions } from '../components/data/DeploymentBulkActions'
 import { type DeploymentRow } from '../components/data/DeploymentActionRow'
 
@@ -32,16 +30,26 @@ interface Observation {
   created_at: string
 }
 
-type InsightsTab = 'reports' | 'deployments'
-type DepView = 'table' | 'map'
+type InsightsTab = 'reports' | 'deployments' | 'map'
+type MapMetric = 'total' | 'perDay'
 
 const TABS: { id: InsightsTab; label: string }[] = [
   { id: 'reports',     label: '📊 Reports' },
   { id: 'deployments', label: '📍 Deployments' },
+  { id: 'map',         label: '🗺 Map' },
 ]
 
 function formatDate(s: string | null) {
   return s ? new Date(s).toLocaleDateString() : '—'
+}
+
+// Active span of a deployment in days (min 1). Open-ended deployments run up to
+// "now". Module-level so the date maths stays out of render purity checks.
+function activeDaysOf(start: string | null, end: string | null): number {
+  if (!start) return 1
+  const s = new Date(start).getTime()
+  const e = end ? new Date(end).getTime() : Date.now()
+  return Math.max(1, Math.round((e - s) / 86_400_000))
 }
 
 const VIEW_BTN = (active: boolean): React.CSSProperties => ({
@@ -56,8 +64,22 @@ export function InsightsPage() {
   const { selectedProjectIds } = useProjectSelection()
   const [searchParams, setSearchParams] = useSearchParams()
 
-  const tab: InsightsTab = (searchParams.get('tab') as InsightsTab) === 'deployments' ? 'deployments' : 'reports'
-  const setTab = (t: InsightsTab) => setSearchParams({ tab: t }, { replace: true })
+  const rawTab = searchParams.get('tab')
+  const tab: InsightsTab = rawTab === 'deployments' || rawTab === 'map' ? rawTab : 'reports'
+  const setTab = (t: InsightsTab) => {
+    // Preserve other params (notably ?deployment=) when switching sub-tabs.
+    const next = new URLSearchParams(searchParams)
+    next.set('tab', t)
+    setSearchParams(next, { replace: true })
+  }
+
+  // ?deployment=<uuid> — deep-link that auto-focuses the Reports tab on one
+  // deployment (e.g. straight from an upload). UUID-guarded before it ever
+  // reaches a query filter.
+  const deploymentParam = (() => {
+    const d = searchParams.get('deployment') || ''
+    return /^[0-9a-fA-F-]{36}$/.test(d) ? d : ''
+  })()
 
   const [deployments,  setDeployments]  = useState<DeploymentRow[]>([])
   const [observations, setObservations] = useState<Observation[]>([])
@@ -65,12 +87,25 @@ export function InsightsPage() {
   const [obsLoading,   setObsLoading]   = useState(false)
   const [error,        setError]        = useState<string | null>(null)
   const [selectedDepId, setSelectedDepId] = useState<string | null>(null)
-  const [depView, setDepView] = useState<DepView>('table')
   const [selectedDeps, setSelectedDeps] = useState<Set<string>>(new Set())
+  const [mapMetric, setMapMetric] = useState<MapMetric>('total')
+  const [mapShowAbsent, setMapShowAbsent] = useState(true)
 
-  const [reportFilterDep, setReportFilterDep]         = useState('')
+  const [reportFilterDep, setReportFilterDepState]    = useState(deploymentParam)
   const [reportFilterSpecies, setReportFilterSpecies] = useState('')
   const [mapFilterSpecies, setMapFilterSpecies]       = useState('')
+
+  // The Reports ▸ Deployment filter is mirrored in the URL so the view is
+  // shareable/bookmarkable and arrivals via ?deployment= land pre-focused.
+  const setReportFilterDep = (id: string) => {
+    setReportFilterDepState(id)
+    const next = new URLSearchParams(searchParams)
+    if (id) next.set('deployment', id)
+    else next.delete('deployment')
+    setSearchParams(next, { replace: true })
+  }
+  // Reflect external URL changes (back/forward, a new deep-link) into the filter.
+  useEffect(() => { setReportFilterDepState(deploymentParam) }, [deploymentParam])
 
   // Load deployments (both tabs use them) ──────────────────────────────────
   useEffect(() => {
@@ -85,7 +120,16 @@ export function InsightsPage() {
       .is('deleted_at', null)
       .order('created_at', { ascending: false })
 
-    if (selectedProjectIds.length > 0) query = query.in('project_id', selectedProjectIds)
+    if (selectedProjectIds.length > 0) {
+      // Honour the project selection, but always include a deep-linked deployment
+      // even when its project isn't currently selected, so ?deployment= never
+      // lands on an empty report.
+      if (deploymentParam) {
+        query = query.or(`project_id.in.(${selectedProjectIds.join(',')}),id.eq.${deploymentParam}`)
+      } else {
+        query = query.in('project_id', selectedProjectIds)
+      }
+    }
 
     query.then(({ data, error: err }) => {
       if (cancelled) return
@@ -102,12 +146,12 @@ export function InsightsPage() {
       setDepLoading(false)
     })
     return () => { cancelled = true }
-  }, [user, selectedProjectIds])
+  }, [user, selectedProjectIds, deploymentParam])
 
   // Load observations (reports always; map view when shown) ─────────────────
   useEffect(() => {
     if (!user) return
-    if (tab !== 'reports' && !(tab === 'deployments' && depView === 'map')) return
+    if (tab !== 'reports' && tab !== 'map') return
     if (deployments.length === 0) return
     let cancelled = false
     setObsLoading(true)
@@ -122,19 +166,33 @@ export function InsightsPage() {
         setObsLoading(false)
       })
     return () => { cancelled = true }
-  }, [user, tab, depView, deployments])
+  }, [user, tab, deployments])
 
-  const deploymentsWithCounts = useMemo(() => {
+  // Map markers: per-deployment detection count (optionally for one species),
+  // effort-normalised to a per-active-day rate, and present/absent flags.
+  const mapMarkers = useMemo(() => {
     const counts: Record<string, number> = {}
-    for (const o of observations) counts[o.deployment_id] = (counts[o.deployment_id] ?? 0) + 1
-    return deployments.map(d => ({ ...d, observation_count: counts[d.id] ?? 0 }))
-  }, [deployments, observations])
-
-  const mapDeployments = useMemo(() => {
-    if (!mapFilterSpecies) return deploymentsWithCounts
-    const depIds = new Set(observations.filter(o => o.scientific_name === mapFilterSpecies).map(o => o.deployment_id))
-    return deploymentsWithCounts.filter(d => depIds.has(d.id))
-  }, [deploymentsWithCounts, observations, mapFilterSpecies])
+    for (const o of observations) {
+      if (mapFilterSpecies && o.scientific_name !== mapFilterSpecies) continue
+      counts[o.deployment_id] = (counts[o.deployment_id] ?? 0) + 1
+    }
+    const markers = deployments.map(d => {
+      const count = counts[d.id] ?? 0
+      const activeDays = activeDaysOf(d.deployment_start, d.deployment_end)
+      const perDay = count / activeDays
+      return {
+        ...d,
+        observation_count: count,
+        activeDays,
+        perDay,
+        present: count > 0,
+        metricValue: mapMetric === 'perDay' ? perDay : count,
+      }
+    })
+    // When a species is selected, optionally drop the "absent" sites.
+    if (mapFilterSpecies && !mapShowAbsent) return markers.filter(m => m.present)
+    return markers
+  }, [deployments, observations, mapFilterSpecies, mapMetric, mapShowAbsent])
 
   const filteredObservations = useMemo(() => {
     let obs = observations
@@ -183,25 +241,32 @@ export function InsightsPage() {
         ) },
       ]
     }
-    // deployments
-    const groups: RibbonGroupDef[] = [{
-      id: 'view', title: 'View', content: (
-        <div style={{ display: 'flex', gap: '0.375rem' }}>
-          <button style={VIEW_BTN(depView === 'table')} onClick={() => setDepView('table')}>📋 Table</button>
-          <button style={VIEW_BTN(depView === 'map')}   onClick={() => setDepView('map')}>🗺 Map</button>
-        </div>
-      ),
-    }]
-    if (depView === 'map') {
-      groups.push({ id: 'species', title: 'Species', content: (
-        <FilterSelect value={mapFilterSpecies} onChange={setMapFilterSpecies} options={speciesOptions} placeholder="All species" />
-      ) })
-    } else {
-      groups.push({ id: 'shown', title: 'Deployments', content: (
-        <span style={{ fontSize: '0.8125rem', opacity: 0.7 }}><strong>{deployments.length}</strong> shown</span>
-      ) })
+    if (id === 'map') {
+      const groups: RibbonGroupDef[] = [
+        { id: 'species', title: 'Species', content: (
+          <FilterSelect value={mapFilterSpecies} onChange={setMapFilterSpecies} options={speciesOptions} placeholder="All species" />
+        ) },
+        { id: 'metric', title: 'Size by', content: (
+          <div style={{ display: 'flex', gap: '0.375rem' }}>
+            <button style={VIEW_BTN(mapMetric === 'total')}  onClick={() => setMapMetric('total')}>Total</button>
+            <button style={VIEW_BTN(mapMetric === 'perDay')} onClick={() => setMapMetric('perDay')}>Per day</button>
+          </div>
+        ) },
+      ]
+      if (mapFilterSpecies) {
+        groups.push({ id: 'absent', title: 'Absent sites', content: (
+          <div style={{ display: 'flex', gap: '0.375rem' }}>
+            <button style={VIEW_BTN(mapShowAbsent)}  onClick={() => setMapShowAbsent(true)}>Show</button>
+            <button style={VIEW_BTN(!mapShowAbsent)} onClick={() => setMapShowAbsent(false)}>Hide</button>
+          </div>
+        ) })
+      }
+      return groups
     }
-    return groups
+    // deployments — table only (the map lives in its own tab now)
+    return [{ id: 'shown', title: 'Deployments', content: (
+      <span style={{ fontSize: '0.8125rem', opacity: 0.7 }}><strong>{deployments.length}</strong> shown</span>
+    ) }]
   }
 
   return (
@@ -228,28 +293,21 @@ export function InsightsPage() {
               </Link>
             </div>
           )}
-          <ObservationReports observations={filteredObservations} deployments={deployments} loading={obsLoading} />
-          {!obsLoading && <ChartBuilder observations={filteredObservations} deployments={deployments} />}
+          <ReportsDashboard observations={filteredObservations} deployments={deployments} loading={obsLoading} />
         </>
       )}
 
-      {/* ── Deployments (table or map) ───────────────────────────────── */}
+      {/* ── Deployments (table) ──────────────────────────────────────── */}
       {tab === 'deployments' && (
         depLoading ? (
           <p style={{ opacity: 0.5 }}>Loading deployments…</p>
-        ) : depView === 'map' ? (
-          <DeploymentMap
-            deployments={mapDeployments}
-            selectedDeploymentId={selectedDepId}
-            onSelectDeployment={setSelectedDepId}
-          />
         ) : (
           <>
             <DeploymentBulkActions
               selected={selectedDeps}
               rows={deployments}
               onClear={() => setSelectedDeps(new Set())}
-              onShowMap={() => setDepView('map')}
+              onShowMap={() => setTab('map')}
             />
             <DataTable<DeploymentRow>
               columns={deploymentColumns}
@@ -264,6 +322,21 @@ export function InsightsPage() {
               pageSize={50}
             />
           </>
+        )
+      )}
+
+      {/* ── Map ──────────────────────────────────────────────────────── */}
+      {tab === 'map' && (
+        depLoading ? (
+          <p style={{ opacity: 0.5 }}>Loading deployments…</p>
+        ) : (
+          <DeploymentMap
+            deployments={mapMarkers}
+            selectedDeploymentId={selectedDepId}
+            onSelectDeployment={setSelectedDepId}
+            metric={mapMetric}
+            speciesLabel={mapFilterSpecies || null}
+          />
         )
       )}
     </div>
