@@ -429,14 +429,10 @@ export function ReportingPage() {
       {/* Header */}
       <div className="glass-card" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: '1.25rem', flexWrap: 'wrap', gap: '1rem' }}>
         <div>
-          <h3 style={{ margin: 0 }}>Reports</h3>
-          <span style={{ fontSize: '0.8125rem', opacity: 0.65 }}>Deployment {deployment_id.slice(0, 8)}…</span>
+          <h3 style={{ margin: 0 }}>Deployment results</h3>
+          <span style={{ fontSize: '0.8125rem', opacity: 0.65 }}>Species diversity, activity & exports · {deployment_id.slice(0, 8)}…</span>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn" onClick={() => navigate(`/analysis/${deployment_id}`)}
-            style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', fontSize: '0.8125rem' }}>
-            ◀ Analysis
-          </button>
           <button className="btn" onClick={() => navigate('/insights')}
             style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', fontSize: '0.8125rem' }}>
             My Data

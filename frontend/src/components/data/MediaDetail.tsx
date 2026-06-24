@@ -21,6 +21,8 @@ interface Props {
   onNext?: () => void
   /** Step to the previous image. */
   onPrev?: () => void
+  /** Observation to pre-select on open (e.g. the crop card the user clicked). */
+  focusObsId?: string | null
 }
 
 type AnnotationFilter = 'all' | 'reviewed' | 'ai' | 'none'
@@ -323,7 +325,7 @@ function MediaInfoSection({ media, timezone }: { media: MediaRecord; timezone?: 
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────────
-export function MediaDetail({ media, timezone, mediaList, onSelect, onClose, onUpdated, onNext, onPrev }: Props) {
+export function MediaDetail({ media, timezone, mediaList, onSelect, onClose, onUpdated, onNext, onPrev, focusObsId }: Props) {
   const { user } = useAuth()
   const imgUrl = resolveImageUrl(media, 'full')
 
@@ -349,12 +351,15 @@ export function MediaDetail({ media, timezone, mediaList, onSelect, onClose, onU
   const panStart = useRef<{ x: number; y: number; px: number; py: number } | null>(null)
   const imgWrapRef = useRef<HTMLDivElement>(null)
 
-  // Reset per-image view state when the image changes.
+  // Reset per-image view state when the image changes. Pre-select the focused
+  // observation (the crop card the user clicked) when it belongs to this image.
   useEffect(() => {
     setZoom(1); setPan({ x: 0, y: 0 }); setBrightness(100); setContrast(100)
-    setMovement(false); setSelectedObsId(null); setPicker(null)
+    setMovement(false); setPicker(null)
+    const focus = focusObsId && media.observations.some(o => o.id === focusObsId) ? focusObsId : null
+    setSelectedObsId(focus)
     setBboxObsId(null); setDraft(null); drawStart.current = null
-  }, [media.id])
+  }, [media.id, focusObsId])
 
   const idx = useMemo(() => mediaList?.findIndex(m => m.id === media.id) ?? -1, [mediaList, media.id])
   const prevMedia = idx > 0 ? mediaList?.[idx - 1] : undefined

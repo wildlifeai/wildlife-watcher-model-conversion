@@ -16,23 +16,28 @@ interface Props {
   defaultOpen?: boolean
   /** Optional badge/icon rendered after the label. */
   badge?: ReactNode
+  /** Optional interactive controls rendered at the right of the header, outside
+   *  the collapse toggle (e.g. a per-cluster "label all" action). */
+  action?: ReactNode
   /** The thumbnail grid or content to render inside the group. */
   children: ReactNode
 }
 
-export function MediaGroup({ label, count, defaultOpen = true, badge, children }: Props) {
+export function MediaGroup({ label, count, defaultOpen = true, badge, action, children }: Props) {
   const [open, setOpen] = useState(defaultOpen)
 
   return (
     <div style={{ marginBottom: '0.75rem' }}>
-      {/* Header row */}
+      {/* Header row: collapse toggle (button) + optional action beside it */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
       <button
         onClick={() => setOpen(v => !v)}
         style={{
           display: 'flex',
           alignItems: 'center',
           gap: '0.5rem',
-          width: '100%',
+          flex: 1,
+          minWidth: 0,
           padding: '0.5rem 0.75rem',
           border: '1px solid var(--border)',
           borderRadius: 'var(--radius)',
@@ -78,6 +83,10 @@ export function MediaGroup({ label, count, defaultOpen = true, badge, children }
           {count} {count === 1 ? 'image' : 'images'}
         </span>
       </button>
+
+      {/* Action (outside the toggle button so its inputs/buttons work) */}
+      {action && <div style={{ flexShrink: 0 }}>{action}</div>}
+      </div>
 
       {/* Content (thumbnail grid) */}
       {open && (

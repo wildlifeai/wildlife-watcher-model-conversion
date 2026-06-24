@@ -1,5 +1,5 @@
 import React, { useRef, useEffect, useState, Suspense } from 'react'
-import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation } from 'react-router-dom'
+import { BrowserRouter, Routes, Route, Link, NavLink, Navigate, useLocation, useParams } from 'react-router-dom'
 import { QueryClientProvider } from '@tanstack/react-query'
 import { queryClient } from './lib/queryClient'
 import { useAuth } from './hooks/useAuth'
@@ -7,6 +7,7 @@ import { ProjectSelectionProvider } from './hooks/useProjectSelection'
 import { GlobalProjectSelector } from './components/common/GlobalProjectSelector'
 import { useHasActiveDeployments } from './hooks/useHasActiveDeployments'
 import { useNotifications, type AppNotification } from './hooks/useNotifications'
+import { InatAutoSync } from './components/settings/InatAutoSync'
 import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
 import { MyDataPage } from './pages/MyDataPage'
@@ -23,9 +24,7 @@ import { FaqPage } from './pages/FaqPage'
 const GuidesPage = React.lazy(() => import('./pages/GuidesPage'))
 const GuideDetailPage = React.lazy(() => import('./pages/GuideDetailPage'))
 
-import { AnalysisPage } from './pages/AnalysisPage'
 import { ReportingPage } from './pages/ReportingPage'
-import { ImageExplorerPage } from './pages/ImageExplorerPage'
 import { ClusterReviewPage } from './pages/ClusterReviewPage'
 import { UmapExplorerPage } from './pages/UmapExplorerPage'
 import { ReviewQueuePage } from './pages/ReviewQueuePage'
@@ -61,6 +60,20 @@ function RequireAuth({ children }: { children: React.ReactNode }) {
 function RedirectTo({ to }: { to: string }) {
   const { search } = useLocation()
   return <Navigate to={`${to}${search}`} replace />
+}
+
+// The old /analysis/:id page showed mock data; the real per-deployment results
+// live on /reporting/:id. Redirect (keeps existing buttons and bookmarks working).
+function RedirectToReporting() {
+  const { deployment_id } = useParams<{ deployment_id: string }>()
+  return <Navigate to={`/reporting/${deployment_id}`} replace />
+}
+
+// The old /explore image grid is now redundant — the Annotations page does the
+// grid, clustering, bulk cluster-confirm, and similar-image search. Redirect.
+function RedirectExploreToAnnotations() {
+  const { deployment_id } = useParams<{ deployment_id: string }>()
+  return <Navigate to={`/annotations?deployment=${deployment_id}`} replace />
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -268,7 +281,7 @@ function Layout({ children }: { children: React.ReactNode }) {
   const hasField = useHasActiveDeployments()
   const { unreadCount, items: notifications } = useNotifications()
   const navTabs = hasField
-    ? [USER_TABS[0], { id: 'field', label: '📡 Field', to: '/field' }, ...USER_TABS.slice(1)]
+    ? [USER_TABS[0], { id: 'field', label: '📡 Realtime', to: '/field' }, ...USER_TABS.slice(1)]
     : [...USER_TABS]
 
   // Resolve which top-level tab is active (handles nested routes too)
@@ -388,6 +401,9 @@ function Layout({ children }: { children: React.ReactNode }) {
         </div>
       </main>
 
+      {/* Pulls iNaturalist community IDs once per session on login (no UI). */}
+      <InatAutoSync />
+
       <footer style={{
         borderTop: '1px solid var(--border)',
         padding: '2.5rem 0',
@@ -469,7 +485,7 @@ export default function App() {
               <Route path="/upload-model" element={<RequireAuth><UploadModelPage /></RequireAuth>} />
 
               {/* Annotation workflow deep-links (preserved) */}
-              <Route path="/explore/:deployment_id"  element={<RequireAuth><ImageExplorerPage /></RequireAuth>} />
+              <Route path="/explore/:deployment_id"  element={<RequireAuth><RedirectExploreToAnnotations /></RequireAuth>} />
               <Route path="/clusters/:deployment_id" element={<RequireAuth><ClusterReviewPage /></RequireAuth>} />
               <Route path="/umap/:deployment_id"     element={<RequireAuth><UmapExplorerPage /></RequireAuth>} />
               <Route path="/review/:deployment_id"   element={<RequireAuth><ReviewQueuePage /></RequireAuth>} />
@@ -477,7 +493,7 @@ export default function App() {
 
               {/* Analysis / reporting deep-links (preserved) */}
               <Route path="/intelligence/:project_id" element={<RequireAuth><DatasetHealthPage /></RequireAuth>} />
-              <Route path="/analysis/:deployment_id"  element={<RequireAuth><AnalysisPage /></RequireAuth>} />
+              <Route path="/analysis/:deployment_id"  element={<RequireAuth><RedirectToReporting /></RequireAuth>} />
               <Route path="/reporting/:deployment_id" element={<RequireAuth><ReportingPage /></RequireAuth>} />
 
               {/* MyDataPage kept at a legacy path (internal; /my-data redirects above) */}

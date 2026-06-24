@@ -11,7 +11,7 @@
 
 import { useState, useRef, useEffect } from 'react'
 
-export type BulkAction = 'inat' | 'inat-sync' | 'delete' | 'ai'
+export type BulkAction = 'inat' | 'delete' | 'ai' | 'similar' | 'label'
 
 interface Props {
   selectedCount: number
@@ -41,7 +41,7 @@ export function MediaBulkActions({
     return () => document.removeEventListener('mousedown', h)
   }, [open])
 
-  if (selectedCount === 0) return null
+  const none = selectedCount === 0
 
   const item: React.CSSProperties = {
     display: 'flex', alignItems: 'center', gap: '0.5rem',
@@ -56,10 +56,11 @@ export function MediaBulkActions({
     <div style={{
       display: 'flex', alignItems: 'center', gap: '0.5rem',
       padding: '0.25rem 0.625rem', borderRadius: 'var(--radius)',
-      background: 'rgba(76,175,80,0.08)', border: '1px solid rgba(76,175,80,0.3)',
+      background: none ? 'transparent' : 'rgba(76,175,80,0.08)',
+      border: `1px solid ${none ? 'var(--border)' : 'rgba(76,175,80,0.3)'}`,
     }}>
-      {/* Selection count */}
-      <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>
+      {/* Selection count — always shown (defaults to 0) */}
+      <span style={{ fontSize: '0.82rem', fontWeight: 600, opacity: none ? 0.6 : 1 }}>
         ☑ {selectedCount} selected
       </span>
 
@@ -75,19 +76,21 @@ export function MediaBulkActions({
       </button>
       <button
         onClick={onClearSelection}
+        disabled={none}
         style={{
-          background: 'transparent', border: 'none', cursor: 'pointer',
-          fontSize: '0.78rem', color: 'var(--primary)', padding: '0.2rem 0.4rem',
+          background: 'transparent', border: 'none', cursor: none ? 'default' : 'pointer',
+          fontSize: '0.78rem', color: 'var(--primary)', padding: '0.2rem 0.4rem', opacity: none ? 0.4 : 1,
         }}
       >
         None
       </button>
 
-      {/* Actions dropdown */}
+      {/* Actions dropdown — disabled until something is selected */}
       <div ref={ref} style={{ position: 'relative', marginLeft: '0.5rem' }}>
         <button
           className="btn"
-          style={{ fontSize: '0.8rem', padding: '0.3rem 0.7rem' }}
+          style={{ fontSize: '0.8rem', padding: '0.3rem 0.7rem', opacity: none ? 0.5 : 1, cursor: none ? 'default' : 'pointer' }}
+          disabled={none}
           onClick={() => setOpen(v => !v)}
         >
           Actions ▾
@@ -100,6 +103,33 @@ export function MediaBulkActions({
             borderRadius: 'var(--radius)',
             boxShadow: '0 4px 16px rgba(0,0,0,0.15)', padding: '0.25rem 0',
           }}>
+            {/* Label every selected image as one species (or blank). */}
+            <button
+              style={item}
+              onMouseEnter={e => (e.currentTarget.style.background = itemHover)}
+              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+              onClick={() => run('label')}
+              title="Annotate all selected images with the same species (or 'nothing')"
+            >
+              <span>🏷️</span>
+              <span>Label as…</span>
+            </button>
+
+            {selectedCount === 1 && (
+              <button
+                style={item}
+                onMouseEnter={e => (e.currentTarget.style.background = itemHover)}
+                onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
+                onClick={() => run('similar')}
+                title="Show the images most visually similar to this one"
+              >
+                <span>🔎</span>
+                <span>Find similar images</span>
+              </button>
+            )}
+
+            <div style={{ height: 1, background: 'var(--border)', margin: '0.25rem 0' }} />
+
             <button
               style={item}
               onMouseEnter={e => (e.currentTarget.style.background = itemHover)}
@@ -108,17 +138,6 @@ export function MediaBulkActions({
             >
               <span>🌿</span>
               <span>Upload to iNaturalist</span>
-              {!inatConnected && <span style={{ fontSize: '0.65rem', opacity: 0.5 }}>(connect first)</span>}
-            </button>
-
-            <button
-              style={item}
-              onMouseEnter={e => (e.currentTarget.style.background = itemHover)}
-              onMouseLeave={e => (e.currentTarget.style.background = 'transparent')}
-              onClick={() => run('inat-sync')}
-            >
-              <span>↻</span>
-              <span>Sync iNaturalist IDs</span>
               {!inatConnected && <span style={{ fontSize: '0.65rem', opacity: 0.5 }}>(connect first)</span>}
             </button>
 

@@ -90,7 +90,7 @@ export function UmapExplorerPage() {
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
           <Link to={`/clusters/${deployment_id}`} className="btn" style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>◧ Clusters</Link>
-          <Link to={`/explore/${deployment_id}`} className="btn" style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>🖼 Explore</Link>
+          <Link to={`/annotations?deployment=${deployment_id}`} className="btn" style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>🏷️ Annotations</Link>
         </div>
       </div>
 

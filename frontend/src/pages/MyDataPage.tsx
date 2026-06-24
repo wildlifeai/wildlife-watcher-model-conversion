@@ -114,9 +114,9 @@ function DeploymentActionRow({ d, navigate }: { d: Deployment; navigate: ReturnT
   return (
     <div style={{ display: 'flex', gap: '0.375rem', flexWrap: 'wrap', alignItems: 'center' }}>
       {/* Primary lifecycle steps */}
-      <button style={NAV_BTN} title="Browse images in this deployment"
-        onClick={e => { e.stopPropagation(); navigate(`/explore/${d.id}`) }}>
-        🖼 Explore
+      <button style={NAV_BTN} title="Browse, cluster and label images in this deployment"
+        onClick={e => { e.stopPropagation(); navigate(`/annotations?deployment=${d.id}`) }}>
+        🖼 Images
       </button>
 
       <button
@@ -142,9 +142,7 @@ function DeploymentActionRow({ d, navigate }: { d: Deployment; navigate: ReturnT
 
       {/* Secondary actions in overflow */}
       <OverflowMenu items={[
-
-        { label: '📊 Analyse', title: 'Analyse science data', onClick: () => navigate(`/analysis/${d.id}`) },
-        { label: '📦 Report', title: 'Generate reports', onClick: () => navigate(`/reporting/${d.id}`) },
+        { label: '📊 Results', title: 'Species diversity, activity & exports', onClick: () => navigate(`/reporting/${d.id}`) },
       ]} />
     </div>
   )

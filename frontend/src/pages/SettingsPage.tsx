@@ -17,6 +17,7 @@ import { CreateProjectModal, type CreatedProject } from '../components/data/Crea
 import { ProjectMembersPanel } from '../components/data/ProjectMembersPanel'
 import { NotificationRulesPanel } from '../components/settings/NotificationRulesPanel'
 import { ProjectDefaultsPanel } from '../components/settings/ProjectDefaultsPanel'
+import { InaturalistPanel } from '../components/settings/InaturalistPanel'
 
 interface ProjectRow {
   id: string
@@ -190,6 +191,10 @@ export function SettingsPage() {
             </Link>
           </div>
         </div>
+      </Section>
+
+      <Section title="Integrations" description="External services linked to your account.">
+        <InaturalistPanel />
       </Section>
 
       <CreateProjectModal
