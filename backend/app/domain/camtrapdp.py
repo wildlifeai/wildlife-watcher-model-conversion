@@ -86,9 +86,10 @@ def parse_zip(zip_bytes: bytes) -> CamtrapPackage:
     for name in names:
         ext = name.rsplit(".", 1)[-1].lower() if "." in name else ""
         if f".{ext}" in _IMAGE_EXTS:
-            pkg.zip_files[name] = zf.read(name)
+            data = zf.read(name)
+            pkg.zip_files[name] = data
             # Also index by basename so relative paths like 'media/foo.jpg' resolve
-            pkg.zip_files[name.split("/")[-1]] = zf.read(name)
+            pkg.zip_files[name.split("/")[-1]] = data
 
     if not pkg.deployments:
         pkg.warnings.append("deployments.csv is empty or missing.")
@@ -514,6 +515,9 @@ def import_package(
         if cdp_event_id and ww_dep_id:
             event_groups[(cdp_event_id, ww_dep_id)].append(o)
 
+    # Index media timestamps once (avoids an O(N×M) scan of pkg.media per observation).
+    media_ts_map = {m.get("mediaID", "").strip(): _str(m.get("timestamp")) for m in pkg.media if m.get("mediaID")}
+
     # Build and insert observation_events rows
     obs_event_batch: list[dict] = []
     for (cdp_event_id, ww_dep_id), obs_in_event in event_groups.items():
@@ -526,13 +530,9 @@ def import_package(
             cdp_media_id = o.get("mediaID", "").strip()
             ww_media_id = media_id_map.get(cdp_media_id)
             if ww_media_id:
-                # Find timestamp from media batch (we may have it in pkg.media)
-                for m in pkg.media:
-                    if m.get("mediaID", "").strip() == cdp_media_id:
-                        ts = _str(m.get("timestamp"))
-                        if ts:
-                            timestamps.append(ts)
-                        break
+                ts = media_ts_map.get(cdp_media_id)
+                if ts:
+                    timestamps.append(ts)
 
         if timestamps:
             start_time = min(timestamps)

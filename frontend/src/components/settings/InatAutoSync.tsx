@@ -19,9 +19,12 @@ export function InatAutoSync() {
   useEffect(() => {
     if (ran.current) return
     if (!user || !inat.connected) return
-    if (sessionStorage.getItem(SESSION_KEY)) { ran.current = true; return }
+    // Scope the once-per-session guard to the user, so a different account
+    // signing in within the same browser session still syncs.
+    const key = `${SESSION_KEY}:${user.id}`
+    if (sessionStorage.getItem(key)) { ran.current = true; return }
     ran.current = true
-    sessionStorage.setItem(SESSION_KEY, '1')
+    sessionStorage.setItem(key, '1')
     // Best-effort; failures are silent (the Settings button surfaces errors).
     inat.sync().catch(() => {})
   }, [user, inat.connected, inat])

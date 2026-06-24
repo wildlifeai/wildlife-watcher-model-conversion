@@ -530,6 +530,7 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
         vernacular_name: selection?.vernacular_name ?? null,
         ...humanCreateFields({ userId: user?.id, userEmail: user?.email }),
       }))
+    if (rows.length === 0) { setLabelBusy(false); setShowLabelModal(false); return }
     const { error } = await supabase.from('observations').insert(rows)
     setLabelBusy(false)
     if (error) {
