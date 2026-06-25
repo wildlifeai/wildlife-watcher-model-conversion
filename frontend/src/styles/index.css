@@ -143,3 +143,9 @@ body {
 .guide-markdown th {
   background-color: var(--surface);
 }
+
+/* Ribbon: when the first row gets tight, drop the read-only stats first so the
+   interactive display + selection controls keep their space. */
+@media (max-width: 1180px) {
+  .ribbon-stats { display: none; }
+}
