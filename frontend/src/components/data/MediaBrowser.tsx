@@ -165,6 +165,25 @@ interface Props {
 type TimeOfDay = 'all' | 'day' | 'night'
 type GroupBy = 'none' | 'cluster' | 'species' | 'sex' | 'life_stage' | 'annotation_type' | 'deployment' | 'model' | 'annotator'
 
+const GROUP_LABELS: Record<GroupBy, string> = {
+  none: 'None', cluster: 'Cluster', species: 'Species', sex: 'Sex', life_stage: 'Life stage',
+  annotation_type: 'Annotation type', deployment: 'Deployment', model: 'AI model', annotator: 'Annotator',
+}
+
+// A thin divider that separates the purpose-groups in the ribbon's first row
+// (stats │ display controls │ selection).
+const RIBBON_SECTION: React.CSSProperties = {
+  display: 'flex', alignItems: 'center', gap: '0.5rem',
+  borderLeft: '1px solid var(--border)', paddingLeft: '0.7rem', marginLeft: '0.7rem',
+}
+
+// Which observations get a card in the "Labels" view: AI detections that have a
+// crop, plus any human-made or human-reviewed label (these usually have no crop,
+// so they're shown on the full frame). AI detections with no crop are omitted.
+function isLabelCard(o: ObservationRecord): boolean {
+  return !!o.crop_url || o.source_type === 'human' || isHumanReviewed(o)
+}
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /**
@@ -792,15 +811,11 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     noImage:        filtered.filter(m => !m.file_path).length,
   }), [filtered])
 
-  // Number of cards crop view renders this page (one per animal detection, or a
-  // single full-frame fallback for frames with none).
+  // Number of cards the Labels view renders this page (AI crops + human labels).
   const cropCardCount = useMemo(() => {
     if (imageView !== 'crop') return 0
     let n = 0
-    for (const m of filtered) {
-      const animals = m.observations.filter(o => o.observation_type === 'animal' && (o.crop_url || o.bbox_x != null)).length
-      n += animals || 1
-    }
+    for (const m of filtered) n += m.observations.filter(isLabelCard).length
     return n
   }, [filtered, imageView])
 
@@ -1045,13 +1060,10 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     )
   }
 
-  // Expand a media into its per-observation crop cards (animal detections). Media
-  // with no croppable detection appear once as a full-frame fallback card.
-  const cropCardsFor = (m: MediaRecord) => {
-    const animals = m.observations.filter(o => o.observation_type === 'animal' && (o.crop_url || o.bbox_x != null))
-    if (animals.length === 0) return [renderCropCard(m, null, m.id)]
-    return animals.map(o => renderCropCard(m, o, o.id))
-  }
+  // Expand a media into one card per label: AI crops + human labels (full-frame
+  // when they have no crop). Un-labelled / cropless AI frames are omitted.
+  const cropCardsFor = (m: MediaRecord) =>
+    m.observations.filter(isLabelCard).map(o => renderCropCard(m, o, o.id))
 
   return (
     <div>
@@ -1062,7 +1074,64 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
           while scrolling the photo grid) ──────────────────────────── */}
       <Ribbon
         sticky
-        status={<span><strong>{totalCount ?? stats.total}</strong> media</span>}
+        status={
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            {/* ── Stats (read-only; first to drop when the row is tight) ── */}
+            <span className="ribbon-stats" style={{ opacity: 0.6, whiteSpace: 'nowrap' }} title="Results in the current view">
+              <strong>{totalCount ?? stats.total}</strong> media{totalCount !== null && totalCount > PAGE_SIZE && <span style={{ opacity: 0.8 }}> ({stats.total} shown)</span>}
+              {' · '}<strong>{stats.withDetections}</strong> detections
+              {' · '}<strong>{stats.annotated}</strong> annotated
+              {imageView === 'crop' && <> · <strong>{cropCardCount}</strong> labels</>}
+              {stats.noImage > 0 && <span style={{ color: 'var(--warning, #f59e0b)' }}> · {stats.noImage} no image</span>}
+            </span>
+
+            {/* ── Display controls (what to show) ── */}
+            <span style={RIBBON_SECTION}>
+              <span style={{ display: 'flex', flexShrink: 0, border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }} title="Photo shows the full frame; Labels shows each cropped, labelled detection">
+                {(['photo', 'crop'] as const).map(v => (
+                  <button key={v} onClick={() => setImageView(v)}
+                    style={{ fontSize: '0.72rem', padding: '0.2rem 0.55rem', border: 'none', cursor: 'pointer',
+                      background: imageView === v ? 'var(--primary)' : 'transparent', color: imageView === v ? '#fff' : 'var(--text-color)', fontWeight: imageView === v ? 600 : 400 }}>
+                    {v === 'photo' ? '🖼 Photo' : '🏷️ Labels'}
+                  </button>
+                ))}
+              </span>
+              <label style={{ display: 'flex', alignItems: 'center', gap: '0.3rem', fontSize: '0.72rem', opacity: 0.7, flexShrink: 0 }} title="Thumbnail size">
+                <span>🔍</span>
+                <input type="range" min={80} max={280} step={10} value={thumbScale} onChange={e => setThumbScale(+e.target.value)}
+                  style={{ width: 90, accentColor: 'var(--primary)', cursor: 'pointer' }} />
+              </label>
+            </span>
+
+            {/* ── Selection / actions ── */}
+            <span style={RIBBON_SECTION}>
+              <MediaBulkActions
+                selectedCount={selectedIds.size}
+                onSelectAll={() => setSelectedIds(new Set(filtered.map(m => m.id)))}
+                onClearSelection={() => setSelectedIds(new Set())}
+                onAction={handleBulkAction}
+                inatConnected={!!inat.connected}
+              />
+            </span>
+          </div>
+        }
+        subBar={(groupBy !== 'none' || hasAdvancedFilters) ? (
+          <>
+            {/* Active grouping is persisted — surface it so it's never a surprise, and one-click clearable. */}
+            {groupBy !== 'none' && (
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.78rem', padding: '0.2rem 0.55rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--bg-color)' }}>
+                ▦ Grouped by <strong>{GROUP_LABELS[groupBy]}</strong>
+                <button onClick={() => setGroupBy('none')} title="Clear grouping" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--primary)', fontSize: '0.85rem', lineHeight: 1, padding: 0 }}>✕</button>
+              </span>
+            )}
+            {hasAdvancedFilters && (
+              <button onClick={clearAdvanced}
+                style={{ marginLeft: 'auto', background: 'none', border: 'none', cursor: 'pointer', fontSize: '0.75rem', color: 'var(--primary)', padding: '0.2rem 0.5rem' }}>
+                ✕ Clear advanced filters
+              </button>
+            )}
+          </>
+        ) : undefined}
         tabs={[
           {
             id: 'filter', label: 'Filter', icon: '⛃',
@@ -1154,67 +1223,6 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
         </div>
       )}
 
-      {/* ── KPI row (selection actions slot in on the left) ────────── */}
-      <div style={{ display: 'flex', gap: '1rem', marginBottom: '1.25rem', fontSize: '0.8125rem', flexWrap: 'wrap', alignItems: 'center' }}>
-        <MediaBulkActions
-          selectedCount={selectedIds.size}
-          onSelectAll={() => setSelectedIds(new Set(filtered.map(m => m.id)))}
-          onClearSelection={() => setSelectedIds(new Set())}
-          onAction={handleBulkAction}
-          inatConnected={!!inat.connected}
-        />
-        <span>
-          <strong>{totalCount ?? stats.total}</strong> media
-          {totalCount !== null && totalCount > PAGE_SIZE && (
-            <span style={{ opacity: 0.55 }}> (showing {stats.total} this page)</span>
-          )}
-        </span>
-        <span>• <strong>{stats.withDetections}</strong> with detections</span>
-        <span>• <strong>{stats.annotated}</strong> annotated</span>
-        {imageView === 'crop' && (
-          <span title="Crop view shows one card per detection">• <strong>{cropCardCount}</strong> crops this page</span>
-        )}
-        {stats.noImage > 0 && (
-          <span style={{ color: 'var(--warning, #f59e0b)' }}>• <strong>{stats.noImage}</strong> without hosted image</span>
-        )}
-        {/* Photo (full frame) vs Crop (detected animal) view */}
-        <div style={{ display: 'flex', marginLeft: 'auto', flexShrink: 0, border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden' }} title="Photo shows the full frame; Crop shows the detected animal cut-out">
-          {(['photo', 'crop'] as const).map(v => (
-            <button
-              key={v}
-              onClick={() => setImageView(v)}
-              style={{
-                fontSize: '0.72rem', padding: '0.2rem 0.55rem', border: 'none', cursor: 'pointer',
-                background: imageView === v ? 'var(--primary)' : 'transparent',
-                color: imageView === v ? '#fff' : 'var(--text-color)',
-                fontWeight: imageView === v ? 600 : 400,
-              }}
-            >
-              {v === 'photo' ? '🖼 Photo' : '✂️ Crop'}
-            </button>
-          ))}
-        </div>
-        <label style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', fontSize: '0.75rem', opacity: 0.7, flexShrink: 0 }}>
-          <span>🔍</span>
-          <input type="range" min={80} max={280} step={10} value={thumbScale}
-            onChange={e => setThumbScale(+e.target.value)}
-            style={{ width: 100, accentColor: 'var(--primary)', cursor: 'pointer' }} />
-        </label>
-        {hasAdvancedFilters && (
-          <button
-            onClick={clearAdvanced}
-            style={{
-              marginLeft: 'auto', background: 'none', border: 'none',
-              cursor: 'pointer', fontSize: '0.75rem', color: 'var(--primary)',
-              padding: '0.2rem 0.5rem',
-              borderRadius: 'var(--radius)',
-            }}
-          >
-            ✕ Clear advanced filters
-          </button>
-        )}
-      </div>
-
       {loading && <p style={{ opacity: 0.6 }}>Loading media…</p>}
       {error && <p style={{ color: 'var(--error)' }}>⚠ {error}</p>}
       {notice && (
@@ -1288,6 +1296,12 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
           <>
           {!loading && filtered.length === 0 && (
             <p style={{ opacity: 0.6, padding: '1rem 0' }}>No media records found for the selected filters.</p>
+          )}
+          {!loading && filtered.length > 0 && imageView === 'crop' && cropCardCount === 0 && (
+            <p style={{ opacity: 0.6, padding: '1rem 0' }}>
+              No labels to show here — neither AI detections nor human labels exist for this view.
+              Switch to <strong>🖼 Photo</strong> to see and annotate the full frames.
+            </p>
           )}
           {/* Grouped view — collapsible sections */}
           {groupedMedia ? groupedMedia.map(([groupLabel, groupItems]) => {

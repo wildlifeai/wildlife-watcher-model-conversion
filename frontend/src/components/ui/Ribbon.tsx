@@ -50,6 +50,13 @@ export interface RibbonProps {
   brandLabel?: string
   /** Right-aligned status content in the menu bar (e.g. result counts). */
   status?: React.ReactNode
+  /** Right-aligned controls in the body row (e.g. view toggle, thumbnail size).
+   *  Must not contain pop-overs/dropdowns — the ribbon container clips overflow. */
+  aside?: React.ReactNode
+  /** A full-width row pinned below the body, inside the sticky container (e.g. the
+   *  selection/actions bar) so it stays visible while the grid scrolls. Any
+   *  dropdown it renders must use a portal (the container clips overflow). */
+  subBar?: React.ReactNode
   /** Keep the ribbon pinned below the app header while the page scrolls. */
   sticky?: boolean
   /** Offset from the top when sticky (defaults to the 56px app header height). */
@@ -93,7 +100,7 @@ const BRAND_WORD: React.CSSProperties = {
 
 const STATUS: React.CSSProperties = {
   marginLeft: 'auto', display: 'flex', alignItems: 'center',
-  fontSize: '0.75rem', opacity: 0.65, padding: '0 0.875rem', whiteSpace: 'nowrap',
+  fontSize: '0.75rem', padding: '0 0.875rem', whiteSpace: 'nowrap',
 }
 
 const BODY: React.CSSProperties = {
@@ -134,11 +141,19 @@ function tabStyle(active: boolean): React.CSSProperties {
 
 // ── Component ────────────────────────────────────────────────────────────────
 
-export function Ribbon({ tabs, activeTabId, defaultTabId, onTabChange, brandLabel, status, sticky, stickyTop = 56 }: RibbonProps) {
+export function Ribbon({ tabs, activeTabId, defaultTabId, onTabChange, brandLabel, status, aside, subBar, sticky, stickyTop = 56 }: RibbonProps) {
   const [internal, setInternal] = useState(defaultTabId ?? tabs[0]?.id)
   const active = activeTabId ?? internal
   const setActive = (id: string) => { onTabChange?.(id); if (activeTabId === undefined) setInternal(id) }
   const current = tabs.find(t => t.id === active) ?? tabs[0]
+
+  // Clicking the active tab collapses/expands the filter row; clicking another
+  // tab switches to it (and expands).
+  const [collapsed, setCollapsed] = useState(false)
+  const onTabClick = (id: string) => {
+    if (id === active) setCollapsed(c => !c)
+    else { setActive(id); setCollapsed(false) }
+  }
 
   // Pin below the app header (z 100) so it stays usable while the grid scrolls.
   // Sits under the full-screen modal (z 300) and slide-overs (z 200).
@@ -160,12 +175,14 @@ export function Ribbon({ tabs, activeTabId, defaultTabId, onTabChange, brandLabe
             return (
               <button
                 key={t.id}
-                onClick={() => setActive(t.id)}
+                onClick={() => onTabClick(t.id)}
+                title={on ? (collapsed ? 'Show filters' : 'Hide filters') : undefined}
                 style={tabStyle(on)}
                 onMouseEnter={e => { if (!on) e.currentTarget.style.background = 'rgba(0,0,0,0.04)' }}
                 onMouseLeave={e => { if (!on) e.currentTarget.style.background = 'transparent' }}
               >
                 {t.icon && <span style={{ marginRight: 6 }}>{t.icon}</span>}{t.label}
+                {on && <span style={{ marginLeft: 6, fontSize: '0.6rem', opacity: 0.6 }}>{collapsed ? '▸' : '▾'}</span>}
               </button>
             )
           })}
@@ -173,7 +190,8 @@ export function Ribbon({ tabs, activeTabId, defaultTabId, onTabChange, brandLabe
         {status != null && <div style={STATUS}>{status}</div>}
       </div>
 
-      {/* ── Ribbon body ───────────────────────────────────── */}
+      {/* ── Ribbon body (collapsible via the active tab) ───── */}
+      {!collapsed && (
       <div style={BODY}>
         {current?.groups.map((g, i) => (
           <div
@@ -200,7 +218,20 @@ export function Ribbon({ tabs, activeTabId, defaultTabId, onTabChange, brandLabe
             No options for this view.
           </div>
         )}
+        {aside != null && (
+          <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0 0.5rem 0 0.875rem', flexShrink: 0 }}>
+            {aside}
+          </div>
+        )}
       </div>
+      )}
+
+      {/* ── Sub-bar (e.g. selection/actions) — stays sticky with the ribbon ── */}
+      {subBar != null && (
+        <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap', padding: '0.4rem 0.875rem', borderTop: '1px solid var(--border)', background: 'var(--surface)' }}>
+          {subBar}
+        </div>
+      )}
     </div>
   )
 }

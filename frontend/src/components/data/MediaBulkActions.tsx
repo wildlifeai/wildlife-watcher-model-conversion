@@ -10,6 +10,7 @@
 //  - Run AI models (with model picker + pipeline log modal)
 
 import { useState, useRef, useEffect } from 'react'
+import { createPortal } from 'react-dom'
 
 export type BulkAction = 'inat' | 'delete' | 'ai' | 'similar' | 'label'
 
@@ -30,16 +31,47 @@ export function MediaBulkActions({
 }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const btnRef = useRef<HTMLButtonElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  // The menu renders in a portal (fixed position) so it isn't clipped by the
+  // ribbon's overflow:hidden once this bar lives inside the ribbon.
+  const [menuPos, setMenuPos] = useState<{ top: number; left: number } | null>(null)
 
-  // Close dropdown on outside click.
+  // Close dropdown on outside click (account for the portalled menu).
   useEffect(() => {
     if (!open) return
     const h = (e: MouseEvent) => {
-      if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false)
+      const t = e.target as Node
+      if (ref.current?.contains(t) || menuRef.current?.contains(t)) return
+      setOpen(false)
     }
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
   }, [open])
+
+  // Reposition on scroll/resize while open (the trigger may move with the page).
+  useEffect(() => {
+    if (!open) return
+    let frame = 0
+    const reposition = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const r = btnRef.current?.getBoundingClientRect()
+        if (r) setMenuPos({ top: r.bottom + 4, left: r.left })
+      })
+    }
+    window.addEventListener('scroll', reposition, true)
+    window.addEventListener('resize', reposition)
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('scroll', reposition, true); window.removeEventListener('resize', reposition) }
+  }, [open])
+
+  const toggleOpen = () => {
+    if (!open) {
+      const r = btnRef.current?.getBoundingClientRect()
+      if (r) setMenuPos({ top: r.bottom + 4, left: r.left })
+    }
+    setOpen(v => !v)
+  }
 
   const none = selectedCount === 0
 
@@ -88,16 +120,17 @@ export function MediaBulkActions({
       {/* Actions dropdown — disabled until something is selected */}
       <div ref={ref} style={{ position: 'relative', marginLeft: '0.5rem' }}>
         <button
+          ref={btnRef}
           className="btn"
           style={{ fontSize: '0.8rem', padding: '0.3rem 0.7rem', opacity: none ? 0.5 : 1, cursor: none ? 'default' : 'pointer' }}
           disabled={none}
-          onClick={() => setOpen(v => !v)}
+          onClick={toggleOpen}
         >
           Actions ▾
         </button>
-        {open && (
-          <div style={{
-            position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50,
+        {open && menuPos && createPortal(
+          <div ref={menuRef} style={{
+            position: 'fixed', top: menuPos.top, left: menuPos.left, zIndex: 400,
             minWidth: 220,
             background: 'var(--bg-color)', border: '1px solid var(--border)',
             borderRadius: 'var(--radius)',
@@ -162,7 +195,8 @@ export function MediaBulkActions({
               <span>🧠</span>
               <span>Run AI (re-classify)</span>
             </button>
-          </div>
+          </div>,
+          document.body,
         )}
       </div>
 

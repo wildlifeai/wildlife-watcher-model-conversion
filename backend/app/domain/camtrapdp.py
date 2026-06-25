@@ -433,7 +433,7 @@ def import_package(
             zip_bytes = pkg.zip_files.get(file_path) or pkg.zip_files.get(file_path.split("/")[-1])
             if zip_bytes:
                 # Resolve deployment context for Drive folder naming
-                dep_row = next((d for d in pkg.deployments if dep_id_map.get(d.get("deploymentID", "").strip()) == ww_dep_id), {})
+                dep_row = next((d for d in pkg.deployments if dep_id_map.get((d.get("deploymentID") or "").strip()) == ww_dep_id), {})
                 pending_drive_uploads.append(
                     PendingDriveUpload(
                         filename=file_name,
@@ -540,7 +540,7 @@ def import_package(
         else:
             # Fall back: use deployment start as placeholder
             dep_row_start = next(
-                (d.get("deploymentStart") for d in pkg.deployments if dep_id_map.get(d.get("deploymentID", "").strip()) == ww_dep_id),
+                (d.get("deploymentStart") for d in pkg.deployments if dep_id_map.get((d.get("deploymentID") or "").strip()) == ww_dep_id),
                 None,
             )
             start_time = dep_row_start or "1970-01-01T00:00:00Z"

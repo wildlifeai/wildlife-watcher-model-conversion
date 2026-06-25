@@ -8,6 +8,9 @@ import { GlobalProjectSelector } from './components/common/GlobalProjectSelector
 import { useHasActiveDeployments } from './hooks/useHasActiveDeployments'
 import { useNotifications, type AppNotification } from './hooks/useNotifications'
 import { InatAutoSync } from './components/settings/InatAutoSync'
+import { useIsAdmin } from './hooks/useIsAdmin'
+import { AdminUsagePage } from './pages/AdminUsagePage'
+import { UploadQuotaBanner } from './components/UploadQuotaBanner'
 import { HomePage } from './pages/HomePage'
 import { LoginPage } from './pages/LoginPage'
 import { MyDataPage } from './pages/MyDataPage'
@@ -80,9 +83,10 @@ function RedirectExploreToAnnotations() {
 // AccountMenu — user email dropdown
 // ─────────────────────────────────────────────────────────────────────────────
 
-function AccountMenu({ email, isOrgManager, onLogout, unreadCount, recent }: {
+function AccountMenu({ email, isOrgManager, isAdmin, onLogout, unreadCount, recent }: {
   email: string
   isOrgManager: boolean
+  isAdmin: boolean
   onLogout: () => void
   unreadCount: number
   recent: AppNotification[]
@@ -200,6 +204,17 @@ function AccountMenu({ email, isOrgManager, onLogout, unreadCount, recent }: {
           >
             ⚙ Settings
           </Link>
+          {isAdmin && (
+            <Link
+              to="/admin/usage"
+              onClick={() => setOpen(false)}
+              style={itemStyle}
+              onMouseEnter={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'rgba(76,175,80,0.07)')}
+              onMouseLeave={e => ((e.currentTarget as HTMLElement).style.backgroundColor = 'transparent')}
+            >
+              📊 User usage
+            </Link>
+          )}
           {isOrgManager && (
             <Link
               to="/upload-model"
@@ -275,6 +290,7 @@ function Layout({ children }: { children: React.ReactNode }) {
     enabled: !!user,
   })
   const isOrgManager = !!(managedOrgs && managedOrgs.length > 0)
+  const isAdmin = useIsAdmin()
 
   // 📡 Field is a conditional tab: shown only when the user has active deployments
   // out in the field. Inserted between Toolkit and Annotations.
@@ -364,6 +380,7 @@ function Layout({ children }: { children: React.ReactNode }) {
                 <AccountMenu
                   email={user.email ?? ''}
                   isOrgManager={isOrgManager}
+                  isAdmin={isAdmin === true}
                   onLogout={logout}
                   unreadCount={unreadCount}
                   recent={notifications}
@@ -397,6 +414,7 @@ function Layout({ children }: { children: React.ReactNode }) {
 
       <main style={{ flex: 1, padding: '2rem 0' }}>
         <div className="container">
+          <UploadQuotaBanner />
           {children}
         </div>
       </main>
@@ -462,6 +480,7 @@ export default function App() {
               {/* Primary nav routes: Toolkit · Annotations · Insights (+ conditional Field later) */}
               <Route path="/toolkit"     element={<RequireAuth><ToolkitPage /></RequireAuth>} />
               <Route path="/field"       element={<RequireAuth><FieldPage /></RequireAuth>} />
+              <Route path="/admin/usage" element={<RequireAuth><AdminUsagePage /></RequireAuth>} />
               <Route path="/annotations" element={<RequireAuth><AnnotationsPage /></RequireAuth>} />
               <Route path="/insights"    element={<RequireAuth><InsightsPage /></RequireAuth>} />
 
