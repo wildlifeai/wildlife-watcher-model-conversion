@@ -6,6 +6,7 @@
  * when nothing is selected (i.e. no filter).
  */
 import { useEffect, useRef, useState } from 'react'
+import { createPortal } from 'react-dom'
 
 interface Option { value: string; label: string }
 
@@ -22,12 +23,38 @@ interface Props {
 export function MultiSelect({ values, onChange, options, allLabel = 'All', noun = 'item' }: Props) {
   const [open, setOpen] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  // The menu renders in a portal (fixed position) so it overlays the grid
+  // instead of being clipped by the ribbon's overflow:hidden.
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
 
+  // Close on outside click (account for the portalled menu).
   useEffect(() => {
     if (!open) return
-    const h = (e: MouseEvent) => { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false) }
+    const h = (e: MouseEvent) => {
+      const t = e.target as Node
+      if (ref.current?.contains(t) || menuRef.current?.contains(t)) return
+      setOpen(false)
+    }
     document.addEventListener('mousedown', h)
     return () => document.removeEventListener('mousedown', h)
+  }, [open])
+
+  // Keep the menu anchored to the trigger while open (rAF-throttled).
+  useEffect(() => {
+    if (!open) return
+    let frame = 0
+    const place = () => {
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const r = ref.current?.getBoundingClientRect()
+        if (r) setPos({ top: r.bottom + 4, left: r.left })
+      })
+    }
+    place()
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place) }
   }, [open])
 
   const toggle = (v: string) =>
@@ -59,9 +86,9 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
         <span style={{ opacity: 0.6, fontSize: '0.7rem' }}>▾</span>
       </button>
 
-      {open && (
-        <div style={{
-          position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 60, minWidth: 220, maxWidth: 320,
+      {open && pos && createPortal(
+        <div ref={menuRef} style={{
+          position: 'fixed', top: pos.top, left: pos.left, zIndex: 400, minWidth: 220, maxWidth: 320,
           background: 'var(--bg-color)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
           boxShadow: '0 4px 16px rgba(0,0,0,0.15)', overflow: 'hidden',
         }}>
@@ -82,7 +109,8 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
               </label>
             ))}
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )

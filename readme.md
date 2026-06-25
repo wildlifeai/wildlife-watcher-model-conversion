@@ -1,6 +1,6 @@
 <p align="center">
-  <a href="https://wildlife.ai/">
-    <img src="https://wildlife.ai/wp-content/uploads/2025/10/wildlife_ai_logo_dark_lightbackg_1772x591.png" alt="Wildlife.ai Logo" width="400">
+  <a href="https://github.com/wildlifeai/ww-website">
+    <img src="frontend/public/favicon.svg" alt="Wildlife Watcher" width="110">
   </a>
 </p>
 
@@ -8,6 +8,13 @@
 
 <p align="center">
   <strong>The web platform for uploading, AI-labelling, reviewing and analysing camera-trap data from Wildlife Watcher devices.</strong>
+</p>
+
+<p align="center">
+  <img src="https://img.shields.io/badge/license-GPL--3.0-blue.svg" alt="License: GPL-3.0">
+  <img src="https://img.shields.io/badge/node-20%20LTS-339933?logo=node.js&logoColor=white" alt="Node 20 LTS">
+  <img src="https://img.shields.io/badge/python-3.11+-3776AB?logo=python&logoColor=white" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/frontend-React%2019%20%2B%20Vite-61DAFB?logo=react&logoColor=white" alt="React 19 + Vite">
 </p>
 
 Welcome to the development repository of the Wildlife Watcher web app. This README covers
@@ -87,46 +94,7 @@ The browser reads observations **directly from Supabase** (RLS-scoped by the use
 > (embeddings → clustering → similarity) is local-only — see the
 > [Deployment Guide](./documentation/resources/deployment-guide.md#qdrant-vector-store-not-yet-in-cloud).
 
-## Architecture at a glance
-
-How the services fit together. Dev-cloud and staging/production have the **same topology** — only
-the instances differ (dev Supabase project, `ww-backend-dev` container app, `*.pages.dev` previews,
-dev Drive subfolder; see the [Deployment Guide](./documentation/resources/deployment-guide.md)).
-
-```
-                                   ┌─────────────────────────────┐
-                                   │   Browser (React + Vite)    │
-                                   │  served by CLOUDFLARE PAGES │
-                                   │  wildlifewatcher.ai / *.pages.dev
-                                   └──────┬───────────────┬──────┘
-                 direct reads/writes      │               │  privileged / heavy work
-                 (user JWT, RLS-scoped)   │               │  (REST, VITE_API_BASE_URL)
-                                          ▼               ▼
-                            ┌──────────────────┐   ┌────────────────────────────────┐
-                            │     SUPABASE     │   │  FastAPI backend on AZURE      │
-                            │ Postgres + RLS   │◀──│  Container Apps (image via ACR,│
-                            │ Auth (JWT)       │   │  GitHub Actions deploy)        │
-                            │ Storage:         │   │  in-process async job runner   │
-                            │  · media-        │   └──┬──────┬──────┬──────┬────────┘
-                            │    renditions    │      │      │      │      │
-                            │    (public:      │      │      │      │      │
-                            │    thumbs/crops) │      ▼      │      ▼      ▼
-                            │  · firmware,     │  ┌────────┐ │ ┌────────┐ ┌─────────────┐
-                            │    ai-models     │  │ AZURE  │ │ │ GOOGLE │ │ iNATURALIST │
-                            └──────────────────┘  │ BLOB   │ │ │ DRIVE  │ │ taxa + obs  │
-                                                  │ temp   │ │ │ perm.  │ │ publishing /│
-                                                  │ upload │ │ │ image  │ │ community-ID│
-                                                  │ buffer │ │ │ archive│ │ sync        │
-                                                  └────────┘ │ └────────┘ └─────────────┘
-                                                             ▼
-                                                       ┌───────────┐
-                                                       │  QDRANT   │  DINOv3 vectors
-                                                       │ (container│  (Wildlife Brain) —
-                                                       │  in local │  ⚠ not yet provisioned
-                                                       │  compose) │  in the cloud envs
-                                                       └───────────┘
-
-Image upload flow:  browser → backend /
+## Prerequisites
 
 | Tool | Version | Purpose |
 |------|---------|---------|
@@ -185,7 +153,7 @@ cp .env.example .env && docker compose up -d --build
 ```
 
 Set `VITE_API_BASE_URL` to your production backend URL at build time. Full hosting options
-(Cloudflare Pages, Vercel, Render, VPS) and the production security checklist are in the
+(Cloudflare Pages frontend, Azure Container Apps backend) and the production security checklist are in the
 [Deployment Guide](./documentation/resources/deployment-guide.md).
 
 ## Running the AI/ML pipeline locally
@@ -283,7 +251,7 @@ All documentation lives under [`documentation/`](./documentation) — see the
 | Guide | What It Covers |
 |-------|----------------|
 | [API Reference](./documentation/resources/api-reference.md) | Backend endpoint reference |
-| [Deployment Guide](./documentation/resources/deployment-guide.md) | Render / VPS / Docker deployment + security checklist |
+| [Deployment Guide](./documentation/resources/deployment-guide.md) | Cloudflare Pages + Azure Container Apps deployment + security checklist |
 | [LoRaWAN Webhook Setup](./documentation/resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server configuration |
 | [CamtrapDP Import](./documentation/resources/camtrapdp-import.md) | Importing CamtrapDP packages |
 | [AI Model Pipeline](./documentation/resources/ai-model-pipeline.md) | Edge Impulse → Vela model conversion |
@@ -315,7 +283,7 @@ Backend changes follow the **router → domain → service** layering (see
 ## Maintainers
 
 - Tobyn Packer
-- Victor Anton
+- Victor Anton ([@victor-wildlife](https://github.com/victor-wildlife))
 
 If you find this project helpful, consider [donating to Wildlife.ai](https://givealittle.co.nz/donate/org/wildlifeai).
 
