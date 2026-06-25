@@ -380,7 +380,7 @@ function Layout({ children }: { children: React.ReactNode }) {
                 <AccountMenu
                   email={user.email ?? ''}
                   isOrgManager={isOrgManager}
-                  isAdmin={isAdmin}
+                  isAdmin={isAdmin === true}
                   onLogout={logout}
                   unreadCount={unreadCount}
                   recent={notifications}

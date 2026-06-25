@@ -52,13 +52,17 @@ export function MediaBulkActions({
   // Reposition on scroll/resize while open (the trigger may move with the page).
   useEffect(() => {
     if (!open) return
+    let frame = 0
     const reposition = () => {
-      const r = btnRef.current?.getBoundingClientRect()
-      if (r) setMenuPos({ top: r.bottom + 4, left: r.left })
+      cancelAnimationFrame(frame)
+      frame = requestAnimationFrame(() => {
+        const r = btnRef.current?.getBoundingClientRect()
+        if (r) setMenuPos({ top: r.bottom + 4, left: r.left })
+      })
     }
     window.addEventListener('scroll', reposition, true)
     window.addEventListener('resize', reposition)
-    return () => { window.removeEventListener('scroll', reposition, true); window.removeEventListener('resize', reposition) }
+    return () => { cancelAnimationFrame(frame); window.removeEventListener('scroll', reposition, true); window.removeEventListener('resize', reposition) }
   }, [open])
 
   const toggleOpen = () => {

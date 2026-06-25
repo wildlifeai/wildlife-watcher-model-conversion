@@ -15,6 +15,7 @@ import asyncio
 import structlog
 from fastapi import APIRouter, Depends, Request
 
+from app.authz import assert_access, require_deployment_access
 from app.dependencies import get_current_user, get_privileged_client, get_verified_user
 from app.domain.events import cluster_deployment_events, compute_deployment_effort
 from app.domain.pipeline import run_pipeline
@@ -46,6 +47,9 @@ async def run_inference_pipeline(
     Requires authentication.
     """
     req_id = getattr(request.state, "request_id", None)
+    # Object-level authz: the pipeline runs with the service role (RLS-bypassing),
+    # so verify the caller actually has access to this deployment.
+    await assert_access(user.id, deployment_id=body.deployment_id)
 
     try:
         result = await run_pipeline(
@@ -95,6 +99,8 @@ async def cluster_events(
     Requires authentication.
     """
     req_id = getattr(request.state, "request_id", None)
+    # Object-level authz: clustering replaces this deployment's events — verify access.
+    await assert_access(user.id, deployment_id=body.deployment_id)
 
     try:
         result = await cluster_deployment_events(
@@ -122,7 +128,7 @@ async def cluster_events(
 # ── Effort Computation ───────────────────────────────────────────────
 
 
-@router.post("/effort/{deployment_id}")
+@router.post("/effort/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def compute_effort(
     request: Request,
     deployment_id: str,
@@ -158,7 +164,7 @@ async def compute_effort(
 # ── Get Effort ───────────────────────────────────────────────────────
 
 
-@router.get("/effort/{deployment_id}")
+@router.get("/effort/{deployment_id}", dependencies=[Depends(require_deployment_access)])
 async def get_effort(
     request: Request,
     deployment_id: str,

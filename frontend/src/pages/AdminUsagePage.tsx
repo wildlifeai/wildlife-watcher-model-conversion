@@ -33,13 +33,15 @@ interface UsageRow {
 }
 
 function fmtBytes(n: number | null): string {
-  if (!n) return '—'
+  if (n == null) return '—'
+  if (n === 0) return '0 B'
   const u = ['B', 'KB', 'MB', 'GB', 'TB']; let v = n, i = 0
   while (v >= 1024 && i < u.length - 1) { v /= 1024; i++ }
   return `${v.toFixed(v < 10 && i > 0 ? 1 : 0)} ${u[i]}`
 }
 function fmtDuration(sec: number | null): string {
-  if (!sec) return '—'
+  if (sec == null) return '—'
+  if (sec === 0) return '0m'
   const h = Math.floor(sec / 3600), m = Math.round((sec % 3600) / 60)
   return h > 0 ? `${h}h ${m}m` : `${m}m`
 }
@@ -110,24 +112,25 @@ export function AdminUsagePage() {
   const [rows, setRows] = useState<UsageRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const [checked, setChecked] = useState(false)
   const [editRow, setEditRow] = useState<UsageRow | null>(null)
   const [reloadKey, setReloadKey] = useState(0)
 
+  // Only fetch once we know the caller is an admin — avoids an unauthorized call.
   useEffect(() => {
-    if (!user) return
+    if (!user || isAdmin !== true) return
     let cancelled = false
     setLoading(true)
     supabase.rpc('admin_user_usage').then(({ data, error: err }) => {
       if (cancelled) return
       if (err) setError(err.message)
       else setRows((data ?? []) as UsageRow[])
-      setLoading(false); setChecked(true)
+      setLoading(false)
     })
     return () => { cancelled = true }
-  }, [user, reloadKey])
+  }, [user, isAdmin, reloadKey])
 
-  if (!authLoading && user && checked && !isAdmin && rows.length === 0) {
+  // Redirect non-admins immediately (isAdmin resolves to false).
+  if (!authLoading && isAdmin === false) {
     return <Navigate to="/" replace />
   }
 
