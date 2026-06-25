@@ -302,7 +302,9 @@ export function ProgressDock() {
           >
             −
           </button>
-          {isDone && (
+          {/* Dismiss is available whenever finished OR stalled — so a job that
+              hangs (e.g. an upload started mid-processing) never traps the dock. */}
+          {(isDone || phase === 'stalled') && (
             <button
               style={BTN_ICON}
               onClick={clearUpload}
