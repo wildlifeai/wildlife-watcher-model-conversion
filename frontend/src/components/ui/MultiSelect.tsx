@@ -5,6 +5,7 @@
  * single label when one is picked, or "N <noun>s" for several, or `allLabel`
  * when nothing is selected (i.e. no filter).
  */
+/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -40,9 +41,10 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
     return () => document.removeEventListener('mousedown', h)
   }, [open])
 
-  // Keep the menu anchored to the trigger while open (rAF-throttled).
+  // Keep the menu anchored to the trigger while open (rAF-throttled). Reset the
+  // position on close so a reopen never flashes at the previous coordinates.
   useEffect(() => {
-    if (!open) return
+    if (!open) { setPos(null); return }
     let frame = 0
     const place = () => {
       cancelAnimationFrame(frame)

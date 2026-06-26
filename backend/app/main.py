@@ -5,6 +5,7 @@
 Wires together: CORS, lifespan (Redis connect/disconnect), middleware, and routers.
 """
 
+import re
 from contextlib import asynccontextmanager
 
 import structlog
@@ -83,9 +84,20 @@ app = FastAPI(
 # ── Middleware (order matters: outermost first) ──────────────────────
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(LoggingMiddleware)
+# Allow every Cloudflare Pages URL for this project (production alias, the `dev`
+# branch alias, and per-PR previews) without listing each one:
+#   ww-website.pages.dev, dev.ww-website.pages.dev, <hash>.ww-website.pages.dev
+_PAGES_DEV_RE = re.compile(r"https://([a-z0-9-]+\.)?ww-website\.pages\.dev")
+
+
+def _origin_allowed(origin: str | None) -> bool:
+    return bool(origin) and (origin in settings.cors_origins or bool(_PAGES_DEV_RE.fullmatch(origin)))
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=_PAGES_DEV_RE.pattern,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -109,7 +121,7 @@ async def unhandled_exception_handler(request, exc):
     logger.error("unhandled_exception", path=str(request.url.path), error=str(exc))
     headers: dict[str, str] = {}
     origin = request.headers.get("origin")
-    if origin and origin in settings.cors_origins:
+    if _origin_allowed(origin):
         headers["Access-Control-Allow-Origin"] = origin
         headers["Access-Control-Allow-Credentials"] = "true"
         headers["Vary"] = "Origin"

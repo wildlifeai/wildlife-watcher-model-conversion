@@ -39,12 +39,10 @@ except ImportError as e:
     print("Install with:  pip install supabase requests")
     sys.exit(1)
 
-# Reuse the MICA dataset download + the backend import pipeline from the
-# existing CamtrapDP seed script (which also puts backend/ on sys.path).
-sys.path.insert(0, os.path.dirname(__file__))
-from seed_camtrapdp_example import download_as_zip, resolve_user  # noqa: E402
-
-from app.domain.camtrapdp import import_package, parse_zip  # noqa: E402
+# NOTE: the MICA dataset import (seed_camtrapdp_example + app.domain.camtrapdp)
+# is imported lazily inside main() so the lightweight --ensure-user-only path
+# (used by CI on every deploy) needs only the `supabase` package, not the full
+# backend dependency tree.
 
 
 def ensure_demo_user(svc, email: str, password: str) -> str:
@@ -73,7 +71,11 @@ def ensure_demo_user(svc, email: str, password: str) -> str:
         if match:
             svc.auth.admin.update_user_by_id(
                 match.id,
-                {"password": password, "app_metadata": {"is_demo": True}, "email_confirm": True},
+                {
+                    "password": password,
+                    "app_metadata": {"is_demo": True},
+                    "email_confirm": True,
+                },
             )
             print(f"✓  Updated existing demo user {email}")
             return match.id
@@ -81,36 +83,53 @@ def ensure_demo_user(svc, email: str, password: str) -> str:
 
 
 def grant_viewer_role(svc, demo_user_id: str, project_id: str, granted_by: str) -> None:
-    """Idempotently grant the demo user a viewer role on the project."""
+    """Idempotently grant the demo user read-only project access.
+
+    Uses the project_viewer role: RLS grants it SELECT on project data, but no
+    write policy accepts project_viewer, so the demo is genuinely read-only at
+    the DB level (added in migration add_project_viewer_readonly_role).
+    """
+    role = "project_viewer"
     existing = (
         svc.table("user_roles")
         .select("id")
         .eq("user_id", demo_user_id)
         .eq("scope_type", "project")
         .eq("scope_id", project_id)
-        .eq("role", "viewer")
+        .eq("role", role)
         .eq("is_active", True)
         .execute()
     )
     if existing.data:
-        print("✓  Viewer role already granted")
+        print(f"✓  {role} role already granted")
         return
-    svc.table("user_roles").insert({
-        "user_id": demo_user_id,
-        "scope_type": "project",
-        "scope_id": project_id,
-        "role": "viewer",
-        "is_active": True,
-        "granted_by": granted_by,
-    }).execute()
-    print("✓  Granted viewer role on demo project")
+    svc.table("user_roles").insert(
+        {
+            "user_id": demo_user_id,
+            "scope_type": "project",
+            "scope_id": project_id,
+            "role": role,
+            "is_active": True,
+            "granted_by": granted_by,
+            "modified_by": granted_by,
+        }
+    ).execute()
+    print(f"✓  Granted {role} role on demo project")
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Seed the shared demo account for Wildlife Watcher")
-    parser.add_argument("--supabase-url", default=os.getenv("SUPABASE_URL", "http://localhost:54321"))
-    parser.add_argument("--service-role-key", default=os.getenv("SUPABASE_SERVICE_ROLE_KEY", ""))
-    parser.add_argument("--demo-email", default=os.getenv("DEMO_EMAIL", "demo@wildlife.ai"))
+    parser = argparse.ArgumentParser(
+        description="Seed the shared demo account for Wildlife Watcher"
+    )
+    parser.add_argument(
+        "--supabase-url", default=os.getenv("SUPABASE_URL", "http://localhost:54321")
+    )
+    parser.add_argument(
+        "--service-role-key", default=os.getenv("SUPABASE_SERVICE_ROLE_KEY", "")
+    )
+    parser.add_argument(
+        "--demo-email", default=os.getenv("DEMO_EMAIL", "demo@wildlife.ai")
+    )
     parser.add_argument("--demo-password", default=os.getenv("DEMO_PASSWORD", ""))
     parser.add_argument(
         "--owner-user-id",
@@ -120,6 +139,13 @@ def main():
     parser.add_argument(
         "--project-id",
         help="Expose an existing project as the demo instead of importing the MICA dataset",
+    )
+    parser.add_argument(
+        "--ensure-user-only",
+        action="store_true",
+        help="Only create/refresh the demo auth user from DEMO_EMAIL/DEMO_PASSWORD "
+        "(skip the dataset import + viewer grant). Idempotent and safe to run on "
+        "every deploy; needs only the `supabase` package.",
     )
     args = parser.parse_args()
 
@@ -136,6 +162,20 @@ def main():
 
     demo_user_id = ensure_demo_user(svc, args.demo_email, args.demo_password)
 
+    if args.ensure_user_only:
+        print(
+            "\n✅ Demo user ensured (--ensure-user-only). The demo project/data is "
+            "seeded separately with a full run."
+        )
+        return
+
+    # The MICA dataset import pulls in the full backend (camtrapdp domain + the
+    # download helper). Imported lazily so the --ensure-user-only path above stays
+    # dependency-light (only needs `supabase`).
+    sys.path.insert(0, os.path.dirname(__file__))
+    from seed_camtrapdp_example import download_as_zip, resolve_user  # noqa: E402
+    from app.domain.camtrapdp import import_package, parse_zip  # noqa: E402
+
     if args.project_id:
         project_id = args.project_id
         print(f"📂 Using existing project {project_id}")
@@ -146,13 +186,17 @@ def main():
         result = import_package(pkg, owner_id, org_id, svc)
         project_id = result.project_id
         print(f"✓  Imported project '{result.project_name}' ({project_id})")
-        print(f"   Deployments: {result.deployments_imported}, media: {result.media_imported}, "
-              f"observations: {result.observations_imported}")
+        print(
+            f"   Deployments: {result.deployments_imported}, media: {result.media_imported}, "
+            f"observations: {result.observations_imported}"
+        )
 
     grant_viewer_role(svc, demo_user_id, project_id, args.owner_user_id)
 
     print("\n✅ Demo seeded. Next steps:")
-    print(f"   1. Set in backend .env:  DEMO_EMAIL={args.demo_email}  DEMO_PASSWORD=<the password>")
+    print(
+        f"   1. Set in backend .env:  DEMO_EMAIL={args.demo_email}  DEMO_PASSWORD=<the password>"
+    )
     print("   2. Restart the backend — the 'Try the demo' button is now live.")
 
 

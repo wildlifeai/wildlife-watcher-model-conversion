@@ -1,6 +1,6 @@
 <p align="center">
   <a href="https://github.com/wildlifeai/ww-website">
-    <img src="frontend/public/favicon.svg" alt="Wildlife Watcher" width="110">
+    <img src="frontend/public/favicon.png" alt="Wildlife Watcher" width="110">
   </a>
 </p>
 
