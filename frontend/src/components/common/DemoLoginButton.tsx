@@ -5,13 +5,18 @@
  * POST /api/auth/demo-session. Used on the marketing hero and the login
  * page; renders an error inline if the demo is disabled on this server.
  */
-import { useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { loginAsDemo } from '../../hooks/useAuth'
 
 export function DemoLoginButton({ style }: { style?: React.CSSProperties }) {
   const [busy, setBusy] = useState(false)
   const [slow, setSlow] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const slowTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // Clear a pending cold-start timer if the component unmounts mid-request
+  // (e.g. the user navigates away), avoiding a state update after unmount.
+  useEffect(() => () => { if (slowTimer.current) clearTimeout(slowTimer.current) }, [])
 
   const handleClick = async () => {
     setBusy(true)
@@ -19,7 +24,7 @@ export function DemoLoginButton({ style }: { style?: React.CSSProperties }) {
     setSlow(false)
     // The backend can scale to zero; the first request after idle is a cold
     // start (~1 min). Reassure the user instead of looking stuck.
-    const slowTimer = setTimeout(() => setSlow(true), 4000)
+    slowTimer.current = setTimeout(() => setSlow(true), 4000)
     try {
       await loginAsDemo()
       // No navigation needed: the auth listener flips the app into the
@@ -28,7 +33,7 @@ export function DemoLoginButton({ style }: { style?: React.CSSProperties }) {
       setError(e instanceof Error ? e.message : 'The demo is temporarily unavailable.')
       setBusy(false)
     } finally {
-      clearTimeout(slowTimer)
+      if (slowTimer.current) clearTimeout(slowTimer.current)
     }
   }
 

@@ -172,7 +172,13 @@ def main():
     # The MICA dataset import pulls in the full backend (camtrapdp domain + the
     # download helper). Imported lazily so the --ensure-user-only path above stays
     # dependency-light (only needs `supabase`).
+    # Make this self-contained: put both scripts/ (for seed_camtrapdp_example)
+    # and backend/ (for app.*) on the path explicitly, rather than relying on
+    # seed_camtrapdp_example's import side-effect to add backend/.
     sys.path.insert(0, os.path.dirname(__file__))
+    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend"))
+    if backend_dir not in sys.path:
+        sys.path.insert(0, backend_dir)
     from seed_camtrapdp_example import download_as_zip, resolve_user  # noqa: E402
     from app.domain.camtrapdp import import_package, parse_zip  # noqa: E402
 

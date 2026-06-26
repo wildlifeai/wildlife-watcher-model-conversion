@@ -5,7 +5,6 @@
  * single label when one is picked, or "N <noun>s" for several, or `allLabel`
  * when nothing is selected (i.e. no filter).
  */
-/* eslint-disable react-hooks/set-state-in-effect */
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 
@@ -41,10 +40,11 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
     return () => document.removeEventListener('mousedown', h)
   }, [open])
 
-  // Keep the menu anchored to the trigger while open (rAF-throttled). Reset the
-  // position on close so a reopen never flashes at the previous coordinates.
+  // Keep the menu anchored to the trigger while open (rAF-throttled). The first
+  // position is computed synchronously in the trigger's onClick (so the menu
+  // never flashes at stale coordinates); this only tracks scroll/resize.
   useEffect(() => {
-    if (!open) { setPos(null); return }
+    if (!open) return
     let frame = 0
     const place = () => {
       cancelAnimationFrame(frame)
@@ -73,7 +73,15 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => {
+          // Compute the position synchronously before opening so the portalled
+          // menu renders at the right place on its very first frame.
+          if (!open) {
+            const r = ref.current?.getBoundingClientRect()
+            if (r) setPos({ top: r.bottom + 4, left: r.left })
+          }
+          setOpen(o => !o)
+        }}
         style={{
           display: 'flex', alignItems: 'center', gap: '0.35rem',
           padding: '0.375rem 0.5rem', borderRadius: 'var(--radius)',
