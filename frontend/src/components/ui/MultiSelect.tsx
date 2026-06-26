@@ -53,7 +53,7 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
         if (r) setPos({ top: r.bottom + 4, left: r.left })
       })
     }
-    place()
+    // No initial place() — onClick already set the position synchronously.
     window.addEventListener('scroll', place, true)
     window.addEventListener('resize', place)
     return () => { cancelAnimationFrame(frame); window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place) }

@@ -90,18 +90,27 @@ def grant_viewer_role(svc, demo_user_id: str, project_id: str, granted_by: str) 
     the DB level (added in migration add_project_viewer_readonly_role).
     """
     role = "project_viewer"
+    # Query WITHOUT the is_active filter: the unique index is on
+    # (user_id, role, scope_type, scope_id), so a soft-deactivated row would
+    # still collide on insert. Reactivate it instead.
     existing = (
         svc.table("user_roles")
-        .select("id")
+        .select("id, is_active")
         .eq("user_id", demo_user_id)
         .eq("scope_type", "project")
         .eq("scope_id", project_id)
         .eq("role", role)
-        .eq("is_active", True)
         .execute()
     )
     if existing.data:
-        print(f"✓  {role} role already granted")
+        row = existing.data[0]
+        if row.get("is_active"):
+            print(f"✓  {role} role already granted")
+            return
+        svc.table("user_roles").update(
+            {"is_active": True, "modified_by": granted_by}
+        ).eq("id", row["id"]).execute()
+        print(f"✓  Reactivated existing {role} role")
         return
     svc.table("user_roles").insert(
         {
@@ -175,11 +184,14 @@ def main():
     # Make this self-contained: put both scripts/ (for seed_camtrapdp_example)
     # and backend/ (for app.*) on the path explicitly, rather than relying on
     # seed_camtrapdp_example's import side-effect to add backend/.
-    sys.path.insert(0, os.path.dirname(__file__))
-    backend_dir = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "backend"))
+    scripts_dir = os.path.abspath(os.path.dirname(__file__))
+    if scripts_dir not in sys.path:
+        sys.path.insert(0, scripts_dir)
+    backend_dir = os.path.abspath(os.path.join(scripts_dir, "..", "backend"))
     if backend_dir not in sys.path:
         sys.path.insert(0, backend_dir)
     from seed_camtrapdp_example import download_as_zip, resolve_user  # noqa: E402
+
     from app.domain.camtrapdp import import_package, parse_zip  # noqa: E402
 
     if args.project_id:
