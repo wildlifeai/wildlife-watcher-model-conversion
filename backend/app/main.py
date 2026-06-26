@@ -87,7 +87,11 @@ app.add_middleware(LoggingMiddleware)
 # Allow every Cloudflare Pages URL for this project (production alias, the `dev`
 # branch alias, and per-PR previews) without listing each one:
 #   ww-website.pages.dev, dev.ww-website.pages.dev, <hash>.ww-website.pages.dev
-_PAGES_DEV_RE = re.compile(r"https://([a-z0-9-]+\.)?ww-website\.pages\.dev")
+# Anchored (^…$) so the whole origin must match — without the trailing anchor an
+# attacker could use https://ww-website.pages.dev.evil.com. (Starlette matches
+# with re.fullmatch which already anchors, but the anchors make this safe even if
+# the pattern is ever reused with re.match/re.search.)
+_PAGES_DEV_RE = re.compile(r"^https://([a-z0-9-]+\.)?ww-website\.pages\.dev$")
 
 
 def _origin_allowed(origin: str | None) -> bool:
