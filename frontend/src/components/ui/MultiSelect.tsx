@@ -40,7 +40,9 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
     return () => document.removeEventListener('mousedown', h)
   }, [open])
 
-  // Keep the menu anchored to the trigger while open (rAF-throttled).
+  // Keep the menu anchored to the trigger while open (rAF-throttled). The first
+  // position is computed synchronously in the trigger's onClick (so the menu
+  // never flashes at stale coordinates); this only tracks scroll/resize.
   useEffect(() => {
     if (!open) return
     let frame = 0
@@ -51,7 +53,7 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
         if (r) setPos({ top: r.bottom + 4, left: r.left })
       })
     }
-    place()
+    // No initial place() — onClick already set the position synchronously.
     window.addEventListener('scroll', place, true)
     window.addEventListener('resize', place)
     return () => { cancelAnimationFrame(frame); window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place) }
@@ -71,7 +73,15 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
   return (
     <div ref={ref} style={{ position: 'relative' }}>
       <button
-        onClick={() => setOpen(o => !o)}
+        onClick={() => {
+          // Compute the position synchronously before opening so the portalled
+          // menu renders at the right place on its very first frame.
+          if (!open) {
+            const r = ref.current?.getBoundingClientRect()
+            if (r) setPos({ top: r.bottom + 4, left: r.left })
+          }
+          setOpen(o => !o)
+        }}
         style={{
           display: 'flex', alignItems: 'center', gap: '0.35rem',
           padding: '0.375rem 0.5rem', borderRadius: 'var(--radius)',
