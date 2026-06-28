@@ -8,6 +8,7 @@
  */
 import { useState } from 'react'
 import { useINat } from '../../hooks/useINat'
+import { DemoDisabled } from '../common/DemoGuard'
 
 export function InaturalistPanel() {
   const inat = useINat()
@@ -47,6 +48,7 @@ export function InaturalistPanel() {
         pull the latest IDs for all your annotations on demand.
       </p>
 
+      <DemoDisabled tip="iNaturalist linking is disabled in the demo">
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', flexWrap: 'wrap' }}>
         {inat.connected ? (
           <>
@@ -66,6 +68,7 @@ export function InaturalistPanel() {
           </button>
         )}
       </div>
+      </DemoDisabled>
 
       {msg && <p style={{ fontSize: '0.78rem', marginBottom: 0, marginTop: '0.75rem', opacity: 0.85 }}>{msg}</p>}
     </div>

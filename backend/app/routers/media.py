@@ -16,7 +16,7 @@ from pydantic import BaseModel, Field
 
 from app.authz import require_deployment_access, require_media_access
 from app.config import settings
-from app.dependencies import get_current_user, get_user_client
+from app.dependencies import get_current_user, get_user_client, require_not_demo
 from app.domain.media_registry import resolve_url, with_resolved_urls
 from app.domain.media_resolver import resolve_media
 from app.schemas.common import ApiError, ApiMeta, ApiResponse
@@ -172,7 +172,7 @@ class BatchDeleteRequest(BaseModel):
     media_ids: list[str] = Field(..., max_length=500)
 
 
-@router.delete("/batch")
+@router.delete("/batch", dependencies=[Depends(require_not_demo)])
 async def batch_delete_media(
     request: Request,
     body: BatchDeleteRequest,
@@ -208,7 +208,7 @@ class RunSelectedRequest(BaseModel):
     confidence_threshold: float = Field(0.2, ge=0.0, le=1.0)
 
 
-@router.post("/run-selected")
+@router.post("/run-selected", dependencies=[Depends(require_not_demo)])
 async def run_pipeline_selected(
     request: Request,
     body: RunSelectedRequest,

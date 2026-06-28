@@ -11,7 +11,7 @@ import asyncio
 import structlog
 from fastapi import APIRouter, Depends, Form, HTTPException, UploadFile
 
-from app.dependencies import get_current_user, get_privileged_client, get_user_client
+from app.dependencies import get_current_user, get_privileged_client, get_user_client, require_not_demo
 from app.domain import camtrapdp as domain
 from app.schemas.camtrapdp import CamtrapImportResult
 from app.schemas.common import ApiResponse
@@ -23,7 +23,7 @@ router = APIRouter(prefix="/api/camtrapdp", tags=["camtrapdp"])
 MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 
 
-@router.post("/import", response_model=ApiResponse)
+@router.post("/import", response_model=ApiResponse, dependencies=[Depends(require_not_demo)])
 async def import_camtrapdp(
     file: UploadFile,
     annotation_mode: str = Form("final"),

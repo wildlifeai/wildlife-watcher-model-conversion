@@ -61,6 +61,39 @@ async def get_verified_user(user=Depends(get_current_user)):
             status_code=403,
             detail="Please confirm your email address before uploading images or running analysis.",
         )
+    if is_demo_user(user):
+        raise HTTPException(
+            status_code=403,
+            detail="This action is disabled in the demo. Exit the demo and create an account to work with your own data.",
+        )
+    return user
+
+
+def is_demo_user(user) -> bool:
+    """True when the user is the shared read-only demo account.
+
+    The demo account is flagged with ``app_metadata.is_demo = true`` (set when it
+    is seeded / by seed_demo.py). gotrue exposes app_metadata as a dict.
+    """
+    meta = getattr(user, "app_metadata", None)
+    if isinstance(meta, dict):
+        return bool(meta.get("is_demo"))
+    return bool(getattr(meta, "is_demo", False))
+
+
+async def require_not_demo(user=Depends(get_current_user)):
+    """Block mutating actions for the shared demo account.
+
+    The demo is read-only at the database (the ``project_viewer`` role), but
+    service-role backend endpoints (CamtrapDP import, pipeline runs, effort,
+    iNaturalist sync, …) bypass RLS — so enforce the read-only contract at the
+    API layer too. Returns the user so endpoints can also use it as a param.
+    """
+    if is_demo_user(user):
+        raise HTTPException(
+            status_code=403,
+            detail="This action is disabled in the demo. Exit the demo and create an account to work with your own data.",
+        )
     return user
 
 

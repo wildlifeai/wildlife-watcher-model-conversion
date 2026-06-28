@@ -251,6 +251,7 @@ All documentation lives under [`documentation/`](./documentation) — see the
 | Guide | What It Covers |
 |-------|----------------|
 | [API Reference](./documentation/resources/api-reference.md) | Backend endpoint reference |
+| [Demo Account](./documentation/resources/demo-account.md) | The read-only "Try the demo" account — access, the 3-layer read-only model, API usage, and per-environment seeding |
 | [Deployment Guide](./documentation/resources/deployment-guide.md) | Cloudflare Pages + Azure Container Apps deployment + security checklist |
 | [LoRaWAN Webhook Setup](./documentation/resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server configuration |
 | [CamtrapDP Import](./documentation/resources/camtrapdp-import.md) | Importing CamtrapDP packages |
