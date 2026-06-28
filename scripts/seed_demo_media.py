@@ -117,13 +117,19 @@ def main() -> None:
             continue
         path = f"demo/{deployment_id}/{name}"
         content = img.read_bytes()
+        # An already-existing object is fine (storage persists across DB resets);
+        # any OTHER failure means the URL would be broken, so skip the media row.
+        upload_ok = True
         try:
             svc.storage.from_(args.bucket).upload(
-                path, content, file_options={"content-type": "image/jpeg", "upsert": "true"},
+                path, content, file_options={"content-type": "image/jpeg"},
             )
-        except Exception as exc:  # already-exists is fine; the media row is what matters
+        except Exception as exc:
             if "exists" not in str(exc).lower():
                 print(f"⚠  upload failed for {name}: {exc}")
+                upload_ok = False
+        if not upload_ok:
+            continue
         public_url = f"{base}/storage/v1/object/public/{args.bucket}/{path}"
         svc.table("media").insert({
             "deployment_id": deployment_id, "file_path": public_url,

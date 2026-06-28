@@ -13,6 +13,7 @@
  *   onClick={guard(() => doWrite())}
  */
 import { createContext, useCallback, useContext, useRef, useState, type ReactNode } from 'react'
+import { Link } from 'react-router-dom'
 import { useAuth } from '../../hooks/useAuth'
 
 const DEFAULT_MSG = 'This is disabled in the demo — exit the demo to work with your own data.'
@@ -83,7 +84,7 @@ export function RequireNotDemo({ children, feature = 'This feature' }: { childre
         {feature} is disabled while you're exploring the demo with sample data.
         Create a free account to upload and analyse your own data.
       </p>
-      <a href="/login" className="btn" style={{ textDecoration: 'none' }}>Create an account →</a>
+      <Link to="/login" className="btn" style={{ textDecoration: 'none' }}>Create an account →</Link>
     </div>
   )
 }

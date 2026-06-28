@@ -88,7 +88,7 @@ _pending_oauth: dict = {}  # state -> {code_verifier, user_id}
 # ── OAuth Flow ───────────────────────────────────────────────────────
 
 
-@router.get("/auth")
+@router.get("/auth", dependencies=[Depends(require_not_demo)])
 async def inat_auth(
     request: Request,
     user=Depends(get_current_user),
@@ -239,7 +239,7 @@ async def inat_disconnect(
 # ── Observations ─────────────────────────────────────────────────────
 
 
-@router.post("/observations")
+@router.post("/observations", dependencies=[Depends(require_not_demo)])
 async def create_inat_observation(
     body: INatCreateObservation,
     request: Request,
