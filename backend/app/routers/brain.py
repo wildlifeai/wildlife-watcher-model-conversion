@@ -24,7 +24,7 @@ from app.authz import (
     require_system_admin,
 )
 from app.config import settings
-from app.dependencies import get_current_user, get_verified_user
+from app.dependencies import get_current_user, get_verified_user, require_not_demo
 from app.middleware.rate_limit import limiter
 from app.schemas.brain import ConfirmClusterRequest, EmbedRequest, MultiClusterRequest, ReprocessAllRequest, ReprocessRequest, ReviewDecisionRequest
 from app.schemas.common import ApiError, ApiMeta, ApiResponse
@@ -116,7 +116,7 @@ async def list_clusters(request: Request, deployment_id: str, user=Depends(get_c
     return ApiResponse(data={"embedding_run_id": run_id, "clusters": clusters}, meta=ApiMeta(request_id=req_id))
 
 
-@router.post("/clusters/multi")
+@router.post("/clusters/multi", dependencies=[Depends(require_not_demo)])
 async def multi_clusters(request: Request, body: MultiClusterRequest, user=Depends(get_current_user)):
     """Aggregate clusters across multiple deployments.
 
@@ -277,7 +277,7 @@ async def similar(request: Request, media_id: str, n: int = Query(20, ge=1, le=1
     return ApiResponse(data={"media_id": media_id, "results": hits}, meta=ApiMeta(request_id=req_id))
 
 
-@router.post("/clusters/{cluster_assignment_id}/confirm", dependencies=[Depends(require_cluster_access)])
+@router.post("/clusters/{cluster_assignment_id}/confirm", dependencies=[Depends(require_cluster_access), Depends(require_not_demo)])
 async def confirm_cluster(request: Request, cluster_assignment_id: str, body: ConfirmClusterRequest, user=Depends(get_current_user)):
     """Confirm a cluster as a taxon — bulk-creates human observations for members."""
     req_id = getattr(request.state, "request_id", None)
@@ -441,7 +441,7 @@ async def compare_runs_endpoint(request: Request, run_a: str = Query(...), run_b
 # ── Active learning + review queue (Phase 8) ─────────────────────────
 
 
-@router.post("/recalculate-al-scores/{deployment_id}", dependencies=[Depends(require_deployment_access)])
+@router.post("/recalculate-al-scores/{deployment_id}", dependencies=[Depends(require_deployment_access), Depends(require_not_demo)])
 async def recalculate_al_scores(request: Request, deployment_id: str, user=Depends(get_current_user)):
     """Enqueue an active-learning score recompute for a deployment."""
     req_id = getattr(request.state, "request_id", None)
@@ -471,7 +471,7 @@ async def review_queue(request: Request, deployment_id: str, limit: int = Query(
     return ApiResponse(data={"queue": rows, "count": len(rows)}, meta=ApiMeta(request_id=req_id))
 
 
-@router.post("/review/{media_id}", dependencies=[Depends(require_media_access)])
+@router.post("/review/{media_id}", dependencies=[Depends(require_media_access), Depends(require_not_demo)])
 async def review_media(request: Request, media_id: str, body: ReviewDecisionRequest, user=Depends(get_current_user)):
     """Record a reviewer decision on one media item (creates a human observation)."""
     req_id = getattr(request.state, "request_id", None)

@@ -42,6 +42,7 @@ import { SettingsPage } from './pages/SettingsPage'
 import { UploadLogsPage } from './pages/UploadLogsPage'
 import { UploadProvider, useUploadStore } from './contexts/UploadContext'
 import { UploadModal } from './components/upload/UploadModal'
+import { DemoGuardProvider, RequireNotDemo } from './components/common/DemoGuard'
 import { ProgressDock } from './components/upload/ProgressDock'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from './lib/apiClient'
@@ -459,6 +460,7 @@ export default function App() {
     <QueryClientProvider client={queryClient}>
       <ProjectSelectionProvider>
         <BrowserRouter>
+          <DemoGuardProvider>
           <UploadProvider>
             <UploadModal />
             <ProgressDock />
@@ -495,13 +497,13 @@ export default function App() {
               <Route path="/my-data"  element={<RedirectTo to="/insights" />} />
 
               {/* Upload — modal is the primary path; /upload-data kept for direct nav */}
-              <Route path="/upload-data"    element={<RequireAuth><UploadDataPage /></RequireAuth>} />
+              <Route path="/upload-data"    element={<RequireAuth><RequireNotDemo feature="Uploading data"><UploadDataPage /></RequireNotDemo></RequireAuth>} />
               <Route path="/upload/logs"    element={<RequireAuth><UploadLogsPage /></RequireAuth>} />
               <Route path="/analyse-images" element={<Navigate to="/upload-data" replace />} />
 
               {/* Toolkit */}
               <Route path="/manifest"     element={<RequireAuth><ManifestPage /></RequireAuth>} />
-              <Route path="/upload-model" element={<RequireAuth><UploadModelPage /></RequireAuth>} />
+              <Route path="/upload-model" element={<RequireAuth><RequireNotDemo feature="Uploading models"><UploadModelPage /></RequireNotDemo></RequireAuth>} />
 
               {/* Annotation workflow deep-links (preserved) */}
               <Route path="/explore/:deployment_id"  element={<RequireAuth><RedirectExploreToAnnotations /></RequireAuth>} />
@@ -520,6 +522,7 @@ export default function App() {
             </Routes>
           </Layout>
           </UploadProvider>
+          </DemoGuardProvider>
         </BrowserRouter>
       </ProjectSelectionProvider>
     </QueryClientProvider>

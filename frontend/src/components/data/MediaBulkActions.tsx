@@ -11,8 +11,12 @@
 
 import { useState, useRef, useEffect } from 'react'
 import { createPortal } from 'react-dom'
+import { useDemoGuard } from '../common/DemoGuard'
 
 export type BulkAction = 'inat' | 'delete' | 'ai' | 'similar' | 'label'
+
+// Actions that write/mutate (blocked for the read-only demo). 'similar' is a read.
+const DEMO_BLOCKED: BulkAction[] = ['inat', 'delete', 'ai', 'label']
 
 interface Props {
   selectedCount: number
@@ -30,6 +34,7 @@ export function MediaBulkActions({
   inatConnected,
 }: Props) {
   const [open, setOpen] = useState(false)
+  const { isDemo, showDemoToast } = useDemoGuard()
   const ref = useRef<HTMLDivElement>(null)
   const btnRef = useRef<HTMLButtonElement>(null)
   const menuRef = useRef<HTMLDivElement>(null)
@@ -82,7 +87,11 @@ export function MediaBulkActions({
     color: 'var(--text-color)', cursor: 'pointer',
   }
   const itemHover = 'rgba(76,175,80,0.08)'
-  const run = (action: BulkAction) => { setOpen(false); onAction(action) }
+  const run = (action: BulkAction) => {
+    setOpen(false)
+    if (isDemo && DEMO_BLOCKED.includes(action)) { showDemoToast(); return }
+    onAction(action)
+  }
 
   return (
     <div style={{

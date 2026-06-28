@@ -19,6 +19,7 @@ active engineering hand-offs; **archive** is frozen history. Start with onboardi
 | Doc | Covers |
 |-----|--------|
 | [api-reference](resources/api-reference.md) | Backend `/api/*` endpoint reference |
+| [demo-account](resources/demo-account.md) | Read-only "Try the demo" account: access, 3-layer read-only enforcement, API usage, per-environment seeding |
 | [deployment-guide](resources/deployment-guide.md) | Dev/prod environments, Azure + Cloudflare, CI/CD, Qdrant gap, security checklist |
 | [ai-model-pipeline](resources/ai-model-pipeline.md) | Edge Impulse → Vela on-camera model conversion |
 | [camtrapdp-import](resources/camtrapdp-import.md) | Importing CamtrapDP packages |

@@ -16,7 +16,7 @@ import structlog
 from fastapi import APIRouter, Depends, Request
 
 from app.authz import assert_access, require_deployment_access
-from app.dependencies import get_current_user, get_privileged_client, get_verified_user
+from app.dependencies import get_current_user, get_privileged_client, get_verified_user, require_not_demo
 from app.domain.events import cluster_deployment_events, compute_deployment_effort
 from app.domain.pipeline import run_pipeline
 from app.middleware.rate_limit import limiter
@@ -84,7 +84,7 @@ async def run_inference_pipeline(
 # ── Event Clustering ─────────────────────────────────────────────────
 
 
-@router.post("/events/cluster")
+@router.post("/events/cluster", dependencies=[Depends(require_not_demo)])
 async def cluster_events(
     request: Request,
     body: ClusterEventsRequest,
@@ -128,7 +128,7 @@ async def cluster_events(
 # ── Effort Computation ───────────────────────────────────────────────
 
 
-@router.post("/effort/{deployment_id}", dependencies=[Depends(require_deployment_access)])
+@router.post("/effort/{deployment_id}", dependencies=[Depends(require_deployment_access), Depends(require_not_demo)])
 async def compute_effort(
     request: Request,
     deployment_id: str,

@@ -26,7 +26,7 @@ from fastapi import APIRouter, Body, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse
 
 from app.config import settings
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_not_demo
 from app.domain.inaturalist import (
     INatDomainError,
     batch_poll_observations,
@@ -88,7 +88,7 @@ _pending_oauth: dict = {}  # state -> {code_verifier, user_id}
 # ── OAuth Flow ───────────────────────────────────────────────────────
 
 
-@router.get("/auth")
+@router.get("/auth", dependencies=[Depends(require_not_demo)])
 async def inat_auth(
     request: Request,
     user=Depends(get_current_user),
@@ -148,7 +148,7 @@ async def inat_callback(
     )
 
 
-@router.post("/token")
+@router.post("/token", dependencies=[Depends(require_not_demo)])
 async def inat_set_token(
     request: Request,
     api_token: str = Body(..., embed=True, description="Personal iNaturalist API JWT from /users/api_token"),
@@ -220,7 +220,7 @@ async def inat_status(
     )
 
 
-@router.post("/disconnect")
+@router.post("/disconnect", dependencies=[Depends(require_not_demo)])
 async def inat_disconnect(
     request: Request,
     user=Depends(get_current_user),
@@ -239,7 +239,7 @@ async def inat_disconnect(
 # ── Observations ─────────────────────────────────────────────────────
 
 
-@router.post("/observations")
+@router.post("/observations", dependencies=[Depends(require_not_demo)])
 async def create_inat_observation(
     body: INatCreateObservation,
     request: Request,
@@ -271,7 +271,7 @@ async def create_inat_observation(
     )
 
 
-@router.post("/publish")
+@router.post("/publish", dependencies=[Depends(require_not_demo)])
 async def publish_to_inat(
     body: INatPublishRequest,
     request: Request,
@@ -302,7 +302,7 @@ async def publish_to_inat(
     )
 
 
-@router.post("/sync")
+@router.post("/sync", dependencies=[Depends(require_not_demo)])
 async def sync_inat(
     request: Request,
     user=Depends(get_current_user),
@@ -390,7 +390,7 @@ async def search_inat_taxa(
     )
 
 
-@router.post("/taxa")
+@router.post("/taxa", dependencies=[Depends(require_not_demo)])
 async def add_inat_taxon(
     body: INatAddTaxonBody,
     request: Request,

@@ -14,6 +14,7 @@ import { supabase } from '../config/supabase'
 import { DataTable, type Column } from '../components/ui/DataTable'
 import { NAV_BTN } from '../components/data/DeploymentActionRow'
 import { CreateProjectModal, type CreatedProject } from '../components/data/CreateProjectModal'
+import { DemoDisabled } from '../components/common/DemoGuard'
 import { ProjectMembersPanel } from '../components/data/ProjectMembersPanel'
 import { NotificationRulesPanel } from '../components/settings/NotificationRulesPanel'
 import { ProjectDefaultsPanel } from '../components/settings/ProjectDefaultsPanel'
@@ -161,9 +162,11 @@ export function SettingsPage() {
         description="Each project's actions let you open it, view dataset health, manage members, set capture & AI defaults, and configure your notifications."
       >
         <div style={{ marginBottom: '0.75rem' }}>
-          <button className="btn" onClick={() => setCreateOpen(true)} title="Create a new project">
-            + New Project
-          </button>
+          <DemoDisabled tip="Creating projects is disabled in the demo">
+            <button className="btn" onClick={() => setCreateOpen(true)} title="Create a new project">
+              + New Project
+            </button>
+          </DemoDisabled>
         </div>
         {loading ? (
           <p style={{ opacity: 0.5 }}>Loading projects…</p>
@@ -186,9 +189,11 @@ export function SettingsPage() {
         <div style={{ fontSize: '0.875rem', display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
           <div><span style={{ opacity: 0.6 }}>Email:</span> <strong>{user?.email ?? '—'}</strong></div>
           <div>
-            <Link to="/reset-password" className="btn" style={{ textDecoration: 'none', width: 'fit-content', display: 'inline-block' }}>
-              Change password →
-            </Link>
+            <DemoDisabled tip="The demo account password can't be changed">
+              <Link to="/reset-password" className="btn" style={{ textDecoration: 'none', width: 'fit-content', display: 'inline-block' }}>
+                Change password →
+              </Link>
+            </DemoDisabled>
           </div>
         </div>
       </Section>

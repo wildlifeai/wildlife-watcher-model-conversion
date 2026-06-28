@@ -12,7 +12,7 @@ import structlog
 from fastapi import APIRouter, Depends, Header, HTTPException, Query, Request
 
 from app.config import settings
-from app.dependencies import get_current_user
+from app.dependencies import get_current_user, require_not_demo
 from app.domain.public_api import (
     PublicApiError,
     get_deployment,
@@ -73,7 +73,7 @@ async def require_scope(scope: str):
 # ── API Key Management (JWT auth, not API key auth) ──────────────────
 
 
-@router.post("/api-keys")
+@router.post("/api-keys", dependencies=[Depends(require_not_demo)])
 async def create_key(
     body: ApiKeyCreate,
     request: Request,
@@ -151,7 +151,7 @@ async def list_keys(
     )
 
 
-@router.delete("/api-keys/{key_id}")
+@router.delete("/api-keys/{key_id}", dependencies=[Depends(require_not_demo)])
 async def revoke_key(
     key_id: str,
     request: Request,

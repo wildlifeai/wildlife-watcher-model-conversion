@@ -1,0 +1,62 @@
+name: Update demo sample data
+
+# Keeps the read-only demo account's images in sync with test-fixtures.
+# Auto-runs when the fixtures (or the seeder) change, targeting the environment
+# that matches the branch:
+#   • push to `dev`  → dev Supabase
+#   • push to `main` → staging/prod Supabase
+# …and on demand for either environment. Idempotent — re-running only adds
+# images that aren't already there (so it survives reruns; on dev it also needs
+# a rerun after a DB reset, on staging the data persists).
+#
+# Per-environment GitHub config (Settings → Environments → dev / staging):
+#   secret  SUPABASE_URL
+#   secret  SUPABASE_SERVICE_ROLE_KEY
+#   var     DEMO_PROJECT_ID            (optional; defaults to the dev seed project)
+
+on:
+  push:
+    branches:
+      - dev
+      - main
+    paths:
+      - 'test-fixtures/**'
+      - 'scripts/seed_demo_media.py'
+      - '.github/workflows/update-demo.yml'
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: 'Target environment'
+        type: choice
+        options:
+          - dev
+          - staging
+        default: dev
+
+jobs:
+  seed-demo-media:
+    name: Seed demo images from test-fixtures
+    runs-on: ubuntu-latest
+    # Manual input wins; otherwise main → staging, any other branch → dev.
+    environment: ${{ github.event.inputs.environment || (github.ref_name == 'main' && 'staging' || 'dev') }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependency
+        run: pip install --quiet supabase
+
+      - name: Seed demo media
+        run: |
+          if [ -z "${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}" ]; then
+            echo "::warning::SUPABASE_SERVICE_ROLE_KEY not set in this environment — skipping"
+            exit 0
+          fi
+          python scripts/seed_demo_media.py
+        env:
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          DEMO_PROJECT_ID: ${{ vars.DEMO_PROJECT_ID }}
