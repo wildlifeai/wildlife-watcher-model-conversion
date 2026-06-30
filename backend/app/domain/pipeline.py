@@ -235,6 +235,7 @@ def build_speciesnet_observations(
     model_version: str,
     timestamp: str,
     confidence_threshold: float = 0.0,
+    per_detection: bool = False,
 ) -> list[dict]:
     """Map a SpeciesNet ImagePrediction to CamtrapDP observation rows (pure).
 
@@ -242,10 +243,17 @@ def build_speciesnet_observations(
     detections yields a single ``blank`` observation.
 
     SpeciesNet classifies **one species per image** but may emit several detection
-    boxes, so same-type boxes are collapsed into **one** observation carrying a
-    ``count`` (number of boxes) and the highest-confidence box as the
-    representative bbox — instead of N duplicate rows that clutter review. The
-    animal observation's species is taxonomically rolled up (see ``rollup_taxon``).
+    boxes. Two modes (``per_detection`` flag — wired to FF_PER_CROP_CLASSIFY_ENABLED):
+
+    - **Collapsed (default):** same-type boxes collapse into **one** observation
+      carrying a ``count`` (number of boxes) and the highest-confidence box as the
+      representative bbox — fewer rows to review.
+    - **Per-detection:** **one observation per box** (``count = 1``, its own bbox),
+      so a crop + an independent classification can be attached to each animal
+      (see the per-crop-classification spec). The image-level SpeciesNet species is
+      a *provisional* label on each animal row, refined per-crop downstream.
+
+    Either way the animal species is taxonomically rolled up (see ``rollup_taxon``);
     bbox fields are set as a complete quad or omitted (honours chk_bbox_complete).
     """
     base = {
@@ -264,11 +272,6 @@ def build_speciesnet_observations(
     if not kept:
         return [{**base, "id": str(uuid.uuid4()), "observation_type": "blank"}]
 
-    # Collapse boxes by observation_type (animal / human / vehicle / unknown).
-    by_type: dict[str, list] = {}
-    for det in kept:
-        by_type.setdefault(det.observation_type, []).append(det)
-
     sci_name, vern_name = rollup_taxon(
         getattr(prediction, "taxonomy", {}) or {},
         prediction.classification_score,
@@ -276,26 +279,33 @@ def build_speciesnet_observations(
         prediction.common_name,
     )
 
-    rows: list[dict] = []
-    for obs_type, dets in by_type.items():
-        best = max(dets, key=lambda d: d.confidence)
+    def _make_row(obs_type: str, representative, count: int) -> dict:
         row = {
             **base,
             "id": str(uuid.uuid4()),
             "observation_type": obs_type,
-            "classifier_category": best.category,
-            "confidence": best.confidence,
-            "count": len(dets),
+            "classifier_category": representative.category,
+            "confidence": representative.confidence,
+            "count": count,
         }
         if obs_type == "animal":
             row["scientific_name"] = sci_name
             row["vernacular_name"] = vern_name
             row["classification_probability"] = prediction.classification_score
-        if best.bbox is not None:
-            x, y, w, h = best.bbox
+        if representative.bbox is not None:
+            x, y, w, h = representative.bbox
             row.update(bbox_x=x, bbox_y=y, bbox_w=w, bbox_h=h)
-        rows.append(row)
-    return rows
+        return row
+
+    if per_detection:
+        # One observation per box — the substrate for per-crop classification.
+        return [_make_row(det.observation_type, det, 1) for det in kept]
+
+    # Collapse boxes by observation_type (animal / human / vehicle / unknown).
+    by_type: dict[str, list] = {}
+    for det in kept:
+        by_type.setdefault(det.observation_type, []).append(det)
+    return [_make_row(obs_type, max(dets, key=lambda d: d.confidence), len(dets)) for obs_type, dets in by_type.items()]
 
 
 def delete_superseded_ai_observations(svc, media_ids, model_version: str) -> None:
@@ -400,12 +410,25 @@ class SpeciesNetStep(PipelineStep):
             predictions = await get_speciesnet_service().predict(list(path_to_media.keys()))
 
             timestamp = datetime.now(timezone.utc).isoformat()
+            from app.config import settings
+
+            per_detection = settings.FF_PER_CROP_CLASSIFY_ENABLED
             obs_batch: list[dict] = []
             for pred in predictions:
                 m = path_to_media.get(pred.filepath)
                 if not m:
                     continue
-                obs_batch.extend(build_speciesnet_observations(m, deployment_id, pred, self.model_version, timestamp, threshold))
+                obs_batch.extend(
+                    build_speciesnet_observations(
+                        m,
+                        deployment_id,
+                        pred,
+                        self.model_version,
+                        timestamp,
+                        threshold,
+                        per_detection=per_detection,
+                    )
+                )
 
             if obs_batch:
                 # Replace, don't append: clear this model's prior machine rows for the
@@ -489,6 +512,37 @@ def build_bioclip_observations(
     ]
 
 
+def bioclip_observation_patch(
+    prediction,  # services.bioclip_service.CropPrediction (duck-typed)
+    model_version: str,
+    timestamp: str,
+    confidence_threshold: float = 0.0,
+) -> Optional[dict]:
+    """Per-crop refinement patch for one existing animal observation (pure).
+
+    The per-crop path (``FF_PER_CROP_CLASSIFY_ENABLED``) does not add a second-opinion
+    row — it refines the *existing* per-detection observation (created by the detector
+    with a provisional, image-level species) using BioCLIP run on that detection's own
+    crop. This maps a ``CropPrediction`` to the species fields written onto that row.
+
+    Returns ``None`` when BioCLIP has no usable name or scores below the threshold, so
+    the caller keeps the provisional SpeciesNet label — fail-safe: an uncertain crop
+    never overwrites a label with a confidently-wrong one. ``confidence`` (the detection
+    score) is left untouched; only the classification fields are refined.
+    """
+    if not prediction.scientific_name:
+        return None
+    if prediction.score is not None and prediction.score < confidence_threshold:
+        return None
+    return {
+        "scientific_name": prediction.scientific_name,
+        "vernacular_name": prediction.common_name,
+        "classification_probability": prediction.score,
+        "classified_by": model_version,
+        "classification_timestamp": timestamp,
+    }
+
+
 class BioCLIPStep(PipelineStep):
     """Classify stage — labels animal crops with a pluggable classifier.
 
@@ -537,6 +591,14 @@ class BioCLIPStep(PipelineStep):
         model_version = classifier.version
 
         threshold = config.get("confidence_threshold", 0.0)
+
+        # Per-crop path: refine each per-detection observation in place rather than
+        # adding one hero-crop second-opinion row per image (mixed-species frames get
+        # a distinct species per animal). Pairs with build_speciesnet_observations(
+        # per_detection=True). The hero-crop branch below is the legacy default.
+        if settings.FF_PER_CROP_CLASSIFY_ENABLED:
+            return await self._refine_crops_per_detection(media, deployment_id, config, classifier, model_version, threshold, start)
+
         svc = create_service_client()
         errors = 0
         observations_created = 0
@@ -641,6 +703,113 @@ class BioCLIPStep(PipelineStep):
         return PipelineStepResult(
             step=self.step_type,
             observations_created=observations_created,
+            media_processed=len(media),
+            errors=errors,
+            duration_seconds=round(duration, 2),
+            model_version=model_version,
+        )
+
+    async def _refine_crops_per_detection(
+        self,
+        media: list[dict],
+        deployment_id: str,
+        config: dict[str, Any],
+        classifier,
+        model_version: str,
+        threshold: float,
+        start: float,
+    ) -> PipelineStepResult:
+        """Classify *each* per-detection animal crop and refine that row in place.
+
+        The ``FF_PER_CROP_CLASSIFY_ENABLED`` path. Each ``animal`` observation already
+        carries its own ``crop_url`` (written by ``generate_observation_crops`` in the
+        Animal-Crop step), so we run the classifier on every crop and overwrite that
+        observation's provisional species with the per-crop result. No new rows are
+        created (so no superseded-cleanup needed) — a cat+rat frame ends up with two
+        observations bearing distinct species. Below-threshold / nameless crops keep
+        their provisional SpeciesNet label (see ``bioclip_observation_patch``).
+        """
+        import os
+        import shutil
+        import tempfile
+
+        from app.domain.media_resolver import resolve_media
+
+        svc = create_service_client()
+        media_ids = [m["id"] for m in media]
+        errors = 0
+        observations_updated = 0
+
+        def _fetch_animal_crops() -> list[dict]:
+            if not media_ids:
+                return []
+            resp = (
+                svc.table("observations")
+                .select("id, media_id, crop_url")
+                .in_("media_id", media_ids)
+                .eq("source_type", "ai")
+                .eq("observation_type", "animal")
+                .like("source_model_version", "speciesnet%")
+                .execute()
+            )
+            return [r for r in (resp.data or []) if r.get("crop_url")]
+
+        obs_rows = await asyncio.to_thread(_fetch_animal_crops)
+
+        tmpdir = tempfile.mkdtemp(prefix="crop_classify_")
+        path_to_obs: dict[str, dict] = {}
+        try:
+            for obs in obs_rows:
+                try:
+                    resolved = await resolve_media(obs["crop_url"], size="full")
+                    if not resolved:
+                        errors += 1
+                        continue
+                    data, _content_type = resolved
+                    path = os.path.join(tmpdir, f"{obs['id']}.jpg")
+                    with open(path, "wb") as fh:
+                        fh.write(data)
+                    path_to_obs[path] = obs
+                except Exception as exc:
+                    logger.warning("crop_classify_resolve_error", observation_id=obs.get("id"), error=str(exc))
+                    errors += 1
+
+            predictions = await classifier.classify(list(path_to_obs.keys()), config)
+            timestamp = datetime.now(timezone.utc).isoformat()
+
+            patches: list[tuple[str, dict]] = []
+            for pred in predictions:
+                obs = path_to_obs.get(pred.filepath)
+                if not obs:
+                    continue
+                patch = bioclip_observation_patch(pred, model_version, timestamp, threshold)
+                if patch:
+                    patches.append((obs["id"], patch))
+
+            def _persist() -> int:
+                n = 0
+                for obs_id, patch in patches:
+                    svc.table("observations").update(patch).eq("id", obs_id).execute()
+                    n += 1
+                return n
+
+            observations_updated = await asyncio.to_thread(_persist)
+        finally:
+            shutil.rmtree(tmpdir, ignore_errors=True)
+
+        duration = time.monotonic() - start
+        logger.info(
+            "classify_crops_complete",
+            deployment_id=deployment_id,
+            classifier=classifier.name,
+            crops_classified=len(path_to_obs),
+            observations_updated=observations_updated,
+            errors=errors,
+            duration_seconds=round(duration, 2),
+        )
+        return PipelineStepResult(
+            step=self.step_type,
+            observations_updated=observations_updated,
             media_processed=len(media),
             errors=errors,
             duration_seconds=round(duration, 2),

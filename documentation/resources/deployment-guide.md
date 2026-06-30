@@ -150,6 +150,59 @@ az containerapp update \
 
 > **Tip:** Use `secretref:` prefix for sensitive values. Create secrets first with `az containerapp secret set`.
 
+### Full-pipeline config checklist (per subsystem)
+
+A **fresh container only has the env you explicitly set** — feature flags and storage default to off/empty in code. `az containerapp update --set-env-vars` **merges** (it won't wipe existing vars), but a newly-created container needs the whole set below or the upload → store → AI → annotate flow silently no-ops. Each row maps a **symptom you'd see if it's missing** to the vars that fix it.
+
+**Core (required to boot at all)**
+
+| Var | Notes |
+|-----|-------|
+| `SUPABASE_URL`, `SUPABASE_ANON_KEY`, `SUPABASE_SERVICE_ROLE_KEY` | DB + auth. Service-role as `secretref:`. |
+| `ALLOWED_ORIGINS` | Exact frontend origin(s). |
+| `GENERAL_ORG_ID` | Default org for auto-assignment. |
+| `REDIS_URL` | **ARQ job queue.** Empty → in-memory fallback (no durable/cross-container jobs). The **worker needs the same value.** |
+
+**Original-image storage** — *missing → uploads "complete" but produce no usable media; `GET /api/media/:id/image` returns **422** ("cannot be resolved"):*
+
+| Var | Enables |
+|-----|---------|
+| `AZURE_STORAGE_CONNECTION_STRING` (+ `AZURE_STORAGE_CONTAINER_NAME`) | Blob buffering of originals — **this is the one that bites.** The container *name* alone does nothing; without the **connection string** every upload logs `azure_storage_not_configured_for_store` and no media rows are created. |
+| `SUPABASE_MEDIA_BUCKET` | Supabase Storage bucket for media. |
+| `GOOGLE_DRIVE_ENABLED=true` + `GOOGLE_SERVICE_ACCOUNT_JSON` + `GOOGLE_DRIVE_FOLDER_ID` | Drive archival. **Folder ID alone does nothing** — without `ENABLED` + the service account, queued uploads stay `pending_drive_uploads` and the images never become servable. |
+
+**AI pipeline** — *missing → "No animals detected"; no `speciesnet`/`pipeline` log lines:*
+
+| Var | Enables |
+|-----|---------|
+| `FF_PIPELINE_ENABLED=true` | Inference endpoints. |
+| `FF_SPECIESNET_ENABLED=true` (+ `SPECIESNET_RUN_MODE`) | SpeciesNet detector+classifier. **Runs in the ARQ worker, not the API image (`--target api`)** — confirm the worker container is deployed with the same flags + `REDIS_URL` + GPU. |
+| `FF_MEDIA_REGISTRY_ENABLED=true` | Thumbnails / animal crops (the **Labels** view is empty without crops). |
+| `FF_BIOCLIP_ENABLED`, `FF_WILDLIFE_BRAIN_ENABLED` (+ the vector store — **pgvector** in Supabase; `QDRANT_*` only if Qdrant — `HF_TOKEN`, `EMBEDDING_*`) | BioCLIP + DINOv3 embeddings / clustering. See [Vector Store](#vector-store--pgvector-chosen-for-cloud--qdrant-future-scale-up). |
+| `FF_PER_CROP_CLASSIFY_ENABLED` | Per-detection (per-crop) species — one observation per animal, BioCLIP refines each crop. **Requires the GPU worker**; default off (collapses per image when off). |
+
+**Demo account** — *missing → "Try the demo" self-disables (`DEMO_DISABLED`):*
+
+| Var | Notes |
+|-----|-------|
+| `DEMO_EMAIL`, `DEMO_PASSWORD` | Must match the seeded demo user (`DEMO_PASSWORD` = dev `SEED_USER_PASSWORD`). See [demo-account.md](./demo-account.md). |
+
+**Integrations (optional)**
+
+| Var | Enables |
+|-----|---------|
+| `INAT_CLIENT_ID`, `INAT_CLIENT_SECRET`, `INAT_REDIRECT_URI` + `FF_INAT_ENABLED` | iNaturalist sync/publish. |
+| `LORAWAN_*_WEBHOOK_SECRET` | LoRaWAN webhooks. |
+| `EMAIL_PROVIDER`, `EMAIL_FROM`, `RESEND_API_KEY` / `SENDGRID_API_KEY` / `ACS_CONNECTION_STRING` | Notification email. |
+| `SENTRY_DSN`, `LOG_LEVEL` | Error tracking / log verbosity. |
+
+> **Quick audit** of a container's current env:
+> ```bash
+> az containerapp show --name ww-backend-dev -g WW-Website \
+>   --query "properties.template.containers[0].env[].name" -o tsv | sort
+> ```
+> If `GOOGLE_DRIVE_ENABLED`, `FF_PIPELINE_ENABLED`, `FF_SPECIESNET_ENABLED`, or `FF_MEDIA_REGISTRY_ENABLED` are absent, that subsystem is off regardless of what the UI seems to show.
+
 ---
 
 ## Supabase Setup
@@ -196,11 +249,20 @@ Enable Realtime on `lorawan_parsed_messages` so the mobile app receives live upd
 
 ---
 
-## Qdrant Vector Store (NOT yet in cloud)
+## Vector Store — pgvector (chosen for cloud) → Qdrant (future scale-up)
 
-The **Wildlife Brain** (DINOv3 embeddings → clustering → similarity search) stores its vectors in
-**Qdrant**. This is **fully implemented in code** (`backend/app/services/qdrant_client.py`, gated by
-`FF_WILDLIFE_BRAIN_ENABLED`) and runs as a container in the local stack:
+The **Wildlife Brain** (DINOv3 embeddings → clustering → similarity search) needs a vector store. The
+**chosen cloud target is `pgvector`** — vectors live as a `vector(1280)` column in the Supabase
+Postgres you already run, so they sit beside the relational data, inherit RLS + PITR backup, and add
+**no new vendor**. At this project's scale (one DINOv3 vector per crop → hundreds of thousands, low
+millions) pgvector's HNSW is comfortably sufficient, and embedding/cluster queries are
+`deployment_id`/`project_id`-scoped (small candidate sets), so its post-filter cost barely applies.
+Full comparison + benchmark numbers:
+[gpu-worker-infra-spec.md §4](../development%20reports/gpu-worker-infra-spec.md#4-vector-store--pgvector-vs-qdrant-decision).
+
+**Current code uses Qdrant.** The store is implemented today against **Qdrant**
+(`backend/app/services/qdrant_client.py`, gated by `FF_WILDLIFE_BRAIN_ENABLED`) and runs as a container
+in the local compose stack:
 
 ```yaml
 # docker-compose.yml
@@ -210,23 +272,27 @@ qdrant:
   volumes: [qdrant_storage:/qdrant/storage]
 ```
 
-**It is not provisioned in dev-cloud or staging.** The Azure Container App passes `QDRANT_URL`
-(default `http://qdrant:6333`, a Docker-network address that does not resolve in Azure), so any
-embedding/clustering call there will fail to connect. The client's `health()` degrades gracefully
-(never raises), so the rest of the API is unaffected — but **Group-by-Cluster, similarity, and the
-review queue produce no data in the cloud** until Qdrant is hosted.
+It is **not provisioned in any cloud environment** — the Container App passes the default
+`QDRANT_URL=http://qdrant:6333` (a Docker address that doesn't resolve in Azure). The client's
+`health()` degrades gracefully (never raises), so the API is unaffected, but **Group-by-Cluster,
+similarity, and the review queue produce no cloud data until a vector store is hosted** (and the GPU
+worker exists to compute embeddings).
 
-**To finish cloud support, one of:**
+**To finish cloud support — implement the pgvector path (chosen):** enable the `vector` extension in
+Supabase, add an `embeddings` table (`vector(1280)` + HNSW index), and add a pgvector sibling behind
+the existing `get_qdrant_service()` seam (`embedding_runs` is store-agnostic — keep `qdrant_collection`
+as the logical space id). Stamp each row with `embedding_model` and **filter on it at read time**
+(`WHERE embedding_model = $1`) so a model/weights change can't mix incompatible vectors (infra spec
+§9). DR is automatic — the vectors are a Postgres table under Supabase PITR.
 
-1. **Qdrant Cloud** (managed) — create a cluster, set `QDRANT_URL=https://<cluster>.qdrant.io` and
-   `QDRANT_API_KEY=<key>` on the Container App. Simplest; no infra to run.
-2. **Self-host on Azure** — run `qdrant/qdrant` as a second Container App (or Container Instance) with
-   a persistent volume for `/qdrant/storage`, on the same internal environment so the API can reach
-   it; point `QDRANT_URL` at its internal FQDN.
-
-Either way also wire up the snapshot DR path: `QdrantService.create_snapshot()` exists and
-`SUPABASE_QDRANT_BACKUP_BUCKET` (`qdrant-backups`) is reserved for storing snapshots, but no
-scheduled backup job runs yet.
+**Future scale-up — Qdrant.** Keep the Qdrant implementation as the escape hatch for when the project
+crosses ~5–10M vectors, *or* high-selectivity filtered search becomes a hot path, *or* managed
+quantization at scale is needed. The in-Postgres step *before* that jump is **pgvectorscale**
+(StreamingDiskANN), which lifts the ceiling without leaving the database. If/when Qdrant is adopted:
+Qdrant Cloud (`QDRANT_URL=https://<cluster>.qdrant.io` + `QDRANT_API_KEY`) or self-host `qdrant/qdrant`
+as a second Container App with a persistent `/qdrant/storage` volume — and build the snapshot DR job
+(`QdrantService.create_snapshot()` + the reserved `SUPABASE_QDRANT_BACKUP_BUCKET`), which the pgvector
+path doesn't need.
 
 > The heavy ML inference (DINOv3/SpeciesNet on GPU) is a separate concern — see the `gpu` profile +
 > `embedding-worker` in `docker-compose.yml`, which also needs Redis + ARQ before it can run as a
@@ -360,7 +426,7 @@ The two-container split — **always-on CPU API + on-demand GPU worker** — is 
 | API | Container App, CPU, **`base`** image | min 1 | ~$15–40/mo |
 | Queue + status mirror | Azure Cache for Redis (Basic C0) | — | ~$16/mo |
 | GPU worker | Container App on a **GPU workload profile**, **`worker`** image | **min 0** | GPU only while processing (per-second) |
-| Vectors | Qdrant Cloud (free tier) | — | $0 |
+| Vectors | **pgvector** in Supabase (chosen) — or Qdrant Cloud free tier | — | $0 |
 
 **1 — Redis.** ARQ needs a broker; Azure Redis requires TLS on 6380, so use a `rediss://` DSN.
 
@@ -403,10 +469,13 @@ az containerapp create \
   --command "arq" "app.jobs.worker.WorkerSettings" \
   --min-replicas 0 --max-replicas 2 \
   --env-vars REDIS_URL=rediss://:<key>@ww-redis-dev.redis.cache.windows.net:6380 \
-             QDRANT_URL=https://<cluster>.qdrant.io:6333 QDRANT_API_KEY=<key> \
              HF_TOKEN=<hf-token> EMBEDDING_DEVICE=cuda \
              SUPABASE_URL=<url> SUPABASE_ANON_KEY=<anon> SUPABASE_SERVICE_ROLE_KEY=<service>
 ```
+
+> **Vector-store env:** the chosen **pgvector** path needs none — it reuses the Supabase connection
+> above. Only add `QDRANT_URL` / `QDRANT_API_KEY` here if you run the Qdrant scale-up path
+> ([Vector Store](#vector-store--pgvector-chosen-for-cloud--qdrant-future-scale-up)).
 
 **6 — Scale rule (the one real gotcha).** ARQ enqueues to a Redis **sorted set** (`arq:queue`), but KEDA's stock `redis` scaler reads **list length (`LLEN`)** — it cannot watch a sorted set directly. Pick one:
 

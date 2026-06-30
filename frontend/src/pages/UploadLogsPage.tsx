@@ -86,8 +86,11 @@ export function UploadLogsPage() {
           }}>
             {([
               ['Total images', pipelineState.totalFiles],
-              ['Uploaded', pipelineState.uploadedFiles],
-              ['Batches', pipelineState.jobs.length],
+              // Real media count from job results (job.summary.uploaded), not the
+              // optimistic files-sent counter — BMPs without a deployment ID and
+              // failures don't become media.
+              ['Stored as media', pipelineState.jobs.reduce((n, j) => n + (j.summary?.uploaded ?? 0), 0)],
+              ['Failed', pipelineState.jobs.reduce((n, j) => n + (j.summary?.failed ?? 0), 0)],
               ['Status', phase.charAt(0).toUpperCase() + phase.slice(1)],
             ] as [string, string | number][]).map(([label, value]) => (
               <div

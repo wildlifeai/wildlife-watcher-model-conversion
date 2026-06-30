@@ -7,9 +7,17 @@ domain mapping to CamtrapDP observation rows — all without the heavy
 ``speciesnet`` package, a GPU, or a database.
 """
 
-from app.domain.pipeline import build_speciesnet_observations, rollup_taxon, run_pipeline
+from app.domain.pipeline import (
+    bioclip_observation_patch,
+    build_speciesnet_observations,
+    rollup_taxon,
+    run_pipeline,
+)
 from app.jobs.definitions import _is_uuid
+from app.services.bioclip_service import CropPrediction
 from app.services.speciesnet_service import (
+    Detection,
+    ImagePrediction,
     category_to_observation_type,
     parse_prediction_string,
     parse_speciesnet_output,
@@ -103,6 +111,105 @@ def test_build_observations_blank_image():
     rows = build_speciesnet_observations({"id": "media-2"}, "dep-1", preds[1], "speciesnet-vX", "2026-06-06T00:00:00Z")
     assert len(rows) == 1
     assert rows[0]["observation_type"] == "blank"
+
+
+# ── Per-detection mode (FF_PER_CROP_CLASSIFY_ENABLED) ─────────────────────────
+
+
+def _pred(*detections, sci="Turdus merula", common="Common Blackbird", score=0.7):
+    return ImagePrediction(
+        filepath="/tmp/x.jpg",
+        detections=list(detections),
+        scientific_name=sci,
+        common_name=common,
+        classification_score=score,
+        taxonomy={},
+    )
+
+
+def _det(conf, bbox, obs_type="animal", category="1"):
+    return Detection(category=category, observation_type=obs_type, confidence=conf, bbox=bbox)
+
+
+def test_build_observations_collapse_is_the_default():
+    # Two same-type boxes collapse into ONE row carrying count=N (legacy behaviour).
+    pred = _pred(_det(0.9, (0.1, 0.1, 0.2, 0.2)), _det(0.8, (0.5, 0.5, 0.2, 0.2)))
+    rows = build_speciesnet_observations({"id": "m"}, "dep", pred, "v", "2026-01-01T00:00:00Z")
+    assert len(rows) == 1
+    assert rows[0]["count"] == 2
+    assert (rows[0]["bbox_x"], rows[0]["bbox_y"]) == (0.1, 0.1)  # highest-confidence box
+
+
+def test_build_observations_per_detection_one_row_per_box():
+    # Two of the same species → two observations, each count=1, distinct bbox,
+    # both carrying the provisional image-level species.
+    pred = _pred(_det(0.9, (0.1, 0.1, 0.2, 0.2)), _det(0.8, (0.5, 0.5, 0.2, 0.2)))
+    rows = build_speciesnet_observations({"id": "m"}, "dep", pred, "v", "2026-01-01T00:00:00Z", per_detection=True)
+    assert len(rows) == 2
+    assert all(r["observation_type"] == "animal" and r["count"] == 1 for r in rows)
+    assert {(r["bbox_x"], r["bbox_y"]) for r in rows} == {(0.1, 0.1), (0.5, 0.5)}
+    assert all(r["scientific_name"] == "Turdus merula" for r in rows)
+    assert len({r["id"] for r in rows}) == 2  # distinct observation ids
+    assert all(r["confidence"] == det_conf for r, det_conf in zip(rows, (0.9, 0.8)))
+
+
+def test_build_observations_per_detection_mixed_types_not_merged():
+    # An animal + a human box stay as two separate observations in both modes,
+    # but per-detection also keeps multiple animals separate.
+    pred = _pred(
+        _det(0.9, (0.1, 0.1, 0.2, 0.2), obs_type="animal"),
+        _det(0.85, (0.3, 0.3, 0.2, 0.2), obs_type="animal"),
+        _det(0.7, (0.6, 0.6, 0.2, 0.2), obs_type="human", category="2"),
+    )
+    rows = build_speciesnet_observations({"id": "m"}, "dep", pred, "v", "2026-01-01T00:00:00Z", per_detection=True)
+    assert len(rows) == 3
+    assert sum(r["observation_type"] == "animal" for r in rows) == 2
+    assert sum(r["observation_type"] == "human" for r in rows) == 1
+    # only animal rows carry a species
+    assert all("scientific_name" not in r for r in rows if r["observation_type"] == "human")
+
+
+def test_build_observations_per_detection_threshold_and_blank():
+    pred = _pred(_det(0.9, (0.1, 0.1, 0.2, 0.2)), _det(0.1, (0.5, 0.5, 0.2, 0.2)))
+    rows = build_speciesnet_observations({"id": "m"}, "dep", pred, "v", "2026-01-01T00:00:00Z", confidence_threshold=0.5, per_detection=True)
+    assert len(rows) == 1  # only the 0.9 box survives
+    # all-below-threshold → single blank, no bbox
+    blank = build_speciesnet_observations({"id": "m"}, "dep", pred, "v", "2026-01-01T00:00:00Z", confidence_threshold=0.99, per_detection=True)
+    assert len(blank) == 1 and blank[0]["observation_type"] == "blank" and "bbox_x" not in blank[0]
+
+
+# ── Phase 3: per-crop classification refinement (bioclip_observation_patch) ──
+
+
+def _crop(sci="Felis catus", common="Domestic Cat", score=0.8):
+    return CropPrediction(filepath="/tmp/c.jpg", scientific_name=sci, common_name=common, score=score, rank="species")
+
+
+def test_bioclip_patch_refines_species_without_touching_detection_confidence():
+    patch = bioclip_observation_patch(_crop(), "bioclip-v1", "2026-01-01T00:00:00Z")
+    assert patch["scientific_name"] == "Felis catus"
+    assert patch["vernacular_name"] == "Domestic Cat"
+    assert patch["classification_probability"] == 0.8
+    assert patch["classified_by"] == "bioclip-v1"
+    # detection confidence is NOT in the patch — only classification fields are refined
+    assert "confidence" not in patch
+
+
+def test_bioclip_patch_keeps_provisional_label_when_no_name():
+    # No usable name → None → caller keeps the provisional SpeciesNet species.
+    assert bioclip_observation_patch(_crop(sci=None), "bioclip-v1", "t") is None
+
+
+def test_bioclip_patch_keeps_provisional_label_below_threshold():
+    # Uncertain crop must never overwrite with a confidently-wrong species.
+    assert bioclip_observation_patch(_crop(score=0.2), "bioclip-v1", "t", confidence_threshold=0.5) is None
+
+
+def test_bioclip_patch_allows_missing_score():
+    # A None score is not "below threshold" — it still refines (the classifier just
+    # didn't report a probability).
+    patch = bioclip_observation_patch(_crop(score=None), "bioclip-v1", "t", confidence_threshold=0.5)
+    assert patch is not None and patch["classification_probability"] is None
 
 
 def test_delete_superseded_ai_observations_scopes_and_cleans_crops():

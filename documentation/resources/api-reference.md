@@ -244,9 +244,14 @@ Prefix `/api/camtrapdp`. Gated by `FF_CAMTRAPDP_IMPORT_ENABLED`.
 
 ## Wildlife Brain — Embeddings & Clustering
 
-DINOv3 embeddings → UMAP → HDBSCAN clustering → Qdrant similarity, and the active-learning review
+DINOv3 embeddings → UMAP → HDBSCAN clustering → vector-store similarity, and the active-learning review
 queue. JWT required; gated by **`FF_WILDLIFE_BRAIN_ENABLED`** (returns `FEATURE_DISABLED` when off).
 Prefix `/api/brain`. Architecture: [04-AI-PIPELINE](../onboarding/04-AI-PIPELINE.md).
+
+> **Vector store:** these endpoints are vector-store-backed. Current code uses **Qdrant**; the chosen
+> cloud target is **`pgvector`** in Supabase (Qdrant kept as the scale-up path) — see
+> [deployment guide → Vector Store](deployment-guide.md#vector-store--pgvector-chosen-for-cloud--qdrant-future-scale-up).
+> The `/api/brain/backup` Qdrant-snapshot endpoint is Qdrant-specific (pgvector inherits Supabase PITR).
 
 > Distinct from [Image Clustering](#image-clustering) (`/api/clustering`), which is the legacy
 > perceptual-hash near-duplicate grouping. `/api/brain` is the semantic DINOv3 clustering the
@@ -259,7 +264,7 @@ Prefix `/api/brain`. Architecture: [04-AI-PIPELINE](../onboarding/04-AI-PIPELINE
 | `POST /api/brain/clusters/multi` | Aggregate clusters across deployments — body `{ "deployment_ids": [...], "min_confidence": 0 }`; returns `clusters`, `media_clusters` (media→cluster map), `outlier_media_ids` |
 | `GET /api/brain/umap/{deployment_id}` | Persisted 2-D UMAP scatter coordinates |
 | `GET /api/brain/outliers/{deployment_id}` | HDBSCAN-rejected images (expert-review candidates) |
-| `GET /api/brain/similar/{media_id}` | Qdrant nearest-neighbour search (`?n=20&org_scoped=true`) |
+| `GET /api/brain/similar/{media_id}` | Vector-store nearest-neighbour search (`?n=20&org_scoped=true`) |
 | `POST /api/brain/clusters/{cluster_assignment_id}/confirm` | Confirm a cluster as a taxon → bulk-creates human observations for its members |
 | `GET /api/brain/embedding-runs/{deployment_id}` | List embedding runs (model version, status, image count) |
 | `POST /api/brain/reprocess/deployment/{deployment_id}` | Supersede current runs and re-embed a deployment |

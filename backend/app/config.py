@@ -70,6 +70,7 @@ class Settings(BaseSettings):
         ),
     )
     FF_BIOCLIP_ENABLED: bool = Field(False, description="Enable the BioCLIP secondary/zero-shot classifier pipeline step")
+    FF_PER_CROP_CLASSIFY_ENABLED: bool = Field(False, description="One AI observation per detection (not collapsed per image)")
     FF_WILDLIFE_BRAIN_ENABLED: bool = Field(False, description="Enable DINOv3 embedding / clustering / similarity endpoints")
     FF_MEDIA_REGISTRY_ENABLED: bool = Field(False, description="Enable Media Registry thumbnails/crops + resolve endpoints")
     FF_ACTIVE_LEARNING_ENABLED: bool = Field(False, description="Enable active-learning review queue scoring")

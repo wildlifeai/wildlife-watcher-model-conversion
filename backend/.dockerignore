@@ -1,0 +1,18 @@
+# Build-context excludes (applies to `az acr build` / docker build with `backend/` as context).
+# Keeps the upload lean and ensures no local secrets/venv are baked into the image.
+.venv/
+venv/
+env/
+__pycache__/
+*.pyc
+*.pyo
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+.git/
+.gitignore
+.env
+.env.*
+*.log
+.DS_Store

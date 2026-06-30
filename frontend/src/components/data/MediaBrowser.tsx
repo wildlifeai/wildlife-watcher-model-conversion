@@ -19,6 +19,7 @@ import { getTimeOfDay, formatCaptureTime } from '../../lib/time'
 import { useQueryClient } from '@tanstack/react-query'
 import { MediaGroup } from './MediaGroup'
 import { useMultiClusters, useConfirmCluster, useSimilarImages } from '../../hooks/useBrain'
+import { useUploadStore } from '../../contexts/UploadContext'
 import { useJobsList } from '../../hooks/useJobs'
 import { MediaBulkActions, type BulkAction } from './MediaBulkActions'
 import { DeleteConfirmModal, AiModelPickerModal, PipelineLogModal } from './BulkActionModals'
@@ -260,7 +261,11 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     [deployments],
   )
   const qc = useQueryClient()
+  const { isActive: uploadActive } = useUploadStore()
   const [reloadKey, setReloadKey] = useState(0)
+  // Media whose thumbnail failed to load — shown as "processing" (the rendition
+  // is likely still generating). Reset on every (re)load so they re-attempt.
+  const [failedThumbs, setFailedThumbs] = useState<Set<string>>(new Set())
   const [media, setMedia]         = useState<MediaRecord[]>([])
   // "Find similar" mode: anchor media id + the resolved, similarity-ranked records.
   const [similarToId, setSimilarToId]     = useState<string | null>(null)
@@ -493,11 +498,21 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
         if (err) { setError(err.message); setLoading(false); return }
         setMedia((data || []) as unknown as MediaRecord[])
         setTotalCount(count ?? null)
+        setFailedThumbs(new Set())  // re-attempt thumbnails (renditions may now exist)
         setLoading(false)
       })
 
     return () => { cancelled = true }
   }, [user, deployments, filterDeployments, page, reloadKey])
+
+  // While an upload is running, poll so newly-registered media appear in the grid
+  // without a manual refresh, and do one final refresh when it finishes (cleanup
+  // runs on the isActive → false transition, catching the last batch).
+  useEffect(() => {
+    if (!uploadActive) return
+    const t = setInterval(() => setReloadKey(k => k + 1), 4000)
+    return () => { clearInterval(t); setReloadKey(k => k + 1) }
+  }, [uploadActive])
 
   // Refresh iNaturalist badges whenever the loaded media set changes.
   useEffect(() => { loadInatStates(media.map(m => m.id)) }, [media, loadInatStates])
@@ -922,13 +937,19 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
           overflow: 'hidden',
           position: 'relative',
         }}>
-          {imgUrl ? (
+          {imgUrl && !failedThumbs.has(m.id) ? (
             <img
               src={imgUrl}
               alt={m.file_name || 'media'}
               style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-              onError={(e) => { (e.target as HTMLImageElement).style.display = 'none' }}
+              onError={() => setFailedThumbs(s => new Set(s).add(m.id))}
             />
+          ) : imgUrl ? (
+            // Thumbnail not ready yet (rendition still generating / resolving).
+            <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: '0.3rem', opacity: 0.5, fontSize: '0.72rem' }}>
+              <span style={{ fontSize: '1.4rem' }}>⏳</span>
+              <span>Processing…</span>
+            </div>
           ) : (
             <span style={{ fontSize: '2rem', opacity: 0.3 }}>📷</span>
           )}
