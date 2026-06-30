@@ -18,6 +18,7 @@ import React, {
   useState,
 } from 'react'
 import { apiClient } from '../lib/apiClient'
+import { registerLocalPreviews } from '../lib/localPreviewStore'
 import type { PipelineState, PipelineJob, LogEntry } from '../components/toolkit/PipelineStatusBox'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -320,6 +321,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       // Store deployment IDs for the post-upload "View Annotations" smart link
       setUploadedDeploymentIds(deployments.map(d => d.id))
+
+      // Instant thumbnails: mint object URLs from the user's own files now, so the
+      // Annotations grid can show them within ~1s (before any server rendition).
+      registerLocalPreviews(files)
 
       const totalBatches = Math.ceil(files.length / BATCH_SIZE)
       lastSeenSeqRef.current = {}

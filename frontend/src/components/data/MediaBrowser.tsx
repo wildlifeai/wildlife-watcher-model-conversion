@@ -13,6 +13,7 @@ import { StatusBadge, deriveAnnotationStatus } from '../ui/StatusBadge'
 import type { AnnotationStatus } from '../ui/StatusBadge'
 import { Modal } from '../ui/Modal'
 import { isHumanReviewed, isAiLabel, humanCreateFields } from '../../lib/observations'
+import { getLocalPreview } from '../../lib/localPreviewStore'
 import { BulkLabelModal } from './BulkLabelModal'
 import { type SpeciesSelection } from './SpeciesPicker'
 import { getTimeOfDay, formatCaptureTime } from '../../lib/time'
@@ -202,6 +203,10 @@ function resolveImageUrl(media: MediaRecord): string | null {
   const asset = firstAsset(media.media_assets)
   const rendition = asset?.thumbnail_url || asset?.preview_url
   if (rendition) return rendition
+  // No server rendition yet — if this is a just-uploaded file, show the user's own
+  // copy instantly (object URL) instead of the "Processing…" placeholder.
+  const localPreview = getLocalPreview(media.file_name)
+  if (localPreview) return localPreview
   const filePath = media.file_path
   if (!filePath) return null
   if (filePath.startsWith('http://') || filePath.startsWith('https://')) return filePath
