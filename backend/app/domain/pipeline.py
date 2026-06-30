@@ -305,10 +305,7 @@ def build_speciesnet_observations(
     by_type: dict[str, list] = {}
     for det in kept:
         by_type.setdefault(det.observation_type, []).append(det)
-    return [
-        _make_row(obs_type, max(dets, key=lambda d: d.confidence), len(dets))
-        for obs_type, dets in by_type.items()
-    ]
+    return [_make_row(obs_type, max(dets, key=lambda d: d.confidence), len(dets)) for obs_type, dets in by_type.items()]
 
 
 def delete_superseded_ai_observations(svc, media_ids, model_version: str) -> None:
@@ -414,6 +411,7 @@ class SpeciesNetStep(PipelineStep):
 
             timestamp = datetime.now(timezone.utc).isoformat()
             from app.config import settings
+
             per_detection = settings.FF_PER_CROP_CLASSIFY_ENABLED
             obs_batch: list[dict] = []
             for pred in predictions:
@@ -422,7 +420,12 @@ class SpeciesNetStep(PipelineStep):
                     continue
                 obs_batch.extend(
                     build_speciesnet_observations(
-                        m, deployment_id, pred, self.model_version, timestamp, threshold,
+                        m,
+                        deployment_id,
+                        pred,
+                        self.model_version,
+                        timestamp,
+                        threshold,
                         per_detection=per_detection,
                     )
                 )
@@ -594,9 +597,7 @@ class BioCLIPStep(PipelineStep):
         # a distinct species per animal). Pairs with build_speciesnet_observations(
         # per_detection=True). The hero-crop branch below is the legacy default.
         if settings.FF_PER_CROP_CLASSIFY_ENABLED:
-            return await self._refine_crops_per_detection(
-                media, deployment_id, config, classifier, model_version, threshold, start
-            )
+            return await self._refine_crops_per_detection(media, deployment_id, config, classifier, model_version, threshold, start)
 
         svc = create_service_client()
         errors = 0

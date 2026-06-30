@@ -115,6 +115,7 @@ def test_build_observations_blank_image():
 
 # ── Per-detection mode (FF_PER_CROP_CLASSIFY_ENABLED) ─────────────────────────
 
+
 def _pred(*detections, sci="Turdus merula", common="Common Blackbird", score=0.7):
     return ImagePrediction(
         filepath="/tmp/x.jpg",
