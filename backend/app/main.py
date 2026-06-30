@@ -5,6 +5,7 @@
 Wires together: CORS, lifespan (Redis connect/disconnect), middleware, and routers.
 """
 
+import re
 from contextlib import asynccontextmanager
 
 import structlog
@@ -17,7 +18,24 @@ from app.config import settings
 from app.middleware.logging import LoggingMiddleware
 from app.middleware.rate_limit import limiter
 from app.middleware.request_id import RequestIDMiddleware
-from app.routers import camtrapdp, clustering, exif, inaturalist, jobs, lorawan, manifest, media, models, public_api
+from app.routers import (
+    auth,
+    brain,
+    camtrapdp,
+    clustering,
+    deployments,
+    exif,
+    inaturalist,
+    intelligence,
+    jobs,
+    lorawan,
+    manifest,
+    media,
+    models,
+    pipeline,
+    public_api,
+    qa,
+)
 
 logger = structlog.get_logger()
 
@@ -66,9 +84,24 @@ app = FastAPI(
 # ── Middleware (order matters: outermost first) ──────────────────────
 app.add_middleware(RequestIDMiddleware)
 app.add_middleware(LoggingMiddleware)
+# Allow every Cloudflare Pages URL for this project (production alias, the `dev`
+# branch alias, and per-PR previews) without listing each one:
+#   ww-website.pages.dev, dev.ww-website.pages.dev, <hash>.ww-website.pages.dev
+# Anchored (^…$) so the whole origin must match — without the trailing anchor an
+# attacker could use https://ww-website.pages.dev.evil.com. (Starlette matches
+# with re.fullmatch which already anchors, but the anchors make this safe even if
+# the pattern is ever reused with re.match/re.search.)
+_PAGES_DEV_RE = re.compile(r"^https://([a-z0-9-]+\.)?ww-website\.pages\.dev$")
+
+
+def _origin_allowed(origin: str | None) -> bool:
+    return bool(origin) and (origin in settings.cors_origins or bool(_PAGES_DEV_RE.fullmatch(origin)))
+
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
+    allow_origin_regex=_PAGES_DEV_RE.pattern,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -78,8 +111,35 @@ app.add_middleware(
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
+
+# ── Unhandled-exception handler (CORS-safe) ──────────────────────────
+# An uncaught exception is turned into a 500 by Starlette's ServerErrorMiddleware,
+# which sits OUTSIDE the CORS middleware — so by default a 500 response carries no
+# Access-Control-Allow-Origin header, and the browser reports a misleading "blocked
+# by CORS policy" error that hides the real server error. Reflect the CORS headers
+# here so 500s surface as actual errors to the frontend.
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request, exc):
+    from fastapi.responses import JSONResponse
+
+    logger.error("unhandled_exception", path=str(request.url.path), error=str(exc))
+    headers: dict[str, str] = {}
+    origin = request.headers.get("origin")
+    if _origin_allowed(origin):
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true"
+        headers["Vary"] = "Origin"
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"code": "INTERNAL_ERROR", "message": "Internal server error", "retryable": False}},
+        headers=headers,
+    )
+
+
 # ── Routers ──────────────────────────────────────────────────────────
+app.include_router(auth.router)
 app.include_router(jobs.router)
+app.include_router(deployments.router)
 app.include_router(exif.router)
 app.include_router(lorawan.router)
 app.include_router(manifest.router)
@@ -90,6 +150,14 @@ app.include_router(inaturalist.router)
 app.include_router(clustering.router)
 if settings.FF_CAMTRAPDP_IMPORT_ENABLED:
     app.include_router(camtrapdp.router)
+if settings.FF_PIPELINE_ENABLED:
+    app.include_router(pipeline.router)
+if settings.FF_WILDLIFE_BRAIN_ENABLED:
+    app.include_router(brain.router)
+if settings.FF_ACTIVE_LEARNING_ENABLED:
+    app.include_router(qa.router)
+if settings.FF_INTELLIGENCE_ENABLED:
+    app.include_router(intelligence.router)
 
 
 # ── Health check ─────────────────────────────────────────────────────

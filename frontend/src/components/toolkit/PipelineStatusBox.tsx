@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from 'react'
 import type { ProgressPhase, ProgressSummary } from '../../types/job'
+import { aiAnalysisStatus } from './pipelineProgress'
 
 export type LogEntry = {
   ts: number
@@ -98,6 +99,13 @@ function deriveSectionTitle(state: PipelineState, phase: string): string {
   if (phase === 'failed') return '❌ Pipeline Failed'
   if (phase === 'stalled') return '⏳ Still working… (taking longer than usual)'
 
+  // Processing — phase 2: if the offloaded AI-analysis job is running, surface ITS
+  // progress (it long outlives the upload, so this is what the user is waiting on).
+  const ai = aiAnalysisStatus(state)
+  if (ai?.active) {
+    return `🤖 Analysing images… ${Math.round(ai.progress * 100)}%`
+  }
+
   // Processing — use the current phase from the most advanced active job
   const activeJob = state.jobs.find(j => j.status === 'processing')
   const jobPhase = activeJob?.currentPhase
@@ -106,6 +114,7 @@ function deriveSectionTitle(state: PipelineState, phase: string): string {
     case 'download':     return `📥 Downloading ${state.totalFiles} images from Azure…`
     case 'drive_upload': return `☁️ Uploading ${state.totalFiles} images to Google Drive…`
     case 'cleanup':      return `🧹 Cleaning up temporary files…`
+    case 'ai_pipeline':  return `🤖 Running AI analysis…`
     default:             return `🔄 Processing ${state.totalFiles} images…`
   }
 }
@@ -149,7 +158,10 @@ function estimateEta(state: PipelineState, elapsedMs: number): string | null {
 /* ── Component ────────────────────────────────────────────────────── */
 
 export function PipelineStatusBox({ state, phase }: { state: PipelineState; phase: string }) {
-  const prevPercentRef = useRef(0)
+  const [progressState, setProgressState] = useState<{ phaseKey: 'upload' | 'ai'; maxPercent: number }>({
+    phaseKey: 'upload',
+    maxPercent: 0,
+  })
   const logContainerRef = useRef<HTMLDivElement>(null)
   const prevLogCountRef = useRef(0)
   const [elapsed, setElapsed] = useState(0)
@@ -180,16 +192,40 @@ export function PipelineStatusBox({ state, phase }: { state: PipelineState; phas
   const uploadProgress = state.totalFiles > 0 ? (state.uploadedFiles / state.totalFiles) : 0
   const totalFilesInJobs = state.jobs.reduce((sum, j) => sum + j.fileCount, 0)
 
-  // Weight by fileCount, not raw job count
+  // Weight by fileCount, not raw job count. AI-analysis children have fileCount 0 and
+  // drive the separate phase below, so they don't dilute the upload progress here.
   const jobProgress = totalFilesInJobs > 0
       ? state.jobs.reduce((sum, j) => sum + Math.max(0, Math.min(1, j.progress || 0)) * j.fileCount, 0) / totalFilesInJobs
       : 0
 
-  const rawPercent = state.jobs.length > 0 ? (uploadProgress * 0.3 + jobProgress * 0.7) : uploadProgress
+  const uploadPhasePct = state.jobs.some(j => j.fileCount > 0) ? (uploadProgress * 0.3 + jobProgress * 0.7) : uploadProgress
 
-  // Clamp the value using useRef to ensure progress never jumps backwards
-  const percent = Math.max(prevPercentRef.current, Math.round(rawPercent * 100))
-  prevPercentRef.current = percent
+  // Two-phase bar: while the offloaded AI job runs, the bar tracks ITS progress instead of
+  // pinning at 100% (the upload is already done). Reset the monotonic floor when crossing
+  // into the AI phase so the analysis bar fills from 0 rather than the upload's ~100%.
+  const aiStatus = aiAnalysisStatus(state)
+  const inAiPhase = !!aiStatus?.active
+  const phaseKey: 'upload' | 'ai' = inAiPhase ? 'ai' : 'upload'
+  const rawPercent = inAiPhase && aiStatus ? aiStatus.progress : uploadPhasePct
+  const calculatedPct = Math.round(rawPercent * 100)
+
+  // Track the monotonic max per phase in state (not a ref). Adjusting state *during* render is
+  // the React-supported way to remember a value derived from props — and unlike mutating a ref
+  // it stays correct under Strict/Concurrent rendering (a discarded render's setState is dropped
+  // too). It converges: no setState fires once maxPercent >= the current value within a phase.
+  if (progressState.phaseKey !== phaseKey) {
+    // Crossed into a new phase → reset the floor so the bar fills from 0 again.
+    setProgressState({ phaseKey, maxPercent: calculatedPct })
+  } else if (calculatedPct > progressState.maxPercent) {
+    setProgressState({ phaseKey, maxPercent: calculatedPct })
+  }
+
+  // Use fresh values for THIS render — state may lag one render behind a setState above.
+  const flooredPct = progressState.phaseKey === phaseKey
+    ? Math.max(progressState.maxPercent, calculatedPct)
+    : calculatedPct
+  // Never claim 100% until the whole pipeline (incl. AI) is terminal.
+  const percent = phase === 'completed' ? 100 : Math.min(flooredPct, 99)
 
   const isActive = phase === 'uploading' || phase === 'processing' || phase === 'stalled'
   const eta = isActive ? estimateEta(state, elapsed) : null

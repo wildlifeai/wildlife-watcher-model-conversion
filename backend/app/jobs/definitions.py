@@ -9,21 +9,59 @@ They delegate to domain layer classes for actual business logic.
 import asyncio
 import hashlib
 import time
+import uuid
 from datetime import datetime, timezone
 
 import structlog
 
 from app.jobs.store import (
     complete_phase,
+    create_job,
     emit_event,
     get_job,
+    set_job_deployments,
     start_phase,
     update_job,
     update_summary,
 )
 from app.schemas.job import EventType, JobStatus, ProgressEvent, ProgressPhase
+from app.services.notifications_service import emit_detection_notifications
 
 logger = structlog.get_logger()
+
+# Human-readable labels for AI pipeline steps, surfaced in the upload progress log.
+_STEP_LABEL = {
+    "media_prep": "Generating thumbnails",
+    "speciesnet": "Detecting & classifying species",
+    "animal_crop": "Cropping animals",
+    "bioclip": "Running BioCLIP classifier",
+}
+_STEP_EMOJI = {
+    "media_prep": "🖼️",
+    "speciesnet": "🦊",
+    "animal_crop": "✂️",
+    "bioclip": "🧬",
+}
+
+
+def _normalize_exif_timestamp(ts):
+    """Convert an EXIF datetime (``YYYY:MM:DD HH:MM:SS``, colons in the date) to ISO.
+
+    Postgres rejects the raw EXIF form ("date/time field value out of range", 22008),
+    which silently fails the whole media insert. Returns the value unchanged if it's
+    None or already ISO/parseable by the DB.
+    """
+    if not isinstance(ts, str):
+        return ts
+    ts = ts.strip()
+    if not ts:
+        return None
+    for fmt in ("%Y:%m:%d %H:%M:%S", "%Y:%m:%d %H:%M:%S%z"):
+        try:
+            return datetime.strptime(ts, fmt).isoformat()
+        except ValueError:
+            continue
+    return ts  # already ISO (or unknown) — let the DB validate
 
 
 async def convert_model_job(job_id: str, user_id: str, model_id: str):
@@ -79,12 +117,20 @@ async def convert_model_job(job_id: str, user_id: str, model_id: str):
             await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0)
             return
 
-        # ── Transition to 'validating' ───────────────────────────
-        await update_model_status("validating")
-        logger.info("convert_job_validating", **log_ctx)
+        # ── Mark in-progress: binary is in the blob store, conversion/validation
+        # underway. 'uploaded' is the enum's "in storage, not yet validated" state
+        # (ai_model_status has no separate 'validating' value — writing one fails
+        # with a 22P02 enum error and kills the job at ~10%).
+        await update_model_status("uploaded")
+        logger.info("convert_job_processing", **log_ctx)
 
+        # The convert endpoint stores the upload via blob_store (local, in-process —
+        # jobs run in this same container via enqueue_local_job), so retrieve/delete
+        # from the same backend. (Previously imported from azure_storage, a leftover
+        # from the ARQ/Redis era → "file not found" because store and retrieve used
+        # different backends.)
         from app.domain.model import convert_uploaded_model
-        from app.services.azure_storage import delete_blob, retrieve_blob
+        from app.services.blob_store import delete_blob, retrieve_blob
 
         # Fetch model row to get org_id, family_id, version
         res_query = client.table("ai_models").select("*, ai_model_families(firmware_model_id)").eq("id", model_id)
@@ -134,18 +180,20 @@ async def convert_model_job(job_id: str, user_id: str, model_id: str):
         result_path_tfl = f"{org_id}/{firmware_id}/{version_num}/{name_stem}.TFL"
         result_path_txt = f"{org_id}/{firmware_id}/{version_num}/{name_stem}.TXT"
 
-        # Offload blocking upload to thread
+        # Offload blocking upload to thread. upsert must be the STRING "true": the
+        # storage client passes file_options as HTTP headers, and a bool raises
+        # "Header value must be str or bytes, not <class 'bool'>".
         await asyncio.to_thread(
             client.storage.from_("ai-models").upload,
             path=result_path_tfl,
             file=tfl_bytes,
-            file_options={"content-type": "application/octet-stream", "upsert": True},
+            file_options={"content-type": "application/octet-stream", "upsert": "true"},
         )
         await asyncio.to_thread(
             client.storage.from_("ai-models").upload,
             path=result_path_txt,
             file=txt_bytes,
-            file_options={"content-type": "text/plain", "upsert": True},
+            file_options={"content-type": "text/plain", "upsert": "true"},
         )
         logger.info("convert_job_upload_complete", path_tfl=result_path_tfl, path_txt=result_path_txt, **log_ctx)
 
@@ -186,9 +234,9 @@ async def convert_model_job(job_id: str, user_id: str, model_id: str):
             logger.warning("failed_to_update_model_status_on_error", error=str(status_err))
         await update_job(job_id, status=JobStatus.FAILED, error=str(e))
         logger.error("convert_job_failed", error=str(e), **log_ctx)
-        # Clean up blob even on failure
+        # Clean up blob even on failure (same backend the endpoint stored it in)
         try:
-            from app.services.azure_storage import delete_blob
+            from app.services.blob_store import delete_blob
 
             await delete_blob(job_id)
         except Exception:
@@ -394,6 +442,124 @@ async def download_github_pretrained_job(job_id: str, user_id: str, org_id: str,
         raise
 
 
+def _is_uuid(value: object) -> bool:
+    """True when *value* is a valid UUID string.
+
+    Used to drop unresolved SD-card folder prefixes (e.g. "00000000" from an
+    unconfigured camera) before they reach the AI pipeline, where a non-UUID
+    deployment_id raises a Postgres 'invalid input syntax for type uuid' error.
+    """
+    try:
+        uuid.UUID(str(value))
+        return True
+    except (ValueError, TypeError, AttributeError):
+        return False
+
+
+def build_pipeline_steps() -> list:
+    """Build the ordered pipeline step list from the enabled feature flags.
+
+    Returns an empty list when ML/pipeline are disabled (or no per-step flags are on),
+    in which case callers skip the AI pipeline entirely. Single source of truth shared by
+    the upload job's inline AI phase and the standalone ``auto_annotate_deployments``.
+    """
+    from app.config import settings
+    from app.schemas.pipeline import PipelineStepType
+
+    if not (settings.FF_ML_ENABLED and settings.FF_PIPELINE_ENABLED):
+        return []
+
+    steps: list = []
+    if settings.FF_MEDIA_REGISTRY_ENABLED:
+        steps.append(PipelineStepType.MEDIA_PREP)
+    if settings.FF_SPECIESNET_ENABLED:
+        steps.append(PipelineStepType.SPECIESNET)
+        steps.append(PipelineStepType.ANIMAL_CROP)
+    if settings.FF_BIOCLIP_ENABLED:
+        steps.append(PipelineStepType.BIOCLIP)
+    return steps
+
+
+async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | None = None) -> None:
+    """Run the AI annotation pipeline on freshly-uploaded deployments (best-effort).
+
+    Enqueued (fire-and-forget) by the upload job after media is registered, so species
+    observations populate the Annotations grid without a manual trigger. Step set is
+    built from the enabled feature flags; failures are logged, never raised.
+
+    Caveat: ``run_pipeline`` processes ALL media in a deployment, so re-uploading to an
+    already-annotated deployment re-runs it (duplicate AI observations). Fine for fresh
+    deployments; scope-to-new-media is a future enhancement.
+    """
+    from app.domain.pipeline import run_pipeline
+
+    steps = build_pipeline_steps()
+    if not steps:
+        return
+
+    # Drop unresolved folder prefixes (e.g. "00000000") — they're not real deployments.
+    deployment_ids = [d for d in deployment_ids if _is_uuid(d)]
+
+    for dep_id in deployment_ids:
+        try:
+            logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
+            await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id)
+            await emit_detection_notifications(dep_id)
+            # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
+            # without a manual per-deployment trigger. Needs the animal crops the
+            # pipeline just wrote (ANIMAL_CROP step). Best-effort + gated.
+            await auto_embed_deployment(dep_id, user_id=user_id)
+            logger.info("auto_annotate_complete", deployment_id=dep_id)
+        except Exception as exc:
+            logger.warning("auto_annotate_failed", deployment_id=dep_id, error=str(exc))
+
+
+async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) -> None:
+    """Embed + cluster a deployment's animal crops after annotation (best-effort).
+
+    Gated on ``FF_WILDLIFE_BRAIN_ENABLED``; no-op when the Brain is disabled or
+    the deployment has no animal crops yet. Failures are logged, never raised, so
+    a missing GPU / Qdrant never breaks the upload flow.
+    """
+    from app.config import settings
+
+    if not settings.FF_WILDLIFE_BRAIN_ENABLED:
+        return
+    try:
+        from app.domain.wildlife_brain import embed_and_cluster_deployment
+
+        result = await embed_and_cluster_deployment(deployment_id, created_by=user_id)
+        logger.info(
+            "auto_embed_complete",
+            deployment_id=deployment_id,
+            images=result.get("image_count"),
+            clusters=result.get("clusters"),
+        )
+    except Exception as exc:
+        logger.warning("auto_embed_failed", deployment_id=deployment_id, error=str(exc))
+
+
+async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_id: str | None = None) -> None:
+    """Registered (ARQ-routable) AI job: annotate + embed a set of deployments.
+
+    This is the offload target for the upload flow's AI phase. When ``REDIS_URL`` is
+    set the upload job enqueues this and it runs on the GPU ``embedding-worker`` (the
+    heavy ML image); with no Redis it falls back to running in-process. Either way it
+    reports status to ``job_id`` so it appears in the user's Processing history.
+
+    The actual work (``run_pipeline`` per deployment + detection notifications + DINOv3
+    embed/cluster) lives in :func:`auto_annotate_deployments`; this is the thin
+    job-status wrapper around it.
+    """
+    await update_job(job_id, status=JobStatus.PROCESSING, current_phase=ProgressPhase.AI_PIPELINE)
+    try:
+        await auto_annotate_deployments(deployment_ids, user_id=user_id)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message="AI analysis complete")
+    except Exception as exc:
+        logger.warning("annotate_deployments_job_failed", job_id=job_id, error=str(exc))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(exc))
+
+
 async def upload_drive_images_job(job_id: str, payload: dict):
     """Upload analysed images to Google Drive.
 
@@ -487,8 +653,11 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                 content, _ = await retrieve_blob(entry["blob_id"])
 
                 download_completed += 1
-                progress = 0.05 + (0.35 * (download_completed / total_files))
-                await update_job(job_id, progress=min(progress, 0.40))
+                # Budget: download 0.05→0.20, drive-upload 0.20→0.45, register/cleanup
+                # →0.50, AI pipeline 0.50→1.0 (the AI phase is the longest, so it owns
+                # the bulk of the bar instead of the bar freezing at ~99%).
+                progress = 0.05 + (0.15 * (download_completed / total_files))
+                await update_job(job_id, progress=min(progress, 0.20))
 
                 if content:
                     await update_summary(job_id, downloaded_inc=1)
@@ -644,8 +813,8 @@ async def upload_drive_images_job(job_id: str, payload: dict):
             elif action == "uploaded":
                 drive_completed = index
                 await update_summary(job_id, uploaded_inc=1)
-                progress = 0.40 + (0.50 * (index / total))
-                await update_job(job_id, progress=min(progress, 0.90))
+                progress = 0.20 + (0.25 * (index / total))
+                await update_job(job_id, progress=min(progress, 0.45))
                 await emit_event(
                     job_id,
                     ProgressEvent(
@@ -660,8 +829,8 @@ async def upload_drive_images_job(job_id: str, payload: dict):
             elif action == "skipped":
                 drive_completed = index
                 await update_summary(job_id, skipped_inc=1)
-                progress = 0.40 + (0.50 * (index / total))
-                await update_job(job_id, progress=min(progress, 0.90))
+                progress = 0.20 + (0.25 * (index / total))
+                await update_job(job_id, progress=min(progress, 0.45))
                 await emit_event(
                     job_id,
                     ProgressEvent(
@@ -710,16 +879,100 @@ async def upload_drive_images_job(job_id: str, payload: dict):
 
         await complete_phase(job_id, ProgressPhase.DRIVE_UPLOAD)
 
+        # ── Register uploaded images as media rows ───────────
+        # Without this the images live in Google Drive but never appear in the
+        # Annotations grid (which queries the `media` table) and the AI pipeline
+        # has nothing to run on. One row per newly-uploaded file, pointing at the
+        # Drive object via gdrive:// so the media resolver can serve thumbnails.
+        import uuid as _uuid
+
+        from app.services.supabase_client import create_service_client
+
+        uploaded = stats.get("files", []) or []
+        # The exif-upload path (no media_id) registers media; CamtrapDP (media_id) patches.
+        candidates = [uf for uf in uploaded if uf.get("deployment_id") and uf.get("file_id") and not uf.get("media_id")]
+        svc = create_service_client()
+
+        # ── Guard 1: dedup. Skip files that already have a media row, by file_hash
+        # (the schema's dedup key) OR by gdrive:// path (covers rows lacking a hash,
+        # e.g. back-filled). Because upload_file now returns Drive-skipped duplicates
+        # too, this also *back-fills* a media row for an image that's in Drive but has
+        # no DB row yet — so re-upload is self-healing instead of stranding images.
+        existing_keys: set = set()
+        for dep in sorted({uf["deployment_id"] for uf in candidates}):
+            try:
+                rows = svc.table("media").select("file_hash, file_path").eq("deployment_id", dep).execute().data or []
+            except Exception:
+                rows = []
+            for r in rows:
+                if r.get("file_hash"):
+                    existing_keys.add(("hash", r["file_hash"]))
+                if r.get("file_path"):
+                    existing_keys.add(("path", r["file_path"]))
+
+        media_rows = [
+            {
+                "id": str(_uuid.uuid4()),
+                "deployment_id": uf["deployment_id"],
+                "file_path": f"gdrive://{uf['file_id']}",
+                "file_name": uf.get("filename") or "image.jpg",
+                "file_mediatype": "image/jpeg",
+                "timestamp": _normalize_exif_timestamp(uf.get("timestamp")),
+                "file_public": False,
+                "file_hash": uf.get("file_hash"),
+            }
+            for uf in candidates
+            if ("hash", uf.get("file_hash")) not in existing_keys and ("path", f"gdrive://{uf['file_id']}") not in existing_keys
+        ]
+        media_created = 0
+        if media_rows:
+            for i in range(0, len(media_rows), 100):
+                chunk = [{k: v for k, v in r.items() if v is not None} for r in media_rows[i : i + 100]]
+                try:
+                    svc.table("media").insert(chunk).execute()
+                    media_created += len(chunk)
+                except Exception as exc:
+                    # A batch insert is all-or-nothing, so one bad row strands the whole
+                    # chunk (and silently leaves images with no media → empty Annotations).
+                    # Fall back to per-row inserts so good rows still land and the
+                    # offending row is identified.
+                    logger.warning("media_register_chunk_failed", error=str(exc), job_id=job_id)
+                    for row in chunk:
+                        try:
+                            svc.table("media").insert(row).execute()
+                            media_created += 1
+                        except Exception as row_exc:
+                            logger.warning(
+                                "media_register_failed",
+                                error=str(row_exc),
+                                file_name=row.get("file_name"),
+                                timestamp=row.get("timestamp"),
+                                job_id=job_id,
+                            )
+            logger.info("media_registered", count=media_created, job_id=job_id)
+            await emit_event(
+                job_id,
+                ProgressEvent(
+                    type=EventType.PROGRESS,
+                    phase=ProgressPhase.DRIVE_UPLOAD,
+                    message=f"🗂️ Registered {media_created} image(s) — view them in Annotations",
+                ),
+            )
+
+            # NOTE: the AI pipeline is NOT triggered here. It runs once, inline, in the
+            # dedicated AI_PIPELINE phase below (after cleanup) so it has proper progress
+            # events and the job's final status reflects it. Triggering it here as well
+            # caused two concurrent pipelines per deployment (the torch.fx detector race).
+
         # ── Phase 3: CLEANUP ─────────────────────────────────
         await start_phase(job_id, ProgressPhase.CLEANUP)
-        await update_job(job_id, progress=0.92)
+        await update_job(job_id, progress=0.47)
 
         blob_ids = [entry["blob_id"] for entry in file_entries]
 
         async def _cleanup_blobs():
             nonlocal last_event_ts
             completed = 0
-            total = len(blob_ids)
             for bid in blob_ids:
                 try:
                     await delete_blob(bid)
@@ -727,41 +980,168 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                     pass
                 completed += 1
 
-                last_event_ts = time.monotonic()
-                if completed % max(1, total // 10) == 0 or completed == total:
-                    await emit_event(
-                        job_id,
-                        ProgressEvent(
-                            type=EventType.PROGRESS,
-                            phase=ProgressPhase.CLEANUP,
-                            current=completed,
-                            total=total,
-                            message=f"🧹 Cleaning up temporary buffers ({completed}/{total})",
-                        ),
-                    )
-                    progress = 0.92 + (0.08 * (completed / total))
-                    await update_job(job_id, progress=min(progress, 0.99))
+                last_event_ts = time.monotonic()  # keep the stall heartbeat fresh
             return completed
 
         deleted = await _cleanup_blobs()
         if deleted:
             logger.info("drive_upload_intermediate_files_cleaned", count=deleted)
-
+            # One summary line instead of one event per buffer (which flooded the
+            # dock log on small batches, where total // 10 rounded to 0 → emit-every).
+            await emit_event(
+                job_id,
+                ProgressEvent(type=EventType.PROGRESS, phase=ProgressPhase.CLEANUP, message=f"🧹 Cleaned up {deleted} temporary buffer(s)"),
+            )
+        await update_job(job_id, progress=0.50)
         await complete_phase(job_id, ProgressPhase.CLEANUP)
 
-        # ── Final status (cleanup is done) ───────────────────
+        # ── Phase 4: AI PIPELINE (auto-run once per deployment after Drive sync) ─
+        # Imports deferred to keep the top-level module lightweight.
+        from app.config import settings  # noqa: PLC0415
+        from app.domain.pipeline import run_pipeline  # noqa: PLC0415
+
+        _user_id = payload.get("user_id")
+        # Unique, real (UUID) deployment IDs present in this upload batch. Unresolved
+        # folder prefixes like "00000000" (unconfigured camera) are dropped — they're
+        # not real deployments and would crash the pipeline's Postgres queries.
+        _dep_ids: list[str] = list(
+            {
+                entry["deployment"]["id"]
+                for entry in file_entries
+                if isinstance(entry.get("deployment"), dict) and _is_uuid(entry["deployment"].get("id"))
+            }
+        )
+
+        # Step set from the enabled flags (same source as auto_annotate_deployments),
+        # so this single inline run includes SpeciesNet/BioCLIP/etc. when enabled.
+        _steps = build_pipeline_steps()
+        pipeline_errors = 0
+        # Run the AI inline only on a single-container / dev image (no Redis worker).
+        # When REDIS_URL is set, the heavy AI is offloaded to the GPU worker (the
+        # `elif` branch below) so this CPU process never imports torch/SpeciesNet.
+        if _dep_ids and _steps and not settings.REDIS_URL:
+            await start_phase(job_id, ProgressPhase.AI_PIPELINE)
+            # Record the resolved deployments so the Annotations grid can show a
+            # "being processed" banner for them while this inline AI phase runs.
+            await set_job_deployments(job_id, _dep_ids)
+            # The AI phase owns the tail of the progress bar (0.50 → 1.0): it is by far
+            # the longest phase, so the bar keeps moving + logs a line per step instead
+            # of freezing at the end of the upload.
+            _ai_total = max(1, len(_dep_ids) * len(_steps))
+            _ai_done = 0
+
+            for _dep_id in _dep_ids:
+
+                async def _on_step(step_name: str, _i: int, _n: int, _dep=_dep_id) -> None:
+                    nonlocal _ai_done
+                    await emit_event(
+                        job_id,
+                        ProgressEvent(
+                            type=EventType.PROGRESS,
+                            phase=ProgressPhase.AI_PIPELINE,
+                            message=f"{_STEP_EMOJI.get(step_name, '🔬')} {_STEP_LABEL.get(step_name, step_name)} — {_dep[:8]}…",
+                        ),
+                    )
+                    await update_job(job_id, progress=min(0.50 + 0.48 * (_ai_done / _ai_total), 0.98))
+                    _ai_done += 1
+
+                try:
+                    _result = await run_pipeline(
+                        deployment_id=_dep_id,
+                        steps=_steps,
+                        confidence_threshold=0.2,
+                        user_id=_user_id,
+                        on_step=_on_step,
+                    )
+                    await emit_detection_notifications(_dep_id)
+                    await emit_event(
+                        job_id,
+                        ProgressEvent(
+                            type=EventType.FILE_SUCCESS,
+                            phase=ProgressPhase.AI_PIPELINE,
+                            message=(f"✅ AI analysis complete — deployment {_dep_id[:8]}: {_result.total_observations} observation(s) created"),
+                        ),
+                    )
+                    # Wildlife Brain: embed + cluster the new animal crops so the
+                    # Group → Cluster (embeddings) view populates. No-op unless
+                    # FF_WILDLIFE_BRAIN_ENABLED; best-effort (never raises) so a
+                    # missing GPU / Qdrant can't break the upload.
+                    if settings.FF_WILDLIFE_BRAIN_ENABLED:
+                        await emit_event(
+                            job_id,
+                            ProgressEvent(
+                                type=EventType.PROGRESS,
+                                phase=ProgressPhase.AI_PIPELINE,
+                                message=f"🧠 Clustering similar images — {_dep_id[:8]}…",
+                            ),
+                        )
+                        await auto_embed_deployment(_dep_id, user_id=_user_id)
+                except Exception as _pipeline_err:
+                    pipeline_errors += 1
+                    logger.warning(
+                        "auto_pipeline_failed",
+                        deployment_id=_dep_id,
+                        error=str(_pipeline_err),
+                        job_id=job_id,
+                    )
+                    await emit_event(
+                        job_id,
+                        ProgressEvent(
+                            type=EventType.FILE_FAILURE,
+                            phase=ProgressPhase.AI_PIPELINE,
+                            message=f"⚠️ AI analysis failed for deployment {_dep_id[:8]}: {_pipeline_err}",
+                        ),
+                    )
+            await complete_phase(job_id, ProgressPhase.AI_PIPELINE)
+
+        # ── Phase 4 (offloaded): with a Redis-backed GPU worker configured, the
+        # heavy AI runs there (the two-container split) instead of in this CPU
+        # process. The upload itself is complete; AI is tracked as its own
+        # Processing-history job. enqueue_job falls back to in-process if Redis is
+        # unreachable, so this never silently drops the analysis. ──
+        elif _dep_ids and _steps and settings.REDIS_URL:
+            from app.jobs.dispatch import enqueue_job  # noqa: PLC0415
+
+            await start_phase(job_id, ProgressPhase.AI_PIPELINE)
+            ai_job_id = await create_job(
+                user_id=_user_id,
+                kind="ai_pipeline",
+                label=f"AI analysis — {len(_dep_ids)} deployment(s)",
+                deployment_ids=_dep_ids,
+            )
+            await enqueue_job("annotate_deployments_job", ai_job_id, _dep_ids, _user_id)
+            await emit_event(
+                job_id,
+                ProgressEvent(
+                    type=EventType.FILE_SUCCESS,
+                    phase=ProgressPhase.AI_PIPELINE,
+                    child_job_id=ai_job_id,
+                    message=(
+                        f"🛰️ Queued AI analysis for {len(_dep_ids)} deployment(s) on the GPU worker "
+                        f"— track it in Processing history (job {ai_job_id[:8]})"
+                    ),
+                ),
+            )
+            await complete_phase(job_id, ProgressPhase.AI_PIPELINE)
+
+        # ── Final status (Drive sync + AI pipeline done) ──────────────────
         job_data = await get_job(job_id)
         summary = job_data.summary if job_data else None
         failed_count = summary.failed if summary else 0
         uploaded_count = summary.uploaded if summary else 0
         skipped_count = summary.skipped if summary else 0
 
-        final_status = JobStatus.COMPLETED_WITH_ERRORS if failed_count > 0 else JobStatus.COMPLETED
+        final_status = JobStatus.COMPLETED_WITH_ERRORS if (failed_count > 0 or pipeline_errors > 0) else JobStatus.COMPLETED
 
         if final_status == JobStatus.COMPLETED_WITH_ERRORS:
-            final_msg = f"⚠️ Completed with issues — {uploaded_count} uploaded, {skipped_count} skipped, {failed_count} failed"
+            issue_parts = []
+            if failed_count > 0:
+                issue_parts.append(f"{failed_count} Drive error(s)")
+            if pipeline_errors > 0:
+                issue_parts.append(f"{pipeline_errors} AI error(s)")
+            final_msg = f"⚠️ Done with issues — {uploaded_count} uploaded, {skipped_count} skipped, {', '.join(issue_parts)}"
         else:
-            final_msg = f"✅ Done — {drive_total} images synced to Google Drive"
+            final_msg = f"✅ Done — {drive_total} images synced to Drive, AI analysis complete"
 
         await update_job(
             job_id,
@@ -794,6 +1174,132 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         return
 
 
+async def backfill_thumbnails_job(job_id: str, deployment_id: str):
+    """Generate thumbnail/preview renditions for a deployment's media (Media Registry)."""
+    logger.info("job_start", job_type="backfill_thumbnails", job_id=job_id, deployment_id=deployment_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.1, message="Generating thumbnails…")
+    try:
+        from app.domain.media_registry import backfill_thumbnails
+
+        count = await backfill_thumbnails(deployment_id)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Generated {count} thumbnails")
+    except Exception as e:
+        logger.error("job_failed", job_type="backfill_thumbnails", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def embed_deployment_job(job_id: str, deployment_id: str, model_name: str | None = None):
+    """Embed + cluster a deployment's animal crops (Wildlife Brain / DINOv3)."""
+    logger.info("job_start", job_type="embed_deployment", job_id=job_id, deployment_id=deployment_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.05, message="Starting embedding…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.wildlife_brain import embed_and_cluster_deployment
+
+        result = await embed_and_cluster_deployment(deployment_id, model_name=model_name, progress=_progress)
+        await update_job(
+            job_id,
+            status=JobStatus.COMPLETED,
+            progress=1.0,
+            message=f"Embedded {result['image_count']} crops → {result['clusters']} clusters",
+        )
+    except Exception as e:
+        logger.error("job_failed", job_type="embed_deployment", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def reprocess_deployment_job(job_id: str, deployment_id: str, model_name: str | None = None):
+    """Supersede current runs and re-embed a deployment (Phase 5.5)."""
+    logger.info("job_start", job_type="reprocess_deployment", job_id=job_id, deployment_id=deployment_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.05, message="Reprocessing…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.embedding_lifecycle import reprocess_deployment
+
+        result = await reprocess_deployment(deployment_id, model_name=model_name, progress=_progress)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Reprocessed {result['image_count']} crops")
+    except Exception as e:
+        logger.error("job_failed", job_type="reprocess_deployment", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def reprocess_project_job(job_id: str, project_id: str, model_name: str | None = None):
+    """Reprocess every deployment in a project (Phase 5.5)."""
+    logger.info("job_start", job_type="reprocess_project", job_id=job_id, project_id=project_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.05, message="Reprocessing project…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.embedding_lifecycle import reprocess_project
+
+        result = await reprocess_project(project_id, model_name=model_name, progress=_progress)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Reprocessed {result['deployments']} deployments")
+    except Exception as e:
+        logger.error("job_failed", job_type="reprocess_project", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def reprocess_all_job(job_id: str, model_name: str | None = None):
+    """Platform-wide re-embed (Phase 5.5). Caller must have confirmed."""
+    logger.info("job_start", job_type="reprocess_all", job_id=job_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.02, message="Global re-embed…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.embedding_lifecycle import reprocess_all
+
+        result = await reprocess_all(model_name=model_name, dry_run=False, progress=_progress)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Reprocessed {result['deployments']} deployments")
+    except Exception as e:
+        logger.error("job_failed", job_type="reprocess_all", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def recompute_al_job(job_id: str, deployment_id: str):
+    """Recompute active-learning scores for a deployment (Phase 8)."""
+    logger.info("job_start", job_type="recompute_al", job_id=job_id, deployment_id=deployment_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.1, message="Scoring media…")
+
+    async def _progress(pct: float, msg: str):
+        await update_job(job_id, progress=pct, message=msg)
+
+    try:
+        from app.domain.active_learning import recompute_scores
+
+        count = await recompute_scores(deployment_id, progress=_progress)
+        await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Scored {count} media")
+    except Exception as e:
+        logger.error("job_failed", job_type="recompute_al", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
+async def qdrant_backup_job(job_id: str):
+    """Snapshot Qdrant and store it in the private backup bucket (Phase 5.5 DR)."""
+    logger.info("job_start", job_type="qdrant_backup", job_id=job_id)
+    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.1, message="Creating Qdrant snapshot…")
+    try:
+        from app.domain.embedding_lifecycle import backup_qdrant_snapshot
+
+        path = await backup_qdrant_snapshot()
+        if path:
+            await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Backed up to {path}")
+        else:
+            await update_job(job_id, status=JobStatus.FAILED, error="Snapshot unavailable (Qdrant/Storage not configured)")
+    except Exception as e:
+        logger.error("job_failed", job_type="qdrant_backup", job_id=job_id, error=str(e))
+        await update_job(job_id, status=JobStatus.FAILED, error=str(e))
+
+
 JOBS = [
     convert_model_job,
     generate_manifest_job,
@@ -801,4 +1307,12 @@ JOBS = [
     download_pretrained_job,
     download_github_pretrained_job,
     upload_drive_images_job,
+    annotate_deployments_job,
+    backfill_thumbnails_job,
+    embed_deployment_job,
+    reprocess_deployment_job,
+    reprocess_project_job,
+    reprocess_all_job,
+    recompute_al_job,
+    qdrant_backup_job,
 ]

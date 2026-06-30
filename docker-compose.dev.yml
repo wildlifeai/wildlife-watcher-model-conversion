@@ -1,10 +1,16 @@
-version: "3.9"
 services:
   api:
+    # Distinct image tag so a base-only `docker compose up` (without this file) can't
+    # clobber the heavy ML dev image — the recurring cause of "No module named speciesnet".
+    # Always start the dev stack with BOTH files:
+    #   docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d
+    image: ww-website-api-dev
     build:
       target: dev
     volumes:
       - ./backend/app:/app/app
+      - ./service-account.json:/app/service-account.json:ro
     environment:
       - ALLOWED_ORIGINS=http://localhost:5173
       - LOG_LEVEL=debug
+      - GOOGLE_SERVICE_ACCOUNT_JSON=/app/service-account.json

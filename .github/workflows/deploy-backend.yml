@@ -49,7 +49,12 @@ jobs:
 
       - name: Build Docker image
         run: |
+          # --target api: build the lean uvicorn API stage. WITHOUT this, Docker
+          # builds the LAST stage in the Dockerfile (the ARQ `worker`, CMD `arq …`),
+          # which serves no HTTP and fails the health check — the whole backend
+          # API would be unreachable. The GPU worker is deployed separately.
           docker build \
+            --target api \
             -t ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ steps.target.outputs.image_tag }} \
             -t ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ github.sha }} \
             -f backend/Dockerfile \
@@ -68,16 +73,27 @@ jobs:
       - name: Deploy to Azure Container App
         run: |
           echo "Deploying to ${{ steps.target.outputs.app_name }} (${{ steps.target.outputs.env }})"
+          # --set-env-vars MERGES the named vars (SUPABASE_* etc. are left intact).
+          # DEMO_* come from the environment-scoped GitHub secrets (dev env → dev
+          # demo account, staging env → prod demo account). Empty values just leave
+          # the "Try the demo" button self-disabled. GitHub masks the values in logs;
+          # for higher sensitivity switch to container-app secrets + secretref.
+          # --min-replicas 1 keeps one instance warm so the public "Try the demo"
+          # button doesn't hit a ~1-min cold start on the first click.
           az containerapp update \
             --name ${{ steps.target.outputs.app_name }} \
-            --resource-group WW-Website \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ steps.target.outputs.image_tag }}
+            --resource-group WW-AE \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ steps.target.outputs.image_tag }} \
+            --min-replicas 1 \
+            --set-env-vars \
+              "DEMO_EMAIL=${{ secrets.DEMO_EMAIL }}" \
+              "DEMO_PASSWORD=${{ secrets.DEMO_PASSWORD }}"
 
       - name: Verify deployment
         run: |
           FQDN=$(az containerapp show \
             --name ${{ steps.target.outputs.app_name }} \
-            --resource-group WW-Website \
+            --resource-group WW-AE \
             --query "properties.configuration.ingress.fqdn" -o tsv)
           echo "Waiting for container startup..."
           sleep 30
@@ -86,3 +102,9 @@ jobs:
           if [ "$STATUS" != "ok" ]; then
             echo "::warning::Health check returned '${STATUS}' — container may still be starting"
           fi
+
+      # NOTE: the demo account is NOT seeded here. ww-backend's dev deploy does a
+      # destructive `supabase db reset` + re-seed, so the demo user lives in
+      # ww-backend's seed (supabase/seeds/dev/data.sql) to survive that reset.
+      # This workflow only injects DEMO_EMAIL/DEMO_PASSWORD (above) so the demo
+      # endpoint can sign in — DEMO_PASSWORD must equal ww-backend's SEED_USER_PASSWORD.

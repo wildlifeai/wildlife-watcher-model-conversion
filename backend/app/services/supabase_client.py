@@ -8,13 +8,25 @@ Three flavours:
 - service: service-role key, bypasses RLS (admin ops only)
 """
 
+from typing import Optional
+
 from supabase import Client, create_client
 
 from app.config import settings
 
+# Process-wide cached service client. The service-role client is stateless across
+# callers (no per-user session is ever set on it — unlike the anon/user client in
+# get_user_client), so one shared instance is reused instead of rebuilding an httpx
+# session at every one of its ~80 call sites.
+_service_client: Optional[Client] = None
+
 
 def create_anon_client() -> Client:
-    """Create a Supabase client using the anonymous/public key."""
+    """Create a Supabase client using the anonymous/public key.
+
+    Not cached: the anon client is mutated per-request with the caller's JWT
+    (see ``get_user_client``), so each caller needs its own instance.
+    """
     url = settings.SUPABASE_URL
     if not url.endswith("/"):
         url += "/"
@@ -22,11 +34,16 @@ def create_anon_client() -> Client:
 
 
 def create_service_client() -> Client:
-    """Create a Supabase client using the service-role key.
+    """Return the process-wide Supabase service-role client (lazily built, cached).
 
-    ⚠️ Bypasses RLS — use only for trusted backend operations.
+    ⚠️ Bypasses RLS — use only for trusted backend operations. Safe to share because
+    nothing sets a per-user session on it; for a deliberately fresh instance, reset
+    the module-level ``_service_client`` to ``None`` first.
     """
-    url = settings.SUPABASE_URL
-    if not url.endswith("/"):
-        url += "/"
-    return create_client(url, settings.SUPABASE_SERVICE_ROLE_KEY)
+    global _service_client
+    if _service_client is None:
+        url = settings.SUPABASE_URL
+        if not url.endswith("/"):
+            url += "/"
+        _service_client = create_client(url, settings.SUPABASE_SERVICE_ROLE_KEY)
+    return _service_client

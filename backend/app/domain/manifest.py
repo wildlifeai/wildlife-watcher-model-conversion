@@ -322,7 +322,9 @@ async def _fetch_default_model(client, manifest_dir: Path) -> bool:
 
     for query_type, field, pattern in queries:
         try:
-            q = client.table("ai_models").select("model_path, labels_path, name").is_("deleted_at", "null")
+            # Only models whose conversion finished have storage paths; an
+            # unconverted model carries NULL paths and must never be picked.
+            q = client.table("ai_models").select("model_path, labels_path, name").is_("deleted_at", "null").not_.is_("model_path", "null")
             if query_type == "ilike":
                 q = q.ilike(field, pattern)
             response = q.order("created_at", desc=True).limit(1).execute()
@@ -434,6 +436,14 @@ async def _resolve_project_model(client, project_id: str) -> dict:
         return {"has_model": False}
 
     model = project["ai_models"]
+
+    # A model still converting (or whose conversion failed) has NULL storage
+    # paths — there's nothing to package, so treat it as "no model" rather than
+    # trying to download a NULL path downstream.
+    if not model.get("model_path") or not model.get("labels_path"):
+        logger.info("project_model_not_ready", project_id=project_id, model=model.get("name"))
+        return {"has_model": False}
+
     family = model.get("ai_model_families") or {}
     fw_model_id = family.get("firmware_model_id")
     version_number = model.get("version_number")
@@ -661,6 +671,12 @@ async def generate_manifest(
                         firmware_id = family.get("firmware_model_id") if family else None
                         if not firmware_id:
                             raise ManifestDomainError(f"Model family for {org_model_id} is missing a firmware_model_id")
+                        # The user explicitly chose this model — if it hasn't
+                        # finished converting (NULL paths), say so clearly.
+                        if not model.get("model_path") or not model.get("labels_path"):
+                            raise ManifestDomainError(
+                                f"Model '{model.get('name')}' is still converting (or its conversion failed); it has no stored files yet."
+                            )
                         version_str = model.get("version", "1")
                         version = version_str.split(".")[0] if "." in version_str else version_str
 

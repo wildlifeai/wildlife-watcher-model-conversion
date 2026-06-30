@@ -79,7 +79,7 @@ async def convert_model(
     manager_roles = await get_manager_roles(user)
     org_id = resolve_managed_org(organisation_id, manager_roles)
 
-    job_id = await create_job()
+    job_id = await create_job(user_id=user.id, kind="model_upload", label=f"Upload model {model_name}")
 
     # Resolve or create AI Model Family (shared domain helper)
     model_family_id, _ = await resolve_or_create_model_family(client, org_id, model_name)
@@ -97,7 +97,11 @@ async def convert_model(
     next_ver = max(existing_versions) + 1 if existing_versions else 1
     version_string = f"{next_ver}.0.0-{uuid.uuid4().hex[:6]}"
 
-    # Insert ai_models row (paths updated by worker after conversion)
+    # Insert ai_models row. model_path / labels_path are nullable (and UNIQUE), so
+    # an unconverted model carries NULL until the worker writes the real storage
+    # paths on success. (Postgres allows many NULLs under UNIQUE, so concurrent
+    # pending uploads don't collide — this replaced an earlier "_pending/{job_id}"
+    # placeholder hack once the NOT NULL constraint was dropped backend-side.)
     model_insert = (
         client.table("ai_models")
         .insert(
@@ -105,13 +109,18 @@ async def convert_model(
                 "organisation_id": org_id,
                 "model_family_id": model_family_id,
                 "version": version_string,
+                "version_number": next_ver,
                 "name": model_name,
                 "description": description,
                 "uploaded_by": user.id,
                 "modified_by": user.id,
                 "file_type": "uploading",
+                "model_path": None,
+                "labels_path": None,
             }
         )
+        # supabase-py returns the inserted row by default; .select("id") makes
+        # that explicit (and version-independent) since we read model_row.data[0]["id"].
         .select("id")
     )
     model_row = await asyncio.to_thread(model_insert.execute)
@@ -247,7 +256,7 @@ async def download_pretrained(
         if not body.architecture or not body.resolution:
             raise HTTPException(400, detail="Architecture and resolution are required for GitHub pre-trained models.")
 
-        job_id = await create_job()
+        job_id = await create_job(user_id=user.id, kind="model_download", label=f"Download model {body.architecture} @ {body.resolution}")
 
         enqueue_local_job(download_github_pretrained_job(job_id, user.id, org_id, body.architecture, body.resolution, body.description))
 
@@ -260,7 +269,7 @@ async def download_pretrained(
         if not body.sscma_uuid:
             raise HTTPException(400, detail="sscma_uuid is required for SenseCap models.")
 
-        job_id = await create_job()
+        job_id = await create_job(user_id=user.id, kind="model_download", label=f"Download SenseCap model {body.model_name or body.sscma_uuid}")
 
         enqueue_local_job(download_pretrained_job(job_id, user.id, body.sscma_uuid, org_id, body.model_name, body.description))
 

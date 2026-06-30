@@ -1,10 +1,20 @@
+/**
+ * ObservationReports — fixed default dashboard for the Reports tab.
+ *
+ * Charts are rendered with Vega-Lite via the <VegaChart> primitive.
+ * All aggregation happens inside Vega-Lite transforms (no useMemo pivots).
+ *
+ * This fixed summary is still used by MyData. The editable Insights ▸ Reports
+ * dashboard (ReportsDashboard) reuses these types and the shared chartSpec.
+ */
 import { useMemo } from 'react'
-import {
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer,
-  PieChart, Pie, Cell, Legend,
-} from 'recharts'
+import { VegaChart, VEGA_CONFIG } from '../ui/VegaChart'
 
-interface Observation {
+// ─────────────────────────────────────────────────────────────────────────────
+// Types (exported so the reports dashboard / chartSpec can reuse)
+// ─────────────────────────────────────────────────────────────────────────────
+
+export interface Observation {
   id: string
   deployment_id: string
   scientific_name: string | null
@@ -12,7 +22,7 @@ interface Observation {
   created_at: string
 }
 
-interface Deployment {
+export interface Deployment {
   id: string
   location_name: string | null
   deployment_start: string | null
@@ -25,58 +35,170 @@ interface ObservationReportsProps {
   loading?: boolean
 }
 
-const TYPE_COLOURS: Record<string, string> = {
-  animal:  '#4caf50',
-  human:   '#2196f3',
-  vehicle: '#ff9800',
-  blank:   '#9e9e9e',
-  unknown: '#607d8b',
+// ─────────────────────────────────────────────────────────────────────────────
+// Spec builders
+// ─────────────────────────────────────────────────────────────────────────────
+
+function speciesBarSpec(observations: Observation[]) {
+  return {
+    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+    width: 'container',
+    height: 280,
+    data: { values: observations },
+    transform: [
+      { filter: 'datum.scientific_name != null && datum.scientific_name !== ""' },
+      {
+        aggregate: [{ op: 'count', as: 'count' }],
+        groupby: ['scientific_name'],
+      },
+      {
+        window: [{ op: 'rank', as: 'rank' }],
+        sort: [{ field: 'count', order: 'descending' }],
+      },
+      { filter: 'datum.rank <= 15' },
+    ],
+    mark: { type: 'bar', cornerRadiusEnd: 3 },
+    encoding: {
+      y: {
+        field: 'scientific_name',
+        type: 'nominal',
+        sort: '-x',
+        title: null,
+        axis: { labelFontStyle: 'italic', labelLimit: 160 },
+      },
+      x: {
+        field: 'count',
+        type: 'quantitative',
+        title: 'Observations',
+      },
+      color: {
+        field: 'scientific_name',
+        type: 'nominal',
+        legend: null,
+        scale: { scheme: 'tableau10' },
+      },
+      tooltip: [
+        { field: 'scientific_name', title: 'Species' },
+        { field: 'count', title: 'Observations' },
+      ],
+    },
+    config: VEGA_CONFIG,
+  }
 }
 
-const CHART_COLOURS = [
-  '#4caf50', '#2196f3', '#ff9800', '#e91e63',
-  '#9c27b0', '#00bcd4', '#ff5722', '#795548',
-  '#607d8b', '#cddc39',
-]
+function typeArcSpec(observations: Observation[]) {
+  return {
+    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+    width: 'container',
+    height: 280,
+    data: { values: observations },
+    transform: [
+      {
+        calculate: "datum.observation_type || 'unknown'",
+        as: 'type',
+      },
+    ],
+    mark: { type: 'arc', innerRadius: 50, outerRadius: 100 },
+    encoding: {
+      theta: { aggregate: 'count', type: 'quantitative' },
+      color: {
+        field: 'type',
+        type: 'nominal',
+        scale: {
+          domain: ['animal', 'human', 'vehicle', 'blank', 'unknown'],
+          range: ['#4caf50', '#2196f3', '#ff9800', '#9e9e9e', '#607d8b'],
+        },
+        legend: { title: null },
+      },
+      tooltip: [
+        { field: 'type', title: 'Type' },
+        { aggregate: 'count', title: 'Count' },
+      ],
+    },
+    config: VEGA_CONFIG,
+  }
+}
 
-export function ObservationReports({ observations, deployments, loading }: ObservationReportsProps) {
-  // ── Memoised data processing (only recompute when props change) ─────────
-  const { speciesCounts, speciesData } = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const o of observations) {
-      const name = o.scientific_name?.trim() || '(unidentified)'
-      counts[name] = (counts[name] ?? 0) + 1
-    }
-    const data = Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 15)
-      .map(([name, count]) => ({ name, count }))
-    return { speciesCounts: counts, speciesData: data }
-  }, [observations])
+function deploymentBarSpec(enriched: Array<Observation & { location_name: string }>) {
+  return {
+    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+    width: 'container',
+    height: 220,
+    data: { values: enriched },
+    transform: [
+      {
+        aggregate: [{ op: 'count', as: 'count' }],
+        groupby: ['location_name'],
+      },
+      {
+        window: [{ op: 'rank', as: 'rank' }],
+        sort: [{ field: 'count', order: 'descending' }],
+      },
+      { filter: 'datum.rank <= 15' },
+    ],
+    mark: { type: 'bar', cornerRadiusTopLeft: 3, cornerRadiusTopRight: 3 },
+    encoding: {
+      x: {
+        field: 'location_name',
+        type: 'nominal',
+        sort: '-y',
+        title: null,
+        axis: { labelAngle: -35, labelLimit: 120 },
+      },
+      y: {
+        field: 'count',
+        type: 'quantitative',
+        title: 'Observations',
+      },
+      color: { value: '#4caf50' },
+      tooltip: [
+        { field: 'location_name', title: 'Deployment' },
+        { field: 'count', title: 'Observations' },
+      ],
+    },
+    config: VEGA_CONFIG,
+  }
+}
 
-  const typeData = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const o of observations) {
-      const t = o.observation_type ?? 'unknown'
-      counts[t] = (counts[t] ?? 0) + 1
-    }
-    return Object.entries(counts).map(([name, value]) => ({ name, value }))
-  }, [observations])
+// ─────────────────────────────────────────────────────────────────────────────
+// Component
+// ─────────────────────────────────────────────────────────────────────────────
 
-  const depData = useMemo(() => {
-    const counts: Record<string, number> = {}
-    for (const o of observations) {
-      counts[o.deployment_id] = (counts[o.deployment_id] ?? 0) + 1
-    }
-    const depMap = Object.fromEntries(deployments.map(d => [d.id, d]))
-    return Object.entries(counts)
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 15)
-      .map(([id, count]) => ({
-        name: depMap[id]?.location_name ?? id.slice(0, 8),
-        count,
-      }))
+export function ObservationReports({
+  observations,
+  deployments,
+  loading,
+}: ObservationReportsProps) {
+  // Enrich observations with location_name for the deployment bar chart
+  const enriched = useMemo(() => {
+    const depMap = Object.fromEntries(
+      deployments.map((d) => [d.id, d.location_name ?? d.id.slice(0, 8)]),
+    )
+    return observations.map((o) => ({
+      ...o,
+      location_name: depMap[o.deployment_id] ?? o.deployment_id.slice(0, 8),
+    }))
   }, [observations, deployments])
+
+  // KPI totals
+  const { totalObs, uniqueSpecies, activeDeployments, animalCount } = useMemo(
+    () => ({
+      totalObs: observations.length,
+      uniqueSpecies: new Set(
+        observations
+          .map((o) => o.scientific_name)
+          .filter((s): s is string => !!s && s !== '(unidentified)'),
+      ).size,
+      activeDeployments: new Set(observations.map((o) => o.deployment_id)).size,
+      animalCount: observations.filter((o) => o.observation_type === 'animal').length,
+    }),
+    [observations],
+  )
+
+  // Memoise specs (stable reference → VegaChart only re-embeds when data changes)
+  const barSpec   = useMemo(() => speciesBarSpec(observations),  [observations])
+  const arcSpec   = useMemo(() => typeArcSpec(observations),     [observations])
+  const depSpec   = useMemo(() => deploymentBarSpec(enriched),   [enriched])
 
   if (loading) {
     return (
@@ -102,129 +224,57 @@ export function ObservationReports({ observations, deployments, loading }: Obser
     )
   }
 
-  const panelStyle: React.CSSProperties = {
+  const PANEL: React.CSSProperties = {
     backgroundColor: 'var(--surface)',
     border: '1px solid var(--border)',
     borderRadius: 'var(--radius)',
     padding: '1.25rem',
   }
 
-  const headingStyle: React.CSSProperties = {
+  const HEADING: React.CSSProperties = {
     fontSize: '0.875rem',
     fontWeight: 600,
-    marginBottom: '1rem',
+    marginBottom: '0.75rem',
     opacity: 0.85,
   }
-
-  const summaryCards = [
-    { label: 'Total Observations', value: observations.length },
-    { label: 'Unique Species', value: Object.keys(speciesCounts).filter(k => k !== '(unidentified)').length },
-    { label: 'Active Deployments', value: new Set(observations.map(o => o.deployment_id)).size },
-    { label: 'Animal Records', value: observations.filter(o => o.observation_type === 'animal').length },
-  ]
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
 
-      {/* Summary KPI row */}
+      {/* KPI row */}
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '0.75rem' }}>
-        {summaryCards.map(card => (
-          <div key={card.label} style={{
-            ...panelStyle,
-            textAlign: 'center',
-            padding: '1rem',
-          }}>
+        {([
+          ['Total Observations', totalObs],
+          ['Unique Species',     uniqueSpecies],
+          ['Active Deployments', activeDeployments],
+          ['Animal Records',     animalCount],
+        ] as [string, number][]).map(([label, value]) => (
+          <div key={label} style={{ ...PANEL, textAlign: 'center', padding: '1rem' }}>
             <div style={{ fontSize: '1.875rem', fontWeight: 700, color: 'var(--primary)' }}>
-              {card.value.toLocaleString()}
+              {value.toLocaleString()}
             </div>
-            <div style={{ fontSize: '0.75rem', opacity: 0.6, marginTop: '0.25rem' }}>{card.label}</div>
+            <div style={{ fontSize: '0.75rem', opacity: 0.6, marginTop: '0.25rem' }}>{label}</div>
           </div>
         ))}
       </div>
 
-      {/* Species breakdown + type pie */}
+      {/* Species bar + type pie */}
       <div style={{ display: 'grid', gridTemplateColumns: '2fr 1fr', gap: '1.25rem' }}>
-
-        {/* Species bar chart */}
-        <div style={panelStyle}>
-          <div style={headingStyle}>Top Species by Observation Count</div>
-          <ResponsiveContainer width="100%" height={280}>
-            <BarChart data={speciesData} layout="vertical" margin={{ left: 8, right: 24, top: 0, bottom: 0 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" horizontal={false} />
-              <XAxis type="number" tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
-              <YAxis
-                type="category"
-                dataKey="name"
-                tick={{ fontSize: 11, fontStyle: 'italic' }}
-                width={140}
-                tickLine={false}
-                axisLine={false}
-              />
-              <Tooltip
-                contentStyle={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '0.8125rem' }}
-                formatter={(v: unknown) => [typeof v === 'number' ? v : 0, 'observations']}
-              />
-              <Bar dataKey="count" radius={[0, 3, 3, 0]}>
-                {speciesData.map((_, i) => (
-                  <Cell key={i} fill={CHART_COLOURS[i % CHART_COLOURS.length]} />
-                ))}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
+        <div style={PANEL}>
+          <div style={HEADING}>Top Species by Observation Count</div>
+          <VegaChart spec={barSpec} />
         </div>
-
-        {/* Observation type pie */}
-        <div style={panelStyle}>
-          <div style={headingStyle}>Observation Types</div>
-          <ResponsiveContainer width="100%" height={280}>
-            <PieChart>
-              <Pie
-                data={typeData}
-                dataKey="value"
-                nameKey="name"
-                cx="50%"
-                cy="45%"
-                outerRadius={90}
-                label={({ name, percent }) => `${name} ${((percent ?? 0) * 100).toFixed(0)}%`}
-                labelLine={false}
-              >
-                {typeData.map((entry, i) => (
-                  <Cell key={i} fill={TYPE_COLOURS[entry.name] ?? CHART_COLOURS[i % CHART_COLOURS.length]} />
-                ))}
-              </Pie>
-              <Legend iconSize={10} wrapperStyle={{ fontSize: '0.75rem' }} />
-              <Tooltip
-                contentStyle={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '0.8125rem' }}
-              />
-            </PieChart>
-          </ResponsiveContainer>
+        <div style={PANEL}>
+          <div style={HEADING}>Observation Types</div>
+          <VegaChart spec={arcSpec} />
         </div>
       </div>
 
-      {/* Activity by deployment */}
-      {depData.length > 0 && (
-        <div style={panelStyle}>
-          <div style={headingStyle}>Observations per Deployment Location</div>
-          <ResponsiveContainer width="100%" height={220}>
-            <BarChart data={depData} margin={{ left: 0, right: 16, top: 0, bottom: 40 }}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" vertical={false} />
-              <XAxis
-                dataKey="name"
-                tick={{ fontSize: 11 }}
-                tickLine={false}
-                axisLine={false}
-                angle={-35}
-                textAnchor="end"
-                interval={0}
-              />
-              <YAxis tick={{ fontSize: 11 }} tickLine={false} axisLine={false} />
-              <Tooltip
-                contentStyle={{ backgroundColor: 'var(--surface)', border: '1px solid var(--border)', borderRadius: 'var(--radius)', fontSize: '0.8125rem' }}
-                formatter={(v: unknown) => [typeof v === 'number' ? v : 0, 'observations']}
-              />
-              <Bar dataKey="count" fill="var(--primary)" radius={[3, 3, 0, 0]} />
-            </BarChart>
-          </ResponsiveContainer>
+      {/* Deployments bar */}
+      {enriched.length > 0 && (
+        <div style={PANEL}>
+          <div style={HEADING}>Observations per Deployment Location</div>
+          <VegaChart spec={depSpec} />
         </div>
       )}
     </div>

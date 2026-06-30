@@ -1,6 +1,22 @@
 import { useEffect, useState } from 'react'
 import { supabase } from '../config/supabase'
+import { apiClient } from '../lib/apiClient'
 import type { User } from '@supabase/supabase-js'
+
+/** Mint a session for the shared read-only demo account and sign in.
+ *
+ * The backend does the actual sign-in (the demo password never ships in the
+ * bundle); each call creates a fresh Supabase session, so concurrent demo
+ * visitors don't share a refresh-token family. Once setSession() runs, the
+ * onAuthStateChange listener below fires and the app behaves exactly as if
+ * the user had logged in normally.
+ */
+export async function loginAsDemo() {
+  const res = await apiClient.post('/api/auth/demo-session')
+  const { access_token, refresh_token } = res.data
+  const { error } = await supabase.auth.setSession({ access_token, refresh_token })
+  if (error) throw error
+}
 
 export function useAuth() {
   const [user, setUser] = useState<User | null>(null)
@@ -23,5 +39,9 @@ export function useAuth() {
     await supabase.auth.signOut()
   }
 
-  return { user, loading, logout }
+  // The demo account is flagged via app_metadata by scripts/seed_demo.py.
+  // Used only for UI affordances (banner, hiding upload); enforcement is RLS.
+  const isDemo = user?.app_metadata?.is_demo === true
+
+  return { user, loading, logout, isDemo }
 }

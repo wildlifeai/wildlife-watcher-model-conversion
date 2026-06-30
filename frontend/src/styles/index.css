@@ -66,3 +66,86 @@ body {
   border-radius: var(--radius);
   padding: 1.5rem;
 }
+
+/* ── Guide markdown content (/guides/:slug) ─────────────────────────── */
+
+.guide-markdown {
+  line-height: 1.7;
+  font-size: 0.9875rem;
+}
+
+.guide-markdown h2 {
+  font-size: 1.375rem;
+  margin: 2rem 0 0.75rem;
+  padding-bottom: 0.375rem;
+  border-bottom: 1px solid var(--border);
+}
+
+.guide-markdown h3 {
+  font-size: 1.1rem;
+  margin: 1.5rem 0 0.5rem;
+}
+
+.guide-markdown img {
+  max-width: 100%;
+  border-radius: var(--radius);
+  border: 1px solid var(--border);
+}
+
+.guide-markdown a {
+  color: var(--primary);
+}
+
+.guide-markdown code {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: 0.1rem 0.35rem;
+  font-size: 0.85em;
+}
+
+.guide-markdown pre {
+  background-color: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 1rem;
+  overflow-x: auto;
+}
+
+.guide-markdown pre code {
+  border: none;
+  padding: 0;
+  background: none;
+}
+
+.guide-markdown blockquote {
+  margin: 1rem 0;
+  padding: 0.5rem 1rem;
+  border-left: 3px solid var(--primary);
+  background-color: var(--surface);
+  border-radius: 0 var(--radius) var(--radius) 0;
+}
+
+.guide-markdown table {
+  border-collapse: collapse;
+  margin: 1rem 0;
+  width: 100%;
+}
+
+.guide-markdown th,
+.guide-markdown td {
+  border: 1px solid var(--border);
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-size: 0.875rem;
+}
+
+.guide-markdown th {
+  background-color: var(--surface);
+}
+
+/* Ribbon: when the first row gets tight, drop the read-only stats first so the
+   interactive display + selection controls keep their space. */
+@media (max-width: 1180px) {
+  .ribbon-stats { display: none; }
+}

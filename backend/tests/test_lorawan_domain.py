@@ -165,9 +165,22 @@ class TestLoRaWANWebhookSecretValidation:
         with pytest.raises(Exception):  # HTTPException
             _validate_webhook_secret("wrong", "correct")
 
-    def test_empty_expected_allows_all(self):
+    def test_empty_expected_fails_closed(self):
+        # Security: an unconfigured secret must REJECT (503), not accept
+        # unauthenticated telemetry. Set a webhook secret in every environment.
+        from fastapi import HTTPException
+
         from app.routers.lorawan import _validate_webhook_secret
 
-        # No secret configured — dev mode, should not raise
-        _validate_webhook_secret("anything", "")
-        _validate_webhook_secret("", "")
+        with pytest.raises(HTTPException) as exc:
+            _validate_webhook_secret("anything", "")
+        assert exc.value.status_code == 503
+
+    def test_missing_provided_secret_raises(self):
+        from fastapi import HTTPException
+
+        from app.routers.lorawan import _validate_webhook_secret
+
+        with pytest.raises(HTTPException) as exc:
+            _validate_webhook_secret("", "correct")
+        assert exc.value.status_code == 401

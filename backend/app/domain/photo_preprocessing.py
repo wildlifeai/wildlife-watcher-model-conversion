@@ -5,28 +5,28 @@
 Transforms raw SD card images into human-readable, ecologically meaningful
 names before uploading to Google Drive.
 
-Folder convention::
+Folder convention (canonical builder lives in ``services/google_drive.py``)::
 
     <root>
     ├── {project_name}_{project_id[:8]}
-    │   └── {YYYYMMDD}_{duration}_{location}
+    │   └── {YYYY-MM-DD}_{deployment_id[:8]}
     │       ├── 20260113103000_01.jpg
     │       └── 20260113103000_02.jpg   (second capture in same second)
 
-Duration format: ``XdYhZmWs`` (e.g. ``2d21h41m22s``).
-If the deployment is still active, duration is ``ongoing``.
+The deployment folder date is the deployment **end** date (start date while
+still active), so folders sort by when the deployment finished; the id
+suffix distinguishes deployments ended on the same day.
 
 Filenames use **local time** derived from GPS coordinates via
 ``timezonefinder``.  Falls back to UTC when GPS is unavailable.
 """
 
-import re
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
-from app.services.google_drive import slugify
+from app.services.google_drive import build_deployment_folder_name, slugify
 
 logger = structlog.get_logger()
 
@@ -47,6 +47,24 @@ def _get_timezone_finder():
 # ── UTC → Local Time ────────────────────────────────────────────────
 
 
+def resolve_timezone(lat: Optional[float], lon: Optional[float]) -> Optional[str]:
+    """Resolve GPS coordinates to an IANA timezone name (e.g. ``Pacific/Auckland``).
+
+    Used to populate ``deployments.timezone`` so the website can render each
+    deployment's capture times in its local zone (DST handled by the IANA name).
+    Returns ``None`` when coordinates are missing or the zone can't be determined,
+    in which case callers fall back to UTC.
+    """
+    if lat is None or lon is None:
+        return None
+    try:
+        tf = _get_timezone_finder()
+        return tf.timezone_at(lat=lat, lng=lon)
+    except Exception as exc:
+        logger.warning("timezone_resolution_failed", lat=lat, lon=lon, error=str(exc))
+        return None
+
+
 def utc_to_local(utc_dt: datetime, lat: float, lon: float) -> datetime:
     """Convert a UTC datetime to local time using GPS coordinates.
 
@@ -57,8 +75,7 @@ def utc_to_local(utc_dt: datetime, lat: float, lon: float) -> datetime:
     try:
         from zoneinfo import ZoneInfo
 
-        tf = _get_timezone_finder()
-        tz_name = tf.timezone_at(lat=lat, lng=lon)
+        tz_name = resolve_timezone(lat, lon)
         if not tz_name:
             logger.debug("timezone_not_found", lat=lat, lon=lon)
             return utc_dt
@@ -84,72 +101,6 @@ def parse_exif_timestamp(ts: str) -> Optional[datetime]:
         except (ValueError, AttributeError):
             continue
     return None
-
-
-# ── Deployment Folder Name ──────────────────────────────────────────
-
-
-def _format_duration(start_iso: str, end_iso: Optional[str]) -> str:
-    """Compute human-readable duration string from ISO timestamps.
-
-    Returns ``XdYhZmWs`` or ``ongoing`` if end is None/empty.
-    """
-    if not end_iso:
-        return "ongoing"
-
-    try:
-        start = datetime.fromisoformat(start_iso)
-        end = datetime.fromisoformat(end_iso)
-        delta = end - start
-        total_secs = int(delta.total_seconds())
-        if total_secs <= 0:
-            return "ongoing"
-
-        days = total_secs // 86400
-        hours = (total_secs % 86400) // 3600
-        mins = (total_secs % 3600) // 60
-        secs = total_secs % 60
-        return f"{days}d{hours}h{mins}m{secs}s"
-    except Exception:
-        return "ongoing"
-
-
-def _sanitize_location(name: str) -> str:
-    """Convert a location name to a folder-safe slug.
-
-    Lowercase, strip non-alphanumeric characters, no spaces.
-    """
-    slug = re.sub(r"[^a-z0-9]", "", name.lower())
-    return slug if slug else "unknown"
-
-
-def build_deployment_folder_name(
-    deployment_start: Optional[str],
-    deployment_end: Optional[str],
-    location_name: Optional[str],
-) -> str:
-    """Build the deployment folder name.
-
-    Format: ``YYYYMMDD_XdYhZmWs_locationname``
-
-    Examples:
-        - ``20260113_2d21h41m22s_highhill``
-        - ``20260113_ongoing_highhill``
-        - ``20260113_0d5h30m0s_unknown``
-    """
-    if deployment_start:
-        try:
-            start_dt = datetime.fromisoformat(deployment_start)
-            start_date = start_dt.strftime("%Y%m%d")
-        except Exception:
-            start_date = datetime.now(timezone.utc).strftime("%Y%m%d")
-    else:
-        start_date = datetime.now(timezone.utc).strftime("%Y%m%d")
-
-    duration = _format_duration(deployment_start or "", deployment_end)
-    location = _sanitize_location(location_name or "")
-
-    return f"{start_date}_{duration}_{location}"
 
 
 # ── Photo Filename ──────────────────────────────────────────────────
@@ -256,7 +207,7 @@ def preprocess_file_batch(
     dep_folder = build_deployment_folder_name(
         deployment.get("deployment_start"),
         deployment.get("deployment_end"),
-        deployment.get("location_name"),
+        deployment.get("id", "00000000"),
     )
 
     proj_name = project.get("name", "unknown")

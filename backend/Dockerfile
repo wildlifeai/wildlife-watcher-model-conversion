@@ -1,3 +1,6 @@
+# Stages: base (lean deps) → api (DEPLOYED, lean uvicorn API) | dev (base+ML+reload) | worker (base+ML, ARQ).
+# The deployed API is the `api` stage — build it with `--target api`. The `worker`
+# stage runs the ARQ GPU worker (`arq …`) and serves no HTTP; never deploy it as the API.
 FROM python:3.11-slim AS base
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -13,9 +16,35 @@ HEALTHCHECK --interval=30s --timeout=5s --retries=3 \
     CMD python -c "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
 
-# --- Dev target ---
+# --- Dev target (base + test tooling + heavy ML so local in-process embedding works) ---
 FROM base AS dev
-COPY requirements-dev.txt .
-RUN pip install --no-cache-dir -r requirements-dev.txt
+COPY requirements-dev.txt requirements-ml.txt ./
+RUN pip install --no-cache-dir -r requirements-dev.txt -r requirements-ml.txt
+# OpenCV (pulled in by speciesnet/yolov5) loads these system libs at runtime —
+# without them inference fails with e.g. `libxcb.so.1: cannot open shared object file`.
+# Placed AFTER pip so adding/changing it doesn't invalidate the heavy ML pip layer cache.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
 CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+# --- Embedding worker target (base + heavy ML; GPU at runtime) ---
+# Runs the ARQ worker that processes embedding/inference jobs off the lean API.
+# Activating offload also requires Redis + switching enqueue to ARQ (see jobs/worker.py).
+FROM base AS worker
+COPY requirements-ml.txt .
+RUN pip install --no-cache-dir -r requirements-ml.txt
+# OpenCV system libs (see dev target) — required for speciesnet/yolov5 inference.
+# After pip so it doesn't invalidate the ML pip layer cache.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libgl1 libglib2.0-0 libsm6 libxext6 libxrender1 libxcb1 \
+    && rm -rf /var/lib/apt/lists/*
+CMD ["arq", "app.jobs.worker.WorkerSettings"]
+
+# --- API target (DEPLOYED) — the lean production HTTP API ----------------------
+# Kept LAST so that even a `docker build` with no --target produces the API (uvicorn)
+# rather than the ARQ `worker` above, which serves no HTTP. CMD inherited from base
+# and re-declared here for clarity.
+FROM base AS api
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "2"]
 

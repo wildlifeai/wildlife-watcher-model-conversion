@@ -18,11 +18,14 @@ logger = structlog.get_logger()
 # ── EXIF tag IDs and names ───────────────────────────────────────────
 
 EXIF_TAGS = {
+    0x010F: "Make",  # WW500 writes "Wildlife.ai"
+    0x0110: "Model",  # WW500 writes "WW500"
     0x0132: "DateTime",
     0x9003: "Datetime_Original",
     0x9004: "Datetime_Create",
-    0x9286: "UserComment",
-    0xC000: "Custom_Data",
+    0x927C: "MakerNote",  # WW500 auto-exposure registers (when firmware EXIF_MAKER_NOTES is on)
+    0x9286: "UserComment",  # WW500 on-device NN scores + telemetry, "label: value; ..."
+    0xC000: "Custom_Data",  # WW500 raw NN output tensor
     0xF200: "Deployment_ID",
     0x0001: "GPS_Latitude_Reference",
     0x0002: "GPS_Latitude",
@@ -32,6 +35,19 @@ EXIF_TAGS = {
     0x0006: "GPS_Altitude",
     0x8769: "ExifIFDPointer",
     0x8825: "GPSInfoIFDPointer",
+}
+
+# Firmware UserComment is a "label: value; label: value; " string carrying the
+# on-device NN class scores and (when enabled) device telemetry. These keys are
+# surfaced as typed top-level fields; everything is also kept in
+# ``user_comment_fields`` so the on-device AI scores are preserved.
+_TELEMETRY_KEYS = {
+    "temp": ("temperature_c", float),
+    "temperature": ("temperature_c", float),
+    "batt": ("battery_pct", int),
+    "battery": ("battery_pct", int),
+    "rssi": ("lorawan_rssi", int),
+    "snr": ("lorawan_snr", float),
 }
 
 TYPE_SIZES = {1: 1, 2: 1, 3: 2, 4: 4, 5: 8, 7: 1, 9: 4, 10: 8}
@@ -228,11 +244,62 @@ def parse_exif_from_bytes(jpeg_bytes: bytes) -> Dict[str, Any]:
             parsed_data["date"] = parsed_data[dt_key]
             break
 
+    # Parse the firmware UserComment "label: value; ..." payload (on-device NN
+    # scores + telemetry) into structured fields.
+    _apply_user_comment_fields(parsed_data)
+
     # Extract deployment ID from custom firmware EXIF tags
     deployment_id = _extract_deployment_id(parsed_data)
     parsed_data["deployment_id"] = deployment_id
 
     return parsed_data
+
+
+def parse_user_comment_fields(user_comment: Any) -> Dict[str, str]:
+    """Parse the WW500 ``"label: value; label: value; "`` UserComment into a dict.
+
+    The firmware packs on-device NN class scores (e.g. ``"kiwi: 80; rat: 12;"``)
+    and, when telemetry is enabled, fields like ``"Temp: 14.5; Batt: 87;"``.
+    Returns ``{label: value}`` for every ``key: value`` token; non-conforming
+    UserComments (e.g. a bare deployment UUID) yield ``{}``.
+    """
+    fields: Dict[str, str] = {}
+    if not user_comment or not isinstance(user_comment, str):
+        return fields
+    # An EXIF UserComment carries an 8-byte character-code prefix ("ASCII\0\0\0",
+    # "UNICODE\0", "JIS\0\0\0\0\0"). The all-zero (undefined) prefix is already
+    # dropped by null-stripping, but the named ones start with a letter and survive
+    # decoding as e.g. "ASCII\0\0\0kiwi: 80;…" — strip the prefix (only when it's
+    # followed by the spec's null padding, so a real key can't be mis-stripped) plus
+    # any stray interior nulls, so the first key isn't corrupted.
+    user_comment = re.sub(r"^(?:ASCII|UNICODE|JIS|UNDEFINED)\x00+", "", user_comment).replace("\x00", "")
+    for part in user_comment.split(";"):
+        if ":" not in part:
+            continue
+        key, _, val = part.partition(":")
+        key, val = key.strip(), val.strip()
+        if key and val:
+            fields[key] = val
+    return fields
+
+
+def _apply_user_comment_fields(parsed_data: Dict[str, Any]) -> None:
+    """Surface UserComment key/values + typed telemetry onto ``parsed_data``."""
+    fields = parse_user_comment_fields(parsed_data.get("UserComment"))
+    if not fields:
+        return
+    parsed_data["user_comment_fields"] = fields
+    for raw_key, val in fields.items():
+        mapping = _TELEMETRY_KEYS.get(raw_key.strip().lower())
+        if not mapping:
+            continue
+        target, caster = mapping
+        if target in parsed_data:
+            continue
+        try:
+            parsed_data[target] = caster(float(val)) if caster is int else caster(val)
+        except (TypeError, ValueError):
+            pass
 
 
 def _extract_deployment_id(parsed_data: Dict[str, Any]) -> Optional[str]:

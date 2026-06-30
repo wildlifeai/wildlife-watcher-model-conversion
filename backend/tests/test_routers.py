@@ -48,9 +48,24 @@ def test_openapi_schema_valid(client):
 
 @needs_redis
 def test_job_not_found(client):
-    """GET /api/jobs/{unknown_id} should return 404."""
-    response = client.get("/api/jobs/nonexistent-job-id")
-    assert response.status_code == 404
+    """GET /api/jobs/{unknown_id} should return 404 (for an authenticated caller)."""
+    from types import SimpleNamespace
+
+    from app.dependencies import get_current_user
+    from app.main import app
+
+    app.dependency_overrides[get_current_user] = lambda: SimpleNamespace(id="test-user", email="t@ww.ai")
+    try:
+        response = client.get("/api/jobs/nonexistent-job-id")
+        assert response.status_code == 404
+    finally:
+        app.dependency_overrides.pop(get_current_user, None)
+
+
+def test_job_status_requires_auth(client):
+    """GET /api/jobs/{id} must reject unauthenticated callers (was an open IDOR)."""
+    response = client.get("/api/jobs/some-id")
+    assert response.status_code in (401, 403, 422)  # missing/invalid Authorization header
 
 
 @needs_redis
@@ -60,3 +75,39 @@ def test_sscma_catalog(client):
     assert response.status_code == 200
     body = response.json()
     assert "data" in body
+
+
+def test_unhandled_exception_returns_cors_headers():
+    """A 500 must carry CORS headers for an allowed origin, so the browser shows the
+    real error instead of a misleading "blocked by CORS policy" message."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from app.config import settings
+    from app.main import unhandled_exception_handler
+
+    origin = settings.cors_origins[0]
+    req = MagicMock()
+    req.url.path = "/api/whatever"
+    req.headers = {"origin": origin}
+
+    resp = asyncio.run(unhandled_exception_handler(req, RuntimeError("boom")))
+    assert resp.status_code == 500
+    assert resp.headers.get("access-control-allow-origin") == origin
+    assert resp.headers.get("access-control-allow-credentials") == "true"
+
+
+def test_unhandled_exception_no_cors_for_unknown_origin():
+    """An origin that isn't allow-listed gets no ACAO header (no origin reflection)."""
+    import asyncio
+    from unittest.mock import MagicMock
+
+    from app.main import unhandled_exception_handler
+
+    req = MagicMock()
+    req.url.path = "/api/whatever"
+    req.headers = {"origin": "https://evil.example"}
+
+    resp = asyncio.run(unhandled_exception_handler(req, RuntimeError("boom")))
+    assert resp.status_code == 500
+    assert resp.headers.get("access-control-allow-origin") is None

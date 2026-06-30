@@ -9,6 +9,8 @@ GET  /api/lorawan/messages             — List messages (auth required)
 GET  /api/lorawan/messages/{device_eui}/latest — Latest parsed message
 """
 
+import hmac
+
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 
 from app.config import settings
@@ -22,10 +24,16 @@ _domain = LoRaWANDomain()
 
 
 def _validate_webhook_secret(provided: str, expected: str) -> None:
-    """Raise 401 if the webhook secret doesn't match."""
+    """Reject the uplink unless the shared webhook secret matches (constant-time).
+
+    Fails **closed**: if no secret is configured the endpoint rejects rather than
+    accepting unauthenticated telemetry into the DB. Set a webhook secret
+    (``LORAWAN_TTN_WEBHOOK_SECRET`` / ``LORAWAN_CHIRPSTACK_WEBHOOK_SECRET`` or the
+    shared ``LORAWAN_WEBHOOK_SECRET``) in every environment, including local dev.
+    """
     if not expected:
-        return  # No secret configured — allow (development mode)
-    if provided != expected:
+        raise HTTPException(status_code=503, detail="Webhook secret not configured")
+    if not provided or not hmac.compare_digest(provided, expected):
         raise HTTPException(status_code=401, detail="Invalid webhook secret")
 
 

@@ -52,13 +52,16 @@ export function useDragAndDrop(onFiles: (files: File[]) => void) {
     const items = e.dataTransfer.items
     if (!items) return
 
-    const files: File[] = []
+    const entries: any[] = []
     for (let i = 0; i < items.length; i++) {
       const entry = (items[i] as any).webkitGetAsEntry?.()
-      if (entry) {
-        const entryFiles = await readEntryRecursive(entry)
-        files.push(...entryFiles)
-      }
+      if (entry) entries.push(entry)
+    }
+
+    const files: File[] = []
+    for (const entry of entries) {
+      const entryFiles = await readEntryRecursive(entry)
+      files.push(...entryFiles)
     }
 
     onFiles(files)
@@ -67,6 +70,11 @@ export function useDragAndDrop(onFiles: (files: File[]) => void) {
   return {
     isDragging,
     bind: {
+      onDragEnter: (e: React.DragEvent) => {
+        e.preventDefault()
+        e.stopPropagation()
+        setIsDragging(true)
+      },
       onDragOver: (e: React.DragEvent) => {
         e.preventDefault()
         e.stopPropagation()

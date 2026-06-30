@@ -18,7 +18,6 @@ env/
 .streamlit/
 
 # Agent files
-.agents/
 .cursorrules
 .windsurfrules
 
@@ -43,3 +42,6 @@ exports/
 
 # Google Drive
 service-account.json
+
+# FiftyOne
+backend/MEDIA/fiftyone_cache/

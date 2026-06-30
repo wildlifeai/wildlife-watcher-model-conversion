@@ -89,8 +89,22 @@ async def recover_stuck_jobs() -> None:
         logger.debug("job_recovery_skipped", error=str(e))
 
 
-async def create_job() -> str:
-    """Create a new job entry locally and sync to Supabase."""
+async def create_job(
+    user_id: Optional[str] = None,
+    kind: Optional[str] = None,
+    label: Optional[str] = None,
+    deployment_ids: Optional[List[str]] = None,
+) -> str:
+    """Create a new job entry locally and sync to Supabase.
+
+    ``user_id`` is stamped into ``job_data`` so the owner can list their own jobs
+    (`api_jobs` has no owner column — see :func:`list_jobs`). ``kind`` is a coarse
+    category ('upload', 'ai_pipeline', 'export', …) and ``label`` a human summary,
+    both surfaced in the processing-history view. ``deployment_ids`` records which
+    deployments the job touches so the Annotations grid can show a "being processed"
+    banner for the deployments in view (see :func:`set_job_deployments` for jobs
+    whose deployments are only known mid-run, like uploads).
+    """
     job_id = str(uuid.uuid4())
     now = datetime.now(timezone.utc).isoformat()
     job_data = {
@@ -104,12 +118,77 @@ async def create_job() -> str:
         "message": None,
         "current_phase": None,
         "summary": None,
+        "user_id": user_id,
+        "kind": kind,
+        "label": label,
+        "deployment_ids": deployment_ids or [],
         "_next_seq": 0,
     }
 
     _memory_store[f"job:{job_id}"] = json.dumps(job_data)
     await _sync_to_supabase(job_id)
     return job_id
+
+
+async def set_job_deployments(job_id: str, deployment_ids: List[str]) -> None:
+    """Record the deployments a job touches once they're known (best-effort).
+
+    Uploads resolve their deployments mid-run (EXIF / folder binding after the file
+    buffer), so they call this from the AI phase rather than at :func:`create_job`.
+    """
+    raw = _memory_store.get(f"job:{job_id}")
+    if not raw:
+        return
+    data = json.loads(raw)
+    merged = sorted({*(data.get("deployment_ids") or []), *deployment_ids})
+    data["deployment_ids"] = merged
+    _memory_store[f"job:{job_id}"] = json.dumps(data)
+    await _sync_to_supabase(job_id)
+
+
+async def list_jobs(user_id: str, limit: int = 50) -> List[dict]:
+    """Return summaries of a user's recent jobs (newest first), from Supabase.
+
+    Scoped by ``job_data->>user_id`` because ``api_jobs`` has no owner column.
+    Returns light summaries (no event lists) for the processing-history view;
+    callers fetch full events per job via :func:`get_job`.
+    """
+
+    def _run() -> List[dict]:
+        client = create_service_client()
+        resp = (
+            client.table("api_jobs")
+            .select("id, status, job_data, created_at, updated_at")
+            .eq("job_data->>user_id", user_id)
+            .order("created_at", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        out: List[dict] = []
+        for row in resp.data or []:
+            jd = row.get("job_data") or {}
+            out.append(
+                {
+                    "job_id": row["id"],
+                    "status": row.get("status"),
+                    "kind": jd.get("kind"),
+                    "label": jd.get("label"),
+                    "deployment_ids": jd.get("deployment_ids") or [],
+                    "progress": jd.get("progress"),
+                    "summary": jd.get("summary"),
+                    "error": jd.get("error"),
+                    "created_at": jd.get("created_at") or row.get("created_at"),
+                    "updated_at": jd.get("updated_at") or row.get("updated_at"),
+                    "event_count": len(jd.get("events") or []),
+                }
+            )
+        return out
+
+    try:
+        return await asyncio.to_thread(_run)
+    except Exception as e:
+        logger.warning("list_jobs_failed", user_id=user_id, error=str(e))
+        return []
 
 
 async def get_job(job_id: str) -> Optional[JobInfo]:
