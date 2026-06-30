@@ -82,7 +82,7 @@ jobs:
           # button doesn't hit a ~1-min cold start on the first click.
           az containerapp update \
             --name ${{ steps.target.outputs.app_name }} \
-            --resource-group WW-Website \
+            --resource-group WW-AE \
             --image ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ steps.target.outputs.image_tag }} \
             --min-replicas 1 \
             --set-env-vars \
@@ -93,7 +93,7 @@ jobs:
         run: |
           FQDN=$(az containerapp show \
             --name ${{ steps.target.outputs.app_name }} \
-            --resource-group WW-Website \
+            --resource-group WW-AE \
             --query "properties.configuration.ingress.fqdn" -o tsv)
           echo "Waiting for container startup..."
           sleep 30

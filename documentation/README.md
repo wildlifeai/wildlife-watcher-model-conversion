@@ -8,7 +8,7 @@ active engineering hand-offs; **archive** is frozen history. Start with onboardi
 | Doc | Covers |
 |-----|--------|
 | [00-GETTING-STARTED](onboarding/00-GETTING-STARTED.md) | Local setup, env reference, run both services, verification checklist |
-| [01-TECHNOLOGY-STACK](onboarding/01-TECHNOLOGY-STACK.md) | Every dependency + external service (Supabase, Cloudflare, Azure, Drive, Qdrant, iNat) + feature flags |
+| [01-TECHNOLOGY-STACK](onboarding/01-TECHNOLOGY-STACK.md) | Every dependency + external service (Supabase, Cloudflare, Azure, Drive, vector store, iNat) + feature flags |
 | [02-CODEBASE-GUIDE](onboarding/02-CODEBASE-GUIDE.md) | Repo layout, frontend nav/routes, backend router→domain→service layering |
 | [03-DATA-AND-SYNC](onboarding/03-DATA-AND-SYNC.md) | Supabase, the RLS + GRANT model, async job system, the image-upload pipeline |
 | [04-AI-PIPELINE](onboarding/04-AI-PIPELINE.md) | SpeciesNet detect→crop→classify, dedup + taxonomic roll-up, blank handling, DINOv3 Wildlife Brain |
@@ -20,7 +20,8 @@ active engineering hand-offs; **archive** is frozen history. Start with onboardi
 |-----|--------|
 | [api-reference](resources/api-reference.md) | Backend `/api/*` endpoint reference |
 | [demo-account](resources/demo-account.md) | Read-only "Try the demo" account: access, 3-layer read-only enforcement, API usage, per-environment seeding |
-| [deployment-guide](resources/deployment-guide.md) | Dev/prod environments, Azure + Cloudflare, CI/CD, Qdrant gap, security checklist |
+| [deployment-guide](resources/deployment-guide.md) | Dev/prod environments, Azure + Cloudflare, CI/CD, vector store (pgvector → Qdrant), security checklist |
+| [cloud-infrastructure](resources/cloud-infrastructure.md) | **Inventory + maintenance** of every Azure/Supabase/Cloudflare/Drive resource: what exists, what's essential vs sprawl, quarterly review checklist |
 | [ai-model-pipeline](resources/ai-model-pipeline.md) | Edge Impulse → Vela on-camera model conversion |
 | [camtrapdp-import](resources/camtrapdp-import.md) | Importing CamtrapDP packages |
 | [lorawan-webhook-setup](resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server config |
@@ -39,6 +40,8 @@ Current hand-offs; kept up to date until the work ships, then moved to `_archive
 | [access-test-seed-spec](development%20reports/access-test-seed-spec.md) | ww-backend | Seed rows for the access-scenario upload fixtures (valid / no-access / not-found) |
 | [storage-quota-spec](development%20reports/storage-quota-spec.md) | ww-backend + website | Per-org storage quota: `organisation_usage` schema + trigger + enforcement hook |
 | [inaturalist-integration](development%20reports/inaturalist-integration.md) | website | iNaturalist publish + community-ID sync integration |
+| [per-crop-classification-spec](development%20reports/per-crop-classification-spec.md) | website (pipeline) | Per-detection species classification (BioCLIP per crop) for mixed-species frames; blocked on GPU worker |
+| [gpu-worker-infra-spec](development%20reports/gpu-worker-infra-spec.md) | website (infra + CI/CD) | ARQ GPU worker: Redis + ACA GPU + vector store (pgvector→Qdrant) + KEDA; versioning, observability, batching, retries; unblocks cloud AI detection + the per-crop classifier |
 
 ## Archive — `development reports/_archive/` (frozen history)
 
