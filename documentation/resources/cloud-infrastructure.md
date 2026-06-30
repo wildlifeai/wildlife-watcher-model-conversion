@@ -5,12 +5,12 @@
 > (*how to deploy*); this doc is *what exists and how to maintain it*. **Re-audit quarterly** (see the
 > [review checklist](#periodic-review-checklist)). Last updated: **2026-06-30**.
 
-> ### 🚧 Migration in progress (2026-06-30): consolidating to **one RG in AU East**
-> The org runs **nothing else in Azure**, so the entire stack is being rebuilt clean in a single resource
-> group **`WW-AE`** (`australiaeast`); **everything outside `WW-AE` is being deleted** (the old
-> `WW-Website` RG and the auto-created `DefaultResourceGroup-*` RGs). Rows below are tagged
-> ✅ done / 🔄 in progress / ⏳ pending. Remove this banner + the [decommissioning](#decommissioning-being-deleted)
-> section once teardown is complete and only `WW-AE` remains.
+> ### ✅ Single-RG AU East (migration complete — 2026-06-30)
+> The org runs **only the `WW-AE` resource group** (`australiaeast`). The old `WW-Website` RG and the three
+> `DefaultResourceGroup-*` RGs (plus all `mlwebsite*` Azure ML orphans) were **deleted on 2026-06-30** —
+> `az group list` should return **only `WW-AE`**. If another RG ever appears, it's sprawl: investigate.
+> *(One unrelated soft-deleted vault, `secrets-staging` in `newzealandnorth`, was intentionally left alone —
+> decide separately whether to recover or purge it.)*
 
 The platform spans four providers. Keep this list complete — an unlisted resource is either undocumented
 or orphaned, and both are bugs.
@@ -63,20 +63,6 @@ connection string lives in the ACA secret **`pg-conn`** (must point at the **dev
 Transaction pooler* — `postgres.<ref>@aws-…pooler.supabase.com:6543`, using the **database password**,
 not the service-role key). **Verified 2026-06-30: scales to 0 when idle.** If `pg-conn` is ever wrong/unset
 the scaler errors and KEDA holds the worker at its current replica count (functional, just not scaling down).
-
-### Decommissioning (being deleted)
-
-Everything below is **outside `WW-AE`** and is being torn down once the new stack is verified — the org
-runs nothing else in Azure. After teardown, **only `WW-AE` should remain**:
-
-- **Entire `WW-Website` RG** — old env `ww-env` + apps (`ww-backend`, `ww-backend-dev`, `ww-redis-dev`,
-  `ww-embedding-worker-dev`) in AU Southeast, old ACR `wildlifewatcher` + storage `wildlifewatcheruploads`
-  (NZ North), the keeper + duplicate Log Analytics, the unused managed identity `wildlifewatcher`, **and**
-  the orphaned Azure ML leftovers (`mlwebsite*`: 2 Key Vaults, 2 storage accounts, 2 App Insights, an
-  action group + 2 alert rules — the ML workspace that owned them is already gone).
-  ⚠️ Key Vaults soft-delete → **purge** after (`az keyvault purge`).
-- **`DefaultResourceGroup-SEAU`, `-australiasoutheast`, `-australiaeast`** — auto-created Log Analytics
-  RGs; delete whole.
 
 ### How to keep Azure clean
 - **Audit:** `az resource list -o table` — every resource should be in `WW-AE` and map to a row above.
