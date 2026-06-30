@@ -1,5 +1,6 @@
 import { useRef, useState, useEffect } from 'react'
 import type { ProgressPhase, ProgressSummary } from '../../types/job'
+import { aiAnalysisStatus } from './pipelineProgress'
 
 export type LogEntry = {
   ts: number
@@ -64,22 +65,6 @@ function jobStatusColor(status: string): string {
     case 'skipped': return 'var(--warning, #FF9800)'
     default: return 'var(--text-secondary, #888)'
   }
-}
-
-const TERMINAL_STATUSES = ['completed', 'completed_with_errors', 'failed', 'skipped']
-
-/**
- * The offloaded AI-analysis job(s). The upload spawns one via `child_job_id` and the
- * dock chains it in with `fileCount: 0` (it processes deployments, not a file count) —
- * so a 0-fileCount job is the analysis phase. Returns its aggregate progress and whether
- * it's still running, used to drive the second ("Analyzing…") phase of the indicator.
- */
-function aiAnalysisStatus(state: PipelineState): { active: boolean; progress: number } | null {
-  const ai = state.jobs.filter((j) => j.fileCount === 0)
-  if (ai.length === 0) return null
-  const active = ai.some((j) => !TERMINAL_STATUSES.includes(j.status))
-  const progress = ai.reduce((s, j) => s + Math.max(0, Math.min(1, j.progress || 0)), 0) / ai.length
-  return { active, progress }
 }
 
 /**

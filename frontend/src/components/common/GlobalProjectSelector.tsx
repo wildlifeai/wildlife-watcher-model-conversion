@@ -1,24 +1,47 @@
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import { useProjectSelection } from '../../hooks/useProjectSelection'
 import { Folder, ChevronDown, CheckSquare, Square, Settings2 } from 'lucide-react'
+
+const MENU_WIDTH = 250
 
 export function GlobalProjectSelector() {
   const { projects, selectedProjectIds, toggleProject, selectAll, clearAll, isLoading } = useProjectSelection()
   const [isOpen, setIsOpen] = useState(false)
   const dropdownRef = useRef<HTMLDivElement>(null)
+  const menuRef = useRef<HTMLDivElement>(null)
+  // The menu renders in a body portal (fixed position) so it overlays the Leaflet map on the
+  // Insights page — an absolutely-positioned dropdown loses the stacking war to Leaflet's
+  // controls/panes (z-index up to 1000) and gets hidden behind the map.
+  const [pos, setPos] = useState<{ top: number; left: number } | null>(null)
   const navigate = useNavigate()
 
-  // Close dropdown when clicking outside
+  // Anchor the menu under the trigger, right-aligned, clamped to the viewport.
+  const place = useCallback(() => {
+    const r = dropdownRef.current?.getBoundingClientRect()
+    if (r) setPos({ top: r.bottom + 8, left: Math.max(8, r.right - MENU_WIDTH) })
+  }, [])
+
+  // Close on outside click — account for the portalled menu (it lives outside dropdownRef).
   useEffect(() => {
+    if (!isOpen) return
     const handleClickOutside = (event: MouseEvent) => {
-      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
-        setIsOpen(false)
-      }
+      const t = event.target as Node
+      if (dropdownRef.current?.contains(t) || menuRef.current?.contains(t)) return
+      setIsOpen(false)
     }
     document.addEventListener('mousedown', handleClickOutside)
     return () => document.removeEventListener('mousedown', handleClickOutside)
-  }, [])
+  }, [isOpen])
+
+  // Keep the menu anchored to the trigger while open (scroll/resize).
+  useEffect(() => {
+    if (!isOpen) return
+    window.addEventListener('scroll', place, true)
+    window.addEventListener('resize', place)
+    return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place) }
+  }, [isOpen, place])
 
   if (isLoading || projects.length === 0) return null
 
@@ -34,7 +57,7 @@ export function GlobalProjectSelector() {
   return (
     <div className="relative" ref={dropdownRef} style={{ position: 'relative' }}>
       <button
-        onClick={() => setIsOpen(!isOpen)}
+        onClick={() => { if (!isOpen) place(); setIsOpen(o => !o) }}
         className="flex items-center gap-2 px-3 py-1.5 text-sm font-medium text-gray-700 bg-white border border-gray-300 rounded-md hover:bg-gray-50 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500 transition-colors"
         style={{
           display: 'flex',
@@ -56,20 +79,20 @@ export function GlobalProjectSelector() {
         <ChevronDown size={14} style={{ opacity: 0.5 }} />
       </button>
 
-      {isOpen && (
-        <div 
-          className="absolute right-0 mt-2 w-64 bg-white rounded-md shadow-lg border border-gray-200 z-50"
+      {isOpen && pos && createPortal(
+        <div
+          ref={menuRef}
           style={{
-            position: 'absolute',
-            top: '100%',
-            right: 0,
-            marginTop: '0.5rem',
-            width: '250px',
+            position: 'fixed',
+            top: pos.top,
+            left: pos.left,
+            width: `${MENU_WIDTH}px`,
             backgroundColor: 'var(--bg-color, #ffffff)',
             border: '1px solid var(--border)',
             borderRadius: 'var(--radius)',
-            boxShadow: '0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06)',
-            zIndex: 50,
+            boxShadow: '0 4px 16px rgba(0, 0, 0, 0.18)',
+            // Above Leaflet (controls ~1000) and the upload dock (300).
+            zIndex: 2000,
             overflow: 'hidden'
           }}
         >
@@ -130,7 +153,8 @@ export function GlobalProjectSelector() {
             <Settings2 size={15} />
             <span>Manage projects…</span>
           </div>
-        </div>
+        </div>,
+        document.body,
       )}
     </div>
   )
