@@ -66,6 +66,22 @@ function jobStatusColor(status: string): string {
   }
 }
 
+const TERMINAL_STATUSES = ['completed', 'completed_with_errors', 'failed', 'skipped']
+
+/**
+ * The offloaded AI-analysis job(s). The upload spawns one via `child_job_id` and the
+ * dock chains it in with `fileCount: 0` (it processes deployments, not a file count) —
+ * so a 0-fileCount job is the analysis phase. Returns its aggregate progress and whether
+ * it's still running, used to drive the second ("Analyzing…") phase of the indicator.
+ */
+function aiAnalysisStatus(state: PipelineState): { active: boolean; progress: number } | null {
+  const ai = state.jobs.filter((j) => j.fileCount === 0)
+  if (ai.length === 0) return null
+  const active = ai.some((j) => !TERMINAL_STATUSES.includes(j.status))
+  const progress = ai.reduce((s, j) => s + Math.max(0, Math.min(1, j.progress || 0)), 0) / ai.length
+  return { active, progress }
+}
+
 /**
  * Derive the section title deterministically from the pipeline phase —
  * never by parsing message strings.
@@ -97,6 +113,13 @@ function deriveSectionTitle(state: PipelineState, phase: string): string {
   }
   if (phase === 'failed') return '❌ Pipeline Failed'
   if (phase === 'stalled') return '⏳ Still working… (taking longer than usual)'
+
+  // Processing — phase 2: if the offloaded AI-analysis job is running, surface ITS
+  // progress (it long outlives the upload, so this is what the user is waiting on).
+  const ai = aiAnalysisStatus(state)
+  if (ai?.active) {
+    return `🤖 Analysing images… ${Math.round(ai.progress * 100)}%`
+  }
 
   // Processing — use the current phase from the most advanced active job
   const activeJob = state.jobs.find(j => j.status === 'processing')
@@ -151,6 +174,7 @@ function estimateEta(state: PipelineState, elapsedMs: number): string | null {
 
 export function PipelineStatusBox({ state, phase }: { state: PipelineState; phase: string }) {
   const prevPercentRef = useRef(0)
+  const phaseKeyRef = useRef<'upload' | 'ai'>('upload')
   const logContainerRef = useRef<HTMLDivElement>(null)
   const prevLogCountRef = useRef(0)
   const [elapsed, setElapsed] = useState(0)
@@ -181,16 +205,30 @@ export function PipelineStatusBox({ state, phase }: { state: PipelineState; phas
   const uploadProgress = state.totalFiles > 0 ? (state.uploadedFiles / state.totalFiles) : 0
   const totalFilesInJobs = state.jobs.reduce((sum, j) => sum + j.fileCount, 0)
 
-  // Weight by fileCount, not raw job count
+  // Weight by fileCount, not raw job count. AI-analysis children have fileCount 0 and
+  // drive the separate phase below, so they don't dilute the upload progress here.
   const jobProgress = totalFilesInJobs > 0
       ? state.jobs.reduce((sum, j) => sum + Math.max(0, Math.min(1, j.progress || 0)) * j.fileCount, 0) / totalFilesInJobs
       : 0
 
-  const rawPercent = state.jobs.length > 0 ? (uploadProgress * 0.3 + jobProgress * 0.7) : uploadProgress
+  const uploadPhasePct = state.jobs.some(j => j.fileCount > 0) ? (uploadProgress * 0.3 + jobProgress * 0.7) : uploadProgress
 
-  // Clamp the value using useRef to ensure progress never jumps backwards
-  const percent = Math.max(prevPercentRef.current, Math.round(rawPercent * 100))
-  prevPercentRef.current = percent
+  // Two-phase bar: while the offloaded AI job runs, the bar tracks ITS progress instead of
+  // pinning at 100% (the upload is already done). Reset the monotonic floor when crossing
+  // into the AI phase so the analysis bar fills from 0 rather than the upload's ~100%.
+  const aiStatus = aiAnalysisStatus(state)
+  const inAiPhase = !!aiStatus?.active
+  const phaseKey = inAiPhase ? 'ai' : 'upload'
+  if (phaseKeyRef.current !== phaseKey) {
+    prevPercentRef.current = 0
+    phaseKeyRef.current = phaseKey
+  }
+  const rawPercent = inAiPhase && aiStatus ? aiStatus.progress : uploadPhasePct
+
+  // Monotonic within a phase; never claim 100% until the whole pipeline (incl. AI) is terminal.
+  const flooredPct = Math.max(prevPercentRef.current, Math.round(rawPercent * 100))
+  prevPercentRef.current = flooredPct
+  const percent = phase === 'completed' ? 100 : Math.min(flooredPct, 99)
 
   const isActive = phase === 'uploading' || phase === 'processing' || phase === 'stalled'
   const eta = isActive ? estimateEta(state, elapsed) : null
