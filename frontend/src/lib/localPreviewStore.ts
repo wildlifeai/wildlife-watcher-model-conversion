@@ -20,8 +20,11 @@
 type Entry = { url: string; ts: number }
 
 const previews = new Map<string, Entry>() // key: filename.toLowerCase()
-const TTL_MS = 30 * 60 * 1000 // 30 min — long enough to outlive most rendition delays
-const MAX_ENTRIES = 1000 // bound memory across repeated uploads
+// Camera-trap images are 2–8 MB each, and an object URL pins its File blob in memory
+// until revoked — so the cap is the real OOM guard. The grid only pages 100 at a time,
+// so 200 comfortably covers the visible page + a buffer.
+const TTL_MS = 10 * 60 * 1000 // 10 min — outlives typical (even CPU) rendition delays
+const MAX_ENTRIES = 200
 
 function evict(): void {
   const now = Date.now()
@@ -31,10 +34,12 @@ function evict(): void {
       previews.delete(key)
     }
   }
-  // Cap: drop oldest first.
+  // Cap: drop oldest first. Capture the excess BEFORE the loop — `previews.size`
+  // shrinks as we delete, so re-evaluating it in the condition would stop halfway.
   if (previews.size > MAX_ENTRIES) {
     const oldest = [...previews.entries()].sort((a, b) => a[1].ts - b[1].ts)
-    for (let i = 0; i < previews.size - MAX_ENTRIES; i++) {
+    const excess = previews.size - MAX_ENTRIES
+    for (let i = 0; i < excess; i++) {
       const [key, e] = oldest[i]
       URL.revokeObjectURL(e.url)
       previews.delete(key)
@@ -54,6 +59,7 @@ export function registerLocalPreviews(files: File[]): void {
     if (existing) URL.revokeObjectURL(existing.url) // replace a same-named earlier upload
     previews.set(key, { url: URL.createObjectURL(f), ts: Date.now() })
   }
+  evict() // enforce the cap on THIS batch too, not just on the next call
 }
 
 /** Look up an instant preview by a media record's `file_name`. */
