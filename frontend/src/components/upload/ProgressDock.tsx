@@ -264,13 +264,19 @@ export function ProgressDock() {
       style={{
         ...DOCK_BASE,
         width: '360px',
+        // Cap to the viewport so a tall pipeline log never pushes the header (and its
+        // minimise/expand/dismiss controls) off the top of the screen. The body scrolls instead.
+        maxHeight: 'calc(100vh - 2.5rem)',
+        display: 'flex',
+        flexDirection: 'column',
         backgroundColor: 'var(--bg-color)',
         border: '1px solid var(--border)',
         overflow: 'hidden',
       }}
     >
-      {/* Card header */}
+      {/* Card header — pinned, always reachable */}
       <div style={{
+        flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'space-between',
         padding: '0.625rem 0.875rem',
         borderBottom: '1px solid var(--border)',
@@ -316,14 +322,15 @@ export function ProgressDock() {
         </div>
       </div>
 
-      {/* Pipeline status box */}
-      <div style={{ padding: '0.75rem' }}>
+      {/* Pipeline status box — the only scrollable region, so the header + footer CTA stay put */}
+      <div style={{ padding: '0.75rem', overflowY: 'auto', flex: 1, minHeight: 0 }}>
         <PipelineStatusBox state={pipelineState} phase={phase} />
       </div>
 
       {/* Completion CTA */}
       {isDone && (
         <div style={{
+          flexShrink: 0,
           padding: '0.625rem 0.875rem',
           borderTop: '1px solid var(--border)',
           display: 'flex', flexDirection: 'column', gap: '0.5rem',

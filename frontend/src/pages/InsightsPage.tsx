@@ -9,7 +9,7 @@
  * then it lives here as a view so nothing disappears).
  * Projects & members moved to Settings (P2).
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useProjectSelection } from '../hooks/useProjectSelection'
@@ -19,8 +19,10 @@ import { FilterSelect } from '../components/ui/ControlBar'
 import { Ribbon, type RibbonGroupDef } from '../components/ui/Ribbon'
 import { DeploymentMap } from '../components/data/DeploymentMap'
 import { ReportsDashboard } from '../components/data/ReportsDashboard'
+import { LiveInsightsBanner } from '../components/data/LiveInsightsBanner'
 import { DeploymentBulkActions } from '../components/data/DeploymentBulkActions'
 import { type DeploymentRow } from '../components/data/DeploymentActionRow'
+import { useUploadStore } from '../contexts/UploadContext'
 
 interface Observation {
   id: string
@@ -62,7 +64,17 @@ const VIEW_BTN = (active: boolean): React.CSSProperties => ({
 export function InsightsPage() {
   const { user } = useAuth()
   const { selectedProjectIds } = useProjectSelection()
+  const { isActive: uploadActive, phase: uploadPhase } = useUploadStore()
   const [searchParams, setSearchParams] = useSearchParams()
+
+  // While an upload is processing, tick periodically so the observations query refetches
+  // and partial AI results stream into the reports/map without a manual page refresh.
+  const [liveTick, setLiveTick] = useState(0)
+  useEffect(() => {
+    if (!uploadActive) return
+    const t = setInterval(() => setLiveTick(x => x + 1), 8000)
+    return () => clearInterval(t)
+  }, [uploadActive])
 
   const rawTab = searchParams.get('tab')
   const tab: InsightsTab = rawTab === 'deployments' || rawTab === 'map' ? rawTab : 'reports'
@@ -90,6 +102,9 @@ export function InsightsPage() {
   const [selectedDeps, setSelectedDeps] = useState<Set<string>>(new Set())
   const [mapMetric, setMapMetric] = useState<MapMetric>('total')
   const [mapShowAbsent, setMapShowAbsent] = useState(true)
+
+  // Tracks the last observations-query key so the live refresh can skip the loading flash.
+  const obsKeyRef = useRef('')
 
   const [reportFilterDep, setReportFilterDepState]    = useState(deploymentParam)
   const [reportFilterSpecies, setReportFilterSpecies] = useState('')
@@ -154,7 +169,12 @@ export function InsightsPage() {
     if (tab !== 'reports' && tab !== 'map') return
     if (deployments.length === 0) return
     let cancelled = false
-    setObsLoading(true)
+    // Only show the loading state for a genuine (re)load — not the 8s background refresh
+    // while an upload classifies, which would otherwise flash "Loading…" over live data.
+    const key = `${tab}|${deployments.map(d => d.id).join(',')}`
+    const background = key === obsKeyRef.current
+    obsKeyRef.current = key
+    if (!background) setObsLoading(true)
     supabase
       .from('observations')
       .select('id, deployment_id, scientific_name, observation_type, created_at')
@@ -166,15 +186,23 @@ export function InsightsPage() {
         setObsLoading(false)
       })
     return () => { cancelled = true }
-  }, [user, tab, deployments])
+    // liveTick + uploadPhase drive the live refresh while an upload is being classified.
+  }, [user, tab, deployments, liveTick, uploadPhase])
 
   // Map markers: per-deployment detection count (optionally for one species),
   // effort-normalised to a per-active-day rate, and present/absent flags.
   const mapMarkers = useMemo(() => {
     const counts: Record<string, number> = {}
+    // Per-deployment species tally → drives the default pie-chart markers.
+    const speciesByDep: Record<string, Record<string, number>> = {}
     for (const o of observations) {
       if (mapFilterSpecies && o.scientific_name !== mapFilterSpecies) continue
       counts[o.deployment_id] = (counts[o.deployment_id] ?? 0) + 1
+      const sp = o.scientific_name
+      if (sp && sp !== '(unidentified)') {
+        const dep = (speciesByDep[o.deployment_id] ??= {})
+        dep[sp] = (dep[sp] ?? 0) + 1
+      }
     }
     const markers = deployments.map(d => {
       const count = counts[d.id] ?? 0
@@ -187,12 +215,24 @@ export function InsightsPage() {
         perDay,
         present: count > 0,
         metricValue: mapMetric === 'perDay' ? perDay : count,
+        speciesCounts: speciesByDep[d.id] ?? {},
       }
     })
     // When a species is selected, optionally drop the "absent" sites.
     if (mapFilterSpecies && !mapShowAbsent) return markers.filter(m => m.present)
     return markers
   }, [deployments, observations, mapFilterSpecies, mapMetric, mapShowAbsent])
+
+  // Default map focus: the most recently *finished* deployment of the selected project(s),
+  // so the map opens on the latest completed survey rather than the whole-world centroid.
+  const defaultFocusId = useMemo(() => {
+    const now = Date.now()
+    const finished = deployments
+      .filter(d => d.latitude != null && d.longitude != null && d.deployment_end &&
+        new Date(d.deployment_end).getTime() <= now)
+      .sort((a, b) => new Date(b.deployment_end!).getTime() - new Date(a.deployment_end!).getTime())
+    return finished[0]?.id ?? null
+  }, [deployments])
 
   const filteredObservations = useMemo(() => {
     let obs = observations
@@ -271,6 +311,9 @@ export function InsightsPage() {
 
   return (
     <div>
+      {/* Live AI-classification banner — appears while a just-started upload is being analysed. */}
+      <LiveInsightsBanner />
+
       <Ribbon
         activeTabId={tab}
         onTabChange={id => setTab(id as InsightsTab)}
@@ -336,6 +379,7 @@ export function InsightsPage() {
             onSelectDeployment={setSelectedDepId}
             metric={mapMetric}
             speciesLabel={mapFilterSpecies || null}
+            defaultFocusId={defaultFocusId}
           />
         )
       )}

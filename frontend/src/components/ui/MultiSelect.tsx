@@ -98,7 +98,8 @@ export function MultiSelect({ values, onChange, options, allLabel = 'All', noun 
 
       {open && pos && createPortal(
         <div ref={menuRef} style={{
-          position: 'fixed', top: pos.top, left: pos.left, zIndex: 400, minWidth: 220, maxWidth: 320,
+          // zIndex above Leaflet (controls ~1000) so ribbon dropdowns clear the Insights map.
+          position: 'fixed', top: pos.top, left: pos.left, zIndex: 2000, minWidth: 220, maxWidth: 320,
           background: 'var(--bg-color)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
           boxShadow: '0 4px 16px rgba(0,0,0,0.15)', overflow: 'hidden',
         }}>
