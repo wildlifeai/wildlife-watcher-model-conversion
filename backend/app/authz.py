@@ -149,6 +149,81 @@ async def accessible_deployment_ids(user_id: str, deployment_ids: list[str]) -> 
     return await asyncio.to_thread(_check)
 
 
+async def classify_deployment_access(user_id: str, deployment_ids: list[str]) -> dict[str, str]:
+    """Classify each **full-UUID** deployment id as ``valid`` (exists + caller has access),
+    ``no_access`` (exists but caller lacks a role), or ``not_found`` (not in the DB).
+
+    Role-based, consistent with ``accessible_deployment_ids`` / the ww-backend RLS. Used by the
+    upload pipeline to enforce — server-side — that images can't be attached to a deployment the
+    caller can't access, and to decide which need a manual assignment instead.
+    """
+
+    def _check() -> dict[str, str]:
+        result = {d: "not_found" for d in deployment_ids}
+        if not deployment_ids:
+            return result
+        svc = create_service_client()
+        roles = _fetch_active_roles(svc, user_id)
+        resp = svc.table("deployments").select("id, project_id, projects(organisation_id)").in_("id", deployment_ids).execute()
+        for row in resp.data or []:
+            proj = row.get("projects")
+            if isinstance(proj, list):  # PostgREST may nest a to-one as a 1-element list
+                proj = proj[0] if proj else None
+            org_id = proj.get("organisation_id") if isinstance(proj, dict) else None
+            project_id = row.get("project_id")
+            result[row["id"]] = "valid" if _has_access(roles, org_id, project_id) else "no_access"
+        return result
+
+    return await asyncio.to_thread(_check)
+
+
+_ORG_MANAGER_ROLES = {"organisation_manager"}
+
+
+def _has_role(roles: list[dict], org_id: Optional[str], project_id: Optional[str], project_roles: set[str]) -> bool:
+    """Like ``_has_access`` but role-aware: the caller must hold one of ``project_roles`` on the
+    project (or be an org manager on its org, or a system admin). Used to gate destructive actions
+    where a plain viewer/member must be distinguished."""
+    now = datetime.now(timezone.utc)
+    for r in roles:
+        if not _role_active(r, now):
+            continue
+        scope = r.get("scope_type")
+        sid = r.get("scope_id")
+        role = r.get("role")
+        if scope == "system":
+            return True
+        if scope == "organisation" and org_id and sid == org_id and role in _ORG_MANAGER_ROLES:
+            return True
+        if scope == "project" and project_id and sid == project_id and role in project_roles:
+            return True
+    return False
+
+
+async def _assert_project_role(user_id: str, project_id: str, project_roles: set[str]) -> None:
+    def _check() -> bool:
+        svc = create_service_client()
+        org_id, pid = _resolve_org_project(svc, project_id=project_id)
+        if pid is None:  # project doesn't exist → treat as no access (404)
+            return False
+        return _has_role(_fetch_active_roles(svc, user_id), org_id, pid, project_roles)
+
+    if not await asyncio.to_thread(_check):
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+async def assert_project_writer(user_id: str, project_id: str) -> None:
+    """Raise 404 unless the caller can *modify* the project's data (admin/member, org-manager, or
+    system). Gates deployment delete/restore — a project_viewer is refused."""
+    await _assert_project_role(user_id, project_id, {"project_admin", "project_member"})
+
+
+async def assert_project_admin(user_id: str, project_id: str) -> None:
+    """Raise 404 unless the caller *administers* the project (project_admin, org-manager, or
+    system). Gates project delete/restore."""
+    await _assert_project_role(user_id, project_id, {"project_admin"})
+
+
 async def is_system_admin(user_id: str) -> bool:
     def _check() -> bool:
         svc = create_service_client()

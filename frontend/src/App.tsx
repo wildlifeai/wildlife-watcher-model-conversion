@@ -44,6 +44,7 @@ import { UploadProvider, useUploadStore } from './contexts/UploadContext'
 import { UploadModal } from './components/upload/UploadModal'
 import { DemoGuardProvider, RequireNotDemo } from './components/common/DemoGuard'
 import { ProgressDock } from './components/upload/ProgressDock'
+import { UndoToastHost } from './components/common/UndoToast'
 import { useQuery } from '@tanstack/react-query'
 import { apiClient } from './lib/apiClient'
 import './styles/index.css'
@@ -464,6 +465,7 @@ export default function App() {
           <UploadProvider>
             <UploadModal />
             <ProgressDock />
+            <UndoToastHost />
             <Layout>
               <Routes>
               {/* Public */}

@@ -73,6 +73,13 @@ def compute_qa_metrics(pairs: list[tuple[Optional[str], Optional[str]]]) -> dict
 # ── Orchestration ────────────────────────────────────────────────────
 
 
+# A label counts as human-provided when a person made it OR validated it — mirrors the
+# canonical treatment in inaturalist_publish / wildlife_brain. Imported/consensus data keeps
+# its original source_type ("imported", "ai"…) but carries a human review_status, so checking
+# source_type alone misses it and corrupts the AI-vs-human scoring below.
+_HUMAN_REVIEWED = {"human_reviewed", "expert_reviewed", "consensus_approved"}
+
+
 def _ai_human_labels(observations: list[dict]) -> dict[str, dict]:
     """Group observations by media_id → {ai_label, ai_conf, human_label}."""
     by_media: dict[str, dict] = {}
@@ -82,13 +89,14 @@ def _ai_human_labels(observations: list[dict]) -> dict[str, dict]:
             continue
         slot = by_media.setdefault(mid, {"ai_label": None, "ai_conf": 0.0, "human_label": None})
         label = o.get("scientific_name") or o.get("vernacular_name")
-        if o.get("source_type") == "ai":
+        is_human = o.get("source_type") == "human" or o.get("review_status") in _HUMAN_REVIEWED
+        if is_human:
+            slot["human_label"] = label or slot["human_label"]
+        elif o.get("source_type") == "ai":
             conf = float(o.get("confidence") or 0.0)
             if conf >= slot["ai_conf"]:
                 slot["ai_conf"] = conf
                 slot["ai_label"] = label
-        elif o.get("source_type") == "human":
-            slot["human_label"] = label or slot["human_label"]
     return by_media
 
 
@@ -100,7 +108,7 @@ async def _fetch_observations(deployment_id: str) -> list[dict]:
     def _fetch():
         resp = (
             svc.table("observations")
-            .select("media_id, source_type, confidence, scientific_name, vernacular_name")
+            .select("media_id, source_type, review_status, confidence, scientific_name, vernacular_name")
             .eq("deployment_id", deployment_id)
             .is_("deleted_at", "null")
             .execute()

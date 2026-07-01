@@ -45,12 +45,34 @@ async function request(path: string, options: RequestInit = {}) {
     )
   }
 
+  // The body stream can only be read ONCE. The old code did response.json() and, on
+  // failure, response.blob() — but json() consumes the stream even when it throws, so the
+  // blob() call crashed with "body stream already read". Decide up front by content-type
+  // and read exactly once.
+  const contentType = response.headers.get('content-type') || ''
+  if (!contentType.includes('application/json')) {
+    // Genuine binary/download (ZIP, CSV…) on success → hand back the raw blob.
+    if (response.ok) return response.blob()
+    // Otherwise it's a non-JSON *error*: a gateway/proxy HTML page (502/503/504), or the
+    // API base URL is misconfigured so the request landed on the static site / SPA instead
+    // of the backend. Surface the real status instead of a cryptic stream error.
+    const text = await response.text().catch(() => '')
+    throw new ApiError(
+      `HTTP_${response.status}`,
+      text.trim().slice(0, 300) || `Request failed (${response.status} ${response.statusText}). The API may be unreachable or misconfigured.`,
+      response.status >= 500,
+    )
+  }
+
   let body
   try {
     body = await response.json()
   } catch {
-    // Some responses (like ZIP downloads) might not be JSON
-    return response.blob()
+    // Declared JSON but empty/truncated body.
+    if (!response.ok) {
+      throw new ApiError(`HTTP_${response.status}`, `Request failed (${response.status} ${response.statusText})`, response.status >= 500)
+    }
+    return null
   }
 
   if (!response.ok) {
@@ -80,4 +102,6 @@ export const apiClient = {
     request(path, { method: 'POST', body: JSON.stringify(data) }),
   upload: (path: string, formData: FormData) =>
     request(path, { method: 'POST', body: formData }),
+  del: (path: string, data?: any) =>
+    request(path, { method: 'DELETE', body: data ? JSON.stringify(data) : undefined }),
 }

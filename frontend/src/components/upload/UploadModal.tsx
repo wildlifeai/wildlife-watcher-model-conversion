@@ -18,6 +18,7 @@ import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { apiClient } from '../../lib/apiClient'
 import { supabase } from '../../config/supabase'
 import { useUploadStore, type UploadDeployment } from '../../contexts/UploadContext'
+import { useProjectSelection } from '../../hooks/useProjectSelection'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -64,6 +65,23 @@ export function UploadModal() {
     Record<string, 'no_access' | 'not_found'>
   >({})
 
+  // ── Manual deployment assignment (for photos with no / unknown deployment) ──
+  const { projects } = useProjectSelection()
+  const [assignProjectId, setAssignProjectId] = useState('')       // '' | project id | '__new__'
+  const [newProjectName, setNewProjectName] = useState('')
+  const [assignDeploymentId, setAssignDeploymentId] = useState('') // '' | deployment id | '__new__'
+  const [newDepName, setNewDepName] = useState('')
+  const [newDepLat, setNewDepLat] = useState('')
+  const [newDepLng, setNewDepLng] = useState('')
+  const [assigning, setAssigning] = useState(false)
+  const [assignError, setAssignError] = useState<string | null>(null)
+
+  const resetAssignment = () => {
+    setAssignProjectId(''); setNewProjectName('')
+    setAssignDeploymentId(''); setNewDepName(''); setNewDepLat(''); setNewDepLng('')
+    setAssigning(false); setAssignError(null)
+  }
+
   // CamtrapDP import state
   const [camtrapImporting, setCamtrapImporting] = useState(false)
   const [camtrapResult, setCamtrapResult] = useState<CamtrapImportResult | null>(null)
@@ -88,6 +106,7 @@ export function UploadModal() {
       setCamtrapStage(0)
       setCamtrapElapsed(0)
       setShowAllWarnings(false)
+      resetAssignment()
     }
   }, [modalOpen])
 
@@ -215,10 +234,43 @@ export function UploadModal() {
     }
   }
 
-  const handleUpload = () => {
+  const handleUpload = async () => {
     if (files.length === 0) return
+    setAssignError(null)
+
+    // Resolve a manual deployment assignment (create project/deployment as needed) for photos
+    // that have no recognised deployment. Photos that already resolve to a valid deployment keep
+    // it; no-access ones are excluded server-side.
+    let assignedDeploymentId: string | undefined
+    if (needsAssignment) {
+      setAssigning(true)
+      try {
+        let projectId = assignProjectId
+        if (projectId === '__new__') {
+          const proj = await apiClient.post('/api/projects', { name: newProjectName.trim() })
+          projectId = proj.id
+        }
+        if (assignDeploymentId === '__new__') {
+          const dep = await apiClient.post('/api/deployments', {
+            project_id: projectId,
+            name: newDepName.trim(),
+            latitude: newDepLat.trim() ? Number(newDepLat) : undefined,
+            longitude: newDepLng.trim() ? Number(newDepLng) : undefined,
+          })
+          assignedDeploymentId = dep.id
+        } else {
+          assignedDeploymentId = assignDeploymentId
+        }
+      } catch (e) {
+        setAssignError(e instanceof Error ? e.message : 'Could not create the deployment.')
+        setAssigning(false)
+        return
+      }
+      setAssigning(false)
+    }
+
     // Images always sync to Google Drive (long-term storage is the default).
-    startUpload(files, filePaths, true, deployments)
+    startUpload(files, filePaths, true, deployments, assignedDeploymentId)
     // Modal closes inside startUpload → no explicit closeModal needed
   }
 
@@ -230,6 +282,7 @@ export function UploadModal() {
     setInvalidDeployments({})
     setCamtrapResult(null)
     setCamtrapError(null)
+    resetAssignment()
   }
 
   // ── Derived stats ──────────────────────────────────────────────────────────
@@ -257,7 +310,14 @@ export function UploadModal() {
   const noAccess = Object.entries(invalidDeployments)
     .filter(([, s]) => s === 'no_access')
     .map(([id]) => id)
-  const hasInvalid = notFound.length > 0 || noAccess.length > 0
+
+  // Manual assignment is required when photos carry no deployment prefix at all, or when some
+  // prefixes aren't in the DB. (no_access photos are excluded server-side and don't gate upload.)
+  const needsAssignment = uploadMode === 'images' && (deploymentCount === 0 || notFound.length > 0)
+  const depsInProject = deployments.filter((d) => d.project_id === assignProjectId)
+  const projectReady = !!assignProjectId && (assignProjectId !== '__new__' || !!newProjectName.trim())
+  const deploymentReady = !!assignDeploymentId && (assignDeploymentId !== '__new__' || !!newDepName.trim())
+  const assignmentReady = !needsAssignment || (projectReady && deploymentReady)
 
   // ─────────────────────────────────────────────────────────────────────────
   const ZONE_STYLE: React.CSSProperties = {
@@ -279,6 +339,15 @@ export function UploadModal() {
     backgroundColor: 'transparent',
     color: 'var(--text-color)',
     cursor: 'pointer',
+  }
+
+  const FIELD: React.CSSProperties = {
+    width: '100%', padding: '0.45rem 0.55rem', fontSize: '0.8125rem',
+    border: '1px solid var(--border)', borderRadius: 'var(--radius)',
+    background: 'var(--surface)', color: 'var(--text-color)',
+  }
+  const FIELD_LABEL: React.CSSProperties = {
+    display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', opacity: 0.85,
   }
 
   return (
@@ -378,42 +447,108 @@ export function UploadModal() {
             </span>
           </div>
 
-          {/* Validation warning */}
-          {hasInvalid && (
+          {/* No-access notice — these photos are blocked server-side and excluded from the upload */}
+          {noAccess.length > 0 && (
             <div style={{
               padding: '0.75rem',
               borderRadius: 'var(--radius)',
-              backgroundColor: 'rgba(255,152,0,0.08)',
-              border: '1px solid rgba(255,152,0,0.3)',
+              backgroundColor: 'rgba(244,67,54,0.08)',
+              border: '1px solid rgba(244,67,54,0.3)',
               fontSize: '0.8125rem',
             }}>
-              <strong style={{ color: '#e65100', display: 'block', marginBottom: '0.25rem' }}>
-                ⚠️ Some images may fail to upload
+              <strong style={{ color: 'var(--error, #f44336)', display: 'block', marginBottom: '0.25rem' }}>
+                🚫 Some photos will be skipped
               </strong>
-              {notFound.length > 0 && (
-                <p style={{ margin: '0.35rem 0 0 0', color: '#e65100' }}>
-                  <strong>Not in database:</strong>{' '}
-                  <code style={{ fontFamily: 'monospace' }}>{notFound.join(', ')}</code>
-                  {' '}— create these deployments in the mobile app first.
+              <p style={{ margin: 0 }}>
+                <code style={{ fontFamily: 'monospace' }}>{noAccess.join(', ')}</code>{' '}
+                belong to a project you don't have access to, so those photos won't be uploaded.
+                Contact the project admin if you think this is wrong.
+              </p>
+            </div>
+          )}
+
+          {/* Assignment panel — for photos with no / unrecognised deployment */}
+          {needsAssignment && (
+            <div style={{
+              padding: '0.85rem',
+              borderRadius: 'var(--radius)',
+              border: '1px solid var(--primary)',
+              backgroundColor: 'rgba(59,130,246,0.05)',
+              display: 'flex', flexDirection: 'column', gap: '0.6rem',
+            }}>
+              <div>
+                <strong style={{ fontSize: '0.875rem' }}>📍 Assign a deployment</strong>
+                <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', opacity: 0.75 }}>
+                  {deploymentCount === 0
+                    ? "These photos don't include deployment info. Choose which project and deployment they belong to."
+                    : "Some photos have a deployment that isn't in the database. Choose where they belong."}
                 </p>
+              </div>
+
+              <label style={FIELD_LABEL}>Project
+                <select
+                  style={FIELD}
+                  value={assignProjectId}
+                  onChange={(e) => { setAssignProjectId(e.target.value); setAssignDeploymentId(''); setNewDepName('') }}
+                >
+                  <option value="">Select project…</option>
+                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+                  <option value="__new__">➕ Create new project…</option>
+                </select>
+              </label>
+              {assignProjectId === '__new__' && (
+                <input
+                  style={FIELD}
+                  placeholder="New project name"
+                  value={newProjectName}
+                  onChange={(e) => setNewProjectName(e.target.value)}
+                />
               )}
-              {noAccess.length > 0 && (
-                <p style={{ margin: '0.35rem 0 0 0', color: '#e65100' }}>
-                  <strong>No access:</strong>{' '}
-                  <code style={{ fontFamily: 'monospace' }}>{noAccess.join(', ')}</code>
-                  {' '}— contact your project admin.
-                </p>
+
+              {projectReady && (
+                <label style={FIELD_LABEL}>Deployment
+                  <select style={FIELD} value={assignDeploymentId} onChange={(e) => setAssignDeploymentId(e.target.value)}>
+                    <option value="">Select deployment…</option>
+                    {assignProjectId !== '__new__' && depsInProject.map((d) => (
+                      <option key={d.id} value={d.id}>{d.location_name || d.id.slice(0, 8)}</option>
+                    ))}
+                    <option value="__new__">➕ Create new deployment…</option>
+                  </select>
+                </label>
+              )}
+              {assignDeploymentId === '__new__' && (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
+                  <input
+                    style={FIELD}
+                    placeholder="New deployment name (e.g. North Ridge — Cam 1)"
+                    value={newDepName}
+                    onChange={(e) => setNewDepName(e.target.value)}
+                  />
+                  <div style={{ display: 'flex', gap: '0.4rem' }}>
+                    <input style={{ ...FIELD, flex: 1 }} placeholder="Latitude (optional)" inputMode="decimal" value={newDepLat} onChange={(e) => setNewDepLat(e.target.value)} />
+                    <input style={{ ...FIELD, flex: 1 }} placeholder="Longitude (optional)" inputMode="decimal" value={newDepLng} onChange={(e) => setNewDepLng(e.target.value)} />
+                  </div>
+                </div>
+              )}
+
+              {assignError && (
+                <div style={{ color: 'var(--error, #f44336)', fontSize: '0.8rem' }}>⚠ {assignError}</div>
               )}
             </div>
           )}
 
           {/* Action row */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.25rem' }}>
-            <button style={BTN_SECONDARY} onClick={clearSelection}>
+            <button style={BTN_SECONDARY} onClick={clearSelection} disabled={assigning}>
               ← Change selection
             </button>
-            <button className="btn" onClick={handleUpload} style={{ padding: '0.5rem 1.5rem', fontWeight: 600 }}>
-              ⬆ Upload {files.length} image{files.length !== 1 ? 's' : ''}
+            <button
+              className="btn"
+              onClick={handleUpload}
+              disabled={assigning || !assignmentReady}
+              style={{ padding: '0.5rem 1.5rem', fontWeight: 600, opacity: assigning || !assignmentReady ? 0.6 : 1 }}
+            >
+              {assigning ? 'Preparing…' : `⬆ Upload ${files.length} image${files.length !== 1 ? 's' : ''}`}
             </button>
           </div>
         </div>

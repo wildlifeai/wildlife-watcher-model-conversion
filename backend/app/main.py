@@ -33,6 +33,7 @@ from app.routers import (
     media,
     models,
     pipeline,
+    projects,
     public_api,
     qa,
 )
@@ -140,6 +141,7 @@ async def unhandled_exception_handler(request, exc):
 app.include_router(auth.router)
 app.include_router(jobs.router)
 app.include_router(deployments.router)
+app.include_router(projects.router)
 app.include_router(exif.router)
 app.include_router(lorawan.router)
 app.include_router(manifest.router)
