@@ -480,16 +480,17 @@ def build_pipeline_steps() -> list:
     return steps
 
 
-async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | None = None) -> None:
+async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | None = None, job_id: str | None = None) -> None:
     """Run the AI annotation pipeline on freshly-uploaded deployments (best-effort).
 
     Enqueued (fire-and-forget) by the upload job after media is registered, so species
     observations populate the Annotations grid without a manual trigger. Step set is
     built from the enabled feature flags; failures are logged, never raised.
 
-    Caveat: ``run_pipeline`` processes ALL media in a deployment, so re-uploading to an
-    already-annotated deployment re-runs it (duplicate AI observations). Fine for fresh
-    deployments; scope-to-new-media is a future enhancement.
+    ``run_pipeline`` scopes itself to unannotated media (idempotency guard), so re-runs
+    on an already-annotated deployment are cheap no-ops. When ``job_id`` is given,
+    per-deployment progress is reported to it so the dock/banner show real movement
+    (and the stale-job reaper sees a heartbeat) instead of 0% → 100%.
     """
     from app.domain.pipeline import run_pipeline
 
@@ -500,7 +501,14 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
     # Drop unresolved folder prefixes (e.g. "00000000") — they're not real deployments.
     deployment_ids = [d for d in deployment_ids if _is_uuid(d)]
 
-    for dep_id in deployment_ids:
+    total = len(deployment_ids)
+    for i, dep_id in enumerate(deployment_ids):
+        if job_id:
+            await update_job(
+                job_id,
+                progress=i / total if total else 0.0,
+                message=f"🔬 Analysing deployment {i + 1}/{total} ({dep_id[:8]})…",
+            )
         try:
             logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
             await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id)
@@ -512,6 +520,8 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
             logger.info("auto_annotate_complete", deployment_id=dep_id)
         except Exception as exc:
             logger.warning("auto_annotate_failed", deployment_id=dep_id, error=str(exc))
+        if job_id:
+            await update_job(job_id, progress=(i + 1) / total if total else 1.0)
 
 
 async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) -> None:
@@ -553,7 +563,7 @@ async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_
     """
     await update_job(job_id, status=JobStatus.PROCESSING, current_phase=ProgressPhase.AI_PIPELINE)
     try:
-        await auto_annotate_deployments(deployment_ids, user_id=user_id)
+        await auto_annotate_deployments(deployment_ids, user_id=user_id, job_id=job_id)
         await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message="AI analysis complete")
     except Exception as exc:
         logger.warning("annotate_deployments_job_failed", job_id=job_id, error=str(exc))
@@ -1101,27 +1111,59 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         # unreachable, so this never silently drops the analysis. ──
         elif _dep_ids and _steps and settings.REDIS_URL:
             from app.jobs.dispatch import enqueue_job  # noqa: PLC0415
+            from app.jobs.store import find_queued_ai_jobs  # noqa: PLC0415
 
             await start_phase(job_id, ProgressPhase.AI_PIPELINE)
-            ai_job_id = await create_job(
-                user_id=_user_id,
-                kind="ai_pipeline",
-                label=f"AI analysis — {len(_dep_ids)} deployment(s)",
-                deployment_ids=_dep_ids,
-            )
-            await enqueue_job("annotate_deployments_job", ai_job_id, _dep_ids, _user_id)
-            await emit_event(
-                job_id,
-                ProgressEvent(
-                    type=EventType.FILE_SUCCESS,
-                    phase=ProgressPhase.AI_PIPELINE,
-                    child_job_id=ai_job_id,
-                    message=(
-                        f"🛰️ Queued AI analysis for {len(_dep_ids)} deployment(s) on the GPU worker "
-                        f"— track it in Processing history (job {ai_job_id[:8]})"
+
+            # Coalesce: chunked uploads (the frontend sends ~10 images per request) previously
+            # enqueued one AI job PER CHUNK for the same deployment — ~18 redundant model runs
+            # for one 171-image upload. A deployment covered by a still-QUEUED AI job will be
+            # picked up when that job starts (it fetches media at start, and the pipeline scopes
+            # itself to unannotated media), so only enqueue for the uncovered ones and chain the
+            # dock onto the existing job otherwise.
+            active_ai = await find_queued_ai_jobs()
+            covered: dict[str, str] = {}
+            for j in active_ai:
+                for d in j["deployment_ids"]:
+                    covered.setdefault(d, j["job_id"])
+            new_dep_ids = [d for d in _dep_ids if d not in covered]
+
+            if new_dep_ids:
+                ai_job_id = await create_job(
+                    user_id=_user_id,
+                    kind="ai_pipeline",
+                    label=f"AI analysis — {len(new_dep_ids)} deployment(s)",
+                    deployment_ids=new_dep_ids,
+                )
+                await enqueue_job("annotate_deployments_job", ai_job_id, new_dep_ids, _user_id)
+                await emit_event(
+                    job_id,
+                    ProgressEvent(
+                        type=EventType.FILE_SUCCESS,
+                        phase=ProgressPhase.AI_PIPELINE,
+                        child_job_id=ai_job_id,
+                        message=(
+                            f"🛰️ Queued AI analysis for {len(new_dep_ids)} deployment(s) on the AI worker "
+                            f"— track it in Processing history (job {ai_job_id[:8]})"
+                        ),
                     ),
-                ),
-            )
+                )
+            else:
+                # Everything is already covered — chain the dock onto the existing job so it
+                # still tracks the analysis to completion instead of enqueuing a duplicate.
+                existing_id = covered[_dep_ids[0]]
+                await emit_event(
+                    job_id,
+                    ProgressEvent(
+                        type=EventType.FILE_SUCCESS,
+                        phase=ProgressPhase.AI_PIPELINE,
+                        child_job_id=existing_id,
+                        message=(
+                            f"🛰️ AI analysis already queued for {len(_dep_ids)} deployment(s) "
+                            f"(job {existing_id[:8]}) — new images will be included in that run"
+                        ),
+                    ),
+                )
             await complete_phase(job_id, ProgressPhase.AI_PIPELINE)
 
         # ── Final status (Drive sync + AI pipeline done) ──────────────────

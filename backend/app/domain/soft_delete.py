@@ -42,16 +42,19 @@ def soft_delete_project(svc, project_id: str, ts: str) -> None:
 
 
 def restore_deployments(svc, dep_ids: list[str], ts: str) -> None:
+    # Restore parent-first (deployments → media → observations), the mirror of the children-first
+    # delete order, so a read never briefly sees an active child under a still-deleted parent.
     if not dep_ids:
         return
-    svc.table("observations").update({"deleted_at": None}).in_("deployment_id", dep_ids).eq("deleted_at", ts).execute()
-    svc.table("media").update({"deleted_at": None}).in_("deployment_id", dep_ids).eq("deleted_at", ts).execute()
     svc.table("deployments").update({"deleted_at": None}).in_("id", dep_ids).eq("deleted_at", ts).execute()
+    svc.table("media").update({"deleted_at": None}).in_("deployment_id", dep_ids).eq("deleted_at", ts).execute()
+    svc.table("observations").update({"deleted_at": None}).in_("deployment_id", dep_ids).eq("deleted_at", ts).execute()
 
 
 def restore_project(svc, project_id: str, ts: str) -> None:
-    # Only the deployments that were deleted as part of *this* project delete (deleted_at == ts).
+    # Parent-first: un-delete the project before its deployments/media/observations.
+    # Read the deployment ids first (their deleted_at is unaffected by the project update).
     resp = svc.table("deployments").select("id").eq("project_id", project_id).eq("deleted_at", ts).execute()
     dep_ids = [r["id"] for r in (resp.data or [])]
-    restore_deployments(svc, dep_ids, ts)
     svc.table("projects").update({"deleted_at": None}).eq("id", project_id).eq("deleted_at", ts).execute()
+    restore_deployments(svc, dep_ids, ts)

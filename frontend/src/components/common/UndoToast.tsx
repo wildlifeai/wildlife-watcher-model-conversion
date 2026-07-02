@@ -34,6 +34,9 @@ export function UndoToastHost() {
     setBusy(true)
     try {
       await cb()
+    } catch (e) {
+      // Surface a failed undo (permission/network) instead of silently leaving the item deleted.
+      alert(e instanceof Error ? e.message : 'Undo failed. The item is still deleted.')
     } finally {
       setBusy(false)
       setToast(null)

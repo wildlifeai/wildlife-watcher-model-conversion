@@ -5,6 +5,7 @@
 Wires together: CORS, lifespan (Redis connect/disconnect), middleware, and routers.
 """
 
+import asyncio
 import re
 from contextlib import asynccontextmanager
 
@@ -61,17 +62,25 @@ async def lifespan(app: FastAPI):
         except ImportError:
             logger.warning("sentry_sdk_not_installed")
 
-    # Start recovery of jobs from Supabase
-    from app.jobs.store import recover_stuck_jobs
+    # Stale-job reaper: age-based, so it only fails jobs with no progress for an hour.
+    # (The old recover_stuck_jobs failed EVERY 'processing' job at startup — wrong now
+    # that AI jobs legitimately run on the separate worker process across API restarts.)
+    from app.jobs.store import reap_stale_jobs
 
-    try:
-        await recover_stuck_jobs()
-    except Exception as e:
-        logger.warning("stuck_jobs_recovery_failed", error=str(e))
+    async def _reaper_loop():
+        while True:
+            try:
+                await reap_stale_jobs(max_age_minutes=60)
+            except Exception as e:  # never let the loop die
+                logger.warning("reaper_iteration_failed", error=str(e))
+            await asyncio.sleep(15 * 60)
+
+    reaper_task = asyncio.create_task(_reaper_loop())
 
     yield
 
     # Shutdown
+    reaper_task.cancel()
     logger.info("app_shutdown")
 
 

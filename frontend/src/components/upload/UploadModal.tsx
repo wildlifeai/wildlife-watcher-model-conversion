@@ -251,11 +251,27 @@ export function UploadModal() {
           projectId = proj.id
         }
         if (assignDeploymentId === '__new__') {
+          // Validate coords client-side so an out-of-range value doesn't hit the DB CHECK
+          // constraint as a confusing 500.
+          let latitude: number | undefined
+          let longitude: number | undefined
+          if (newDepLat.trim()) {
+            latitude = Number(newDepLat)
+            if (Number.isNaN(latitude) || latitude < -90 || latitude > 90) {
+              throw new Error('Latitude must be a number between -90 and 90.')
+            }
+          }
+          if (newDepLng.trim()) {
+            longitude = Number(newDepLng)
+            if (Number.isNaN(longitude) || longitude < -180 || longitude > 180) {
+              throw new Error('Longitude must be a number between -180 and 180.')
+            }
+          }
           const dep = await apiClient.post('/api/deployments', {
             project_id: projectId,
             name: newDepName.trim(),
-            latitude: newDepLat.trim() ? Number(newDepLat) : undefined,
-            longitude: newDepLng.trim() ? Number(newDepLng) : undefined,
+            latitude,
+            longitude,
           })
           assignedDeploymentId = dep.id
         } else {

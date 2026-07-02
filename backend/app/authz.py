@@ -162,16 +162,21 @@ async def classify_deployment_access(user_id: str, deployment_ids: list[str]) ->
         result = {d: "not_found" for d in deployment_ids}
         if not deployment_ids:
             return result
+        # Postgres compares UUIDs case-insensitively but returns them lowercase, so a mixed-case
+        # input id wouldn't match row["id"] and would be wrongly left "not_found". Key by lowercase
+        # and map results back to the caller's original casing.
+        id_map = {d.lower(): d for d in deployment_ids}
         svc = create_service_client()
         roles = _fetch_active_roles(svc, user_id)
-        resp = svc.table("deployments").select("id, project_id, projects(organisation_id)").in_("id", deployment_ids).execute()
+        resp = svc.table("deployments").select("id, project_id, projects(organisation_id)").in_("id", list(id_map.keys())).execute()
         for row in resp.data or []:
             proj = row.get("projects")
             if isinstance(proj, list):  # PostgREST may nest a to-one as a 1-element list
                 proj = proj[0] if proj else None
             org_id = proj.get("organisation_id") if isinstance(proj, dict) else None
             project_id = row.get("project_id")
-            result[row["id"]] = "valid" if _has_access(roles, org_id, project_id) else "no_access"
+            key = id_map.get(row["id"].lower(), row["id"])
+            result[key] = "valid" if _has_access(roles, org_id, project_id) else "no_access"
         return result
 
     return await asyncio.to_thread(_check)
