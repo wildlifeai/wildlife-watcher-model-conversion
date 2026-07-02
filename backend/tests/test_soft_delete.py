@@ -42,18 +42,26 @@ def _roles_client(monkeypatch, *, org_id, roles):
 async def test_assert_project_writer_allows_member(monkeypatch):
     from app.authz import assert_project_writer
 
-    _roles_client(monkeypatch, org_id="org-1", roles=[
-        {"role": "project_member", "scope_type": "project", "scope_id": "proj-1", "expires_at": None},
-    ])
+    _roles_client(
+        monkeypatch,
+        org_id="org-1",
+        roles=[
+            {"role": "project_member", "scope_type": "project", "scope_id": "proj-1", "expires_at": None},
+        ],
+    )
     await assert_project_writer("u1", "proj-1")  # must not raise
 
 
 async def test_assert_project_writer_denies_viewer(monkeypatch):
     from app.authz import assert_project_writer
 
-    _roles_client(monkeypatch, org_id="org-1", roles=[
-        {"role": "project_viewer", "scope_type": "project", "scope_id": "proj-1", "expires_at": None},
-    ])
+    _roles_client(
+        monkeypatch,
+        org_id="org-1",
+        roles=[
+            {"role": "project_viewer", "scope_type": "project", "scope_id": "proj-1", "expires_at": None},
+        ],
+    )
     with pytest.raises(HTTPException) as exc:
         await assert_project_writer("u1", "proj-1")
     assert exc.value.status_code == 404
@@ -62,9 +70,13 @@ async def test_assert_project_writer_denies_viewer(monkeypatch):
 async def test_assert_project_admin_denies_member(monkeypatch):
     from app.authz import assert_project_admin
 
-    _roles_client(monkeypatch, org_id="org-1", roles=[
-        {"role": "project_member", "scope_type": "project", "scope_id": "proj-1", "expires_at": None},
-    ])
+    _roles_client(
+        monkeypatch,
+        org_id="org-1",
+        roles=[
+            {"role": "project_member", "scope_type": "project", "scope_id": "proj-1", "expires_at": None},
+        ],
+    )
     with pytest.raises(HTTPException):
         await assert_project_admin("u1", "proj-1")
 
@@ -72,9 +84,13 @@ async def test_assert_project_admin_denies_member(monkeypatch):
 async def test_assert_project_admin_allows_org_manager(monkeypatch):
     from app.authz import assert_project_admin
 
-    _roles_client(monkeypatch, org_id="org-1", roles=[
-        {"role": "organisation_manager", "scope_type": "organisation", "scope_id": "org-1", "expires_at": None},
-    ])
+    _roles_client(
+        monkeypatch,
+        org_id="org-1",
+        roles=[
+            {"role": "organisation_manager", "scope_type": "organisation", "scope_id": "org-1", "expires_at": None},
+        ],
+    )
     await assert_project_admin("u1", "proj-1")  # org-manager of the project's org → allowed
 
 
