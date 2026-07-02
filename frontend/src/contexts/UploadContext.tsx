@@ -64,6 +64,8 @@ interface UploadContextValue {
     paths: string[],
     uploadToDrive: boolean,
     deployments: UploadDeployment[],
+    /** Deployment the user manually assigned unresolved/no-id photos to (see UploadModal). */
+    assignedDeploymentId?: string,
   ) => Promise<void>
   clearUpload: () => void
 
@@ -315,6 +317,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       paths: string[],
       uploadToDrive: boolean,
       deployments: UploadDeployment[],
+      assignedDeploymentId?: string,
     ): Promise<void> => {
       if (busyRef.current) return
       busyRef.current = true
@@ -370,6 +373,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           for (const f of chunk) formData.append('files', f)
           for (const p of chunkPaths) formData.append('paths', p)
           if (uploadToDrive) formData.append('upload_to_drive', 'true')
+          if (assignedDeploymentId) formData.append('assigned_deployment_id', assignedDeploymentId)
 
           try {
             const response = await apiClient.upload('/api/exif/parse', formData)
@@ -382,6 +386,15 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               const jobs = [...prev.jobs]
 
               if (driveInfo) {
+                // Server blocked images whose deployment the user can't access (enforced
+                // regardless of the client-side warning).
+                if (driveInfo.blocked_deployments?.length) {
+                  logs.push({
+                    ts: Date.now(),
+                    level: 'warning',
+                    message: `🚫 ${driveInfo.blocked_deployments.length} deployment${driveInfo.blocked_deployments.length !== 1 ? 's' : ''} skipped — you don't have access to them.`,
+                  })
+                }
                 if (driveInfo.status === 'skipped') {
                   const reason =
                     driveInfo.reason === 'no_files_stored'

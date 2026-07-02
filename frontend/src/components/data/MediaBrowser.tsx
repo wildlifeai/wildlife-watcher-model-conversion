@@ -14,6 +14,8 @@ import type { AnnotationStatus } from '../ui/StatusBadge'
 import { Modal } from '../ui/Modal'
 import { isHumanReviewed, isAiLabel, humanCreateFields } from '../../lib/observations'
 import { getLocalPreview } from '../../lib/localPreviewStore'
+import { apiClient } from '../../lib/apiClient'
+import { showUndoToast } from '../common/undoToastBus'
 import { BulkLabelModal } from './BulkLabelModal'
 import { type SpeciesSelection } from './SpeciesPicker'
 import { getTimeOfDay, formatCaptureTime } from '../../lib/time'
@@ -432,16 +434,25 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   }, [inat.connected, connectInat, selectedIds])
 
   const handleBatchDelete = useCallback(async (ids: string[]) => {
-    const resp = await fetch('/api/media/batch', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ media_ids: ids }),
-    })
-    if (!resp.ok) throw new Error('Delete failed')
-    // Remove deleted media from local state
+    // Capture the rows so Undo can re-insert them without a full refetch.
+    const removed = media.filter(m => ids.includes(m.id))
+    const res = await apiClient.del('/api/media/batch', { media_ids: ids }) as { data?: { deleted_at?: string } }
+    const deletedAt = res?.data?.deleted_at
     setMedia(prev => prev.filter(m => !ids.includes(m.id)))
     setSelectedIds(new Set())
-  }, [])
+    if (deletedAt) {
+      showUndoToast({
+        message: `Deleted ${ids.length} photo${ids.length !== 1 ? 's' : ''}`,
+        onUndo: async () => {
+          await apiClient.post('/api/media/batch/restore', { media_ids: ids, deleted_at: deletedAt })
+          setMedia(prev => {
+            const have = new Set(prev.map(m => m.id))
+            return [...removed.filter(m => !have.has(m.id)), ...prev]
+          })
+        },
+      })
+    }
+  }, [media])
 
   const handleRunAi = useCallback(async (models: string[]) => {
     const ids = Array.from(selectedIds)

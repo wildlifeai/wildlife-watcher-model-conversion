@@ -108,7 +108,9 @@ async def get_optional_user(
     client = supabase_client.create_anon_client()
 
     try:
-        user_response = client.auth.get_user(token)
+        # Run the synchronous Supabase call in a thread so it doesn't block the
+        # event loop, consistent with get_current_user above.
+        user_response = await asyncio.to_thread(client.auth.get_user, token)
         if user_response and user_response.user:
             return user_response.user
     except Exception:

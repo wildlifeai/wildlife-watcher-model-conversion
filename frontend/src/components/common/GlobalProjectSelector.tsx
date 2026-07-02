@@ -35,12 +35,19 @@ export function GlobalProjectSelector() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [isOpen])
 
-  // Keep the menu anchored to the trigger while open (scroll/resize).
+  // Keep the menu anchored to the trigger while open. rAF-throttled so scroll/resize don't
+  // thrash layout with synchronous getBoundingClientRect + state updates on every event.
   useEffect(() => {
     if (!isOpen) return
-    window.addEventListener('scroll', place, true)
-    window.addEventListener('resize', place)
-    return () => { window.removeEventListener('scroll', place, true); window.removeEventListener('resize', place) }
+    let frame = 0
+    const onScrollResize = () => { cancelAnimationFrame(frame); frame = requestAnimationFrame(place) }
+    window.addEventListener('scroll', onScrollResize, true)
+    window.addEventListener('resize', onScrollResize)
+    return () => {
+      cancelAnimationFrame(frame)
+      window.removeEventListener('scroll', onScrollResize, true)
+      window.removeEventListener('resize', onScrollResize)
+    }
   }, [isOpen, place])
 
   if (isLoading || projects.length === 0) return null
