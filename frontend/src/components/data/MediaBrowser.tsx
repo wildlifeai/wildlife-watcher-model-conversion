@@ -674,7 +674,9 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   }, [pendingUploads, media, filterDeployments, deployments])
 
   const filtered = useMemo(() => {
-    let result: MediaRecord[] = pendingCards.length ? [...pendingCards, ...media] : media
+    // Real (viewable) media first; still-uploading placeholders appended last so the user
+    // interacts with available photos rather than "Uploading" cards.
+    let result: MediaRecord[] = pendingCards.length ? [...media, ...pendingCards] : media
 
     if (filterSpecies.length) {
       result = result.filter(m => m.observations.some(o => !!o.scientific_name && filterSpecies.includes(o.scientific_name)))

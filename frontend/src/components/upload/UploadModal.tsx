@@ -195,7 +195,10 @@ export function UploadModal() {
         const res = await apiClient.post('/api/deployments/validate', {
           deployment_ids: unknownPrefixes,
         })
-        const validation: Record<string, 'valid' | 'no_access' | 'not_found'> = res.data
+        // /validate returns the map DIRECTLY ({prefix: status}), not an ApiResponse
+        // envelope — reading res.data was always undefined, so the assignment/no-access
+        // UI never triggered. Tolerate both shapes.
+        const validation: Record<string, 'valid' | 'no_access' | 'not_found'> = res?.data ?? res ?? {}
         const invalid: Record<string, 'no_access' | 'not_found'> = {}
         for (const [id, status] of Object.entries(validation)) {
           if (status === 'no_access' || status === 'not_found') invalid[id] = status
