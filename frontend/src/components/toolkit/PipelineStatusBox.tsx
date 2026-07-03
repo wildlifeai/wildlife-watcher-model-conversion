@@ -39,32 +39,152 @@ function formatElapsed(ms: number): string {
   return `${s}s`
 }
 
-function jobStatusLabel(status: string): string {
-  switch (status) {
-    case 'queued': return 'Queued'
-    case 'processing':
-    case 'in_progress': return 'Processing'
-    case 'completed': return 'Done'
-    case 'completed_with_errors': return 'Done (with errors)'
-    case 'failed':
-    case 'error': return 'Failed'
-    case 'skipped': return 'Skipped'
-    case 'deferred': return 'Deferred'
-    default: return status
-  }
+/* ── Stage model ──────────────────────────────────────────────────── */
+
+type StepStatus = 'pending' | 'active' | 'done' | 'warn' | 'error'
+
+interface StepView {
+  key: string
+  label: string
+  detail: string
+  status: StepStatus
+  progress: number | null
 }
 
-function jobStatusColor(status: string): string {
-  switch (status) {
-    case 'completed': return 'var(--success, #4CAF50)'
-    case 'completed_with_errors': return 'var(--warning, #FF9800)'
-    case 'failed':
-    case 'error': return 'var(--error, #f44336)'
-    case 'processing':
-    case 'in_progress': return 'var(--primary, #3b82f6)'
-    case 'skipped': return 'var(--warning, #FF9800)'
-    default: return 'var(--text-secondary, #888)'
+interface StepsResult {
+  steps: StepView[]
+  issue: { level: 'warn' | 'error'; text: string } | null
+}
+
+const STEP_COLOR: Record<StepStatus, string> = {
+  pending: 'var(--text-secondary, #999)',
+  active: 'var(--primary, #3b82f6)',
+  done: 'var(--success, #4CAF50)',
+  warn: 'var(--warning, #FF9800)',
+  error: 'var(--error, #f44336)',
+}
+const STEP_ICON: Record<StepStatus, string> = { pending: '', active: '', done: '✓', warn: '!', error: '✕' }
+
+const _TERMINAL = ['completed', 'completed_with_errors', 'failed', 'skipped']
+
+/**
+ * Collapse the raw PipelineState into the three stages a user actually cares about —
+ * Upload → Save to Google Drive → AI analysis — with a plain-language issue summary.
+ * Everything is derived from data the dock already has (uploadedFiles, the drive jobs'
+ * summaries, and the AI job's progress); no new backend surface.
+ */
+function deriveSteps(state: PipelineState, phase: string): StepsResult {
+  const total = state.totalFiles
+  const driveJobs = state.jobs.filter((j) => j.fileCount > 0)
+  const aiJobs = state.jobs.filter((j) => j.fileCount === 0)
+  const done = phase === 'completed'
+
+  // 1 · Upload (browser → server)
+  const upDone = done || (total > 0 && state.uploadedFiles >= total)
+  const uploadStep: StepView = {
+    key: 'upload',
+    label: 'Uploaded',
+    detail: total > 0 ? `${Math.min(state.uploadedFiles, total)} of ${total} photos` : 'Preparing…',
+    status: total > 0 && upDone ? 'done' : 'active',
+    progress: total > 0 ? state.uploadedFiles / total : null,
   }
+
+  // 2 · Save to Google Drive
+  const dt = driveJobs.reduce(
+    (a, j) => {
+      if (j.summary) {
+        a.uploaded += j.summary.uploaded
+        a.skipped += j.summary.skipped
+        a.failed += j.summary.failed
+      }
+      return a
+    },
+    { uploaded: 0, skipped: 0, failed: 0 },
+  )
+  const driveFiles = driveJobs.reduce((s, j) => s + j.fileCount, 0)
+  const driveProg = driveFiles > 0
+    ? driveJobs.reduce((s, j) => s + Math.max(0, Math.min(1, j.progress || 0)) * j.fileCount, 0) / driveFiles
+    : 0
+  const driveTerm = driveJobs.length > 0 && driveJobs.every((j) => _TERMINAL.includes(j.status))
+  let driveStatus: StepStatus
+  if (driveJobs.length === 0) driveStatus = done ? 'done' : upDone ? 'active' : 'pending'
+  else if (done || driveTerm) driveStatus = dt.failed > 0 ? 'error' : dt.skipped > 0 ? 'warn' : 'done'
+  else driveStatus = 'active'
+  const driveDetail =
+    driveStatus === 'pending' ? 'Waiting for upload'
+    : dt.failed > 0 ? `${dt.uploaded} saved · ${dt.failed} failed`
+    : dt.skipped > 0 ? `${dt.uploaded} saved · ${dt.skipped} skipped`
+    : driveStatus === 'active' ? `${dt.uploaded} saved so far…`
+    : `${dt.uploaded} saved`
+  const driveStep: StepView = {
+    key: 'drive', label: 'Saved to Google Drive', detail: driveDetail,
+    status: driveStatus, progress: driveStatus === 'active' ? driveProg : null,
+  }
+
+  // 3 · AI analysis
+  const ai = aiAnalysisStatus(state)
+  const aiFailed = aiJobs.some((j) => j.status === 'failed')
+  let aiStatus: StepStatus
+  if (aiJobs.length === 0) aiStatus = done ? 'done' : 'pending'
+  else if (ai?.active) aiStatus = 'active'
+  else if (aiFailed) aiStatus = 'error'
+  else aiStatus = 'done'
+  const aiDetail =
+    aiStatus === 'pending' ? 'Waiting for upload to finish'
+    : aiStatus === 'error' ? 'Analysis failed — see technical details'
+    : aiStatus === 'done' ? 'Species identified'
+    : 'Detecting animals, then identifying species'
+  const aiStep: StepView = {
+    key: 'ai', label: 'Analysing with AI', detail: aiDetail,
+    status: aiStatus, progress: aiStatus === 'active' && ai ? ai.progress : null,
+  }
+
+  let issue: StepsResult['issue'] = null
+  if (dt.failed > 0) issue = { level: 'error', text: `${dt.failed} photo${dt.failed !== 1 ? 's' : ''} couldn't be saved to Google Drive. See technical details.` }
+  else if (aiFailed) issue = { level: 'error', text: 'AI analysis hit an error on some deployments. Your photos are safe — you can retry from Processing history.' }
+  else if (dt.skipped > 0) issue = { level: 'warn', text: `${dt.skipped} photo${dt.skipped !== 1 ? 's' : ''} skipped — already in your library. Nothing to do.` }
+
+  return { steps: [uploadStep, driveStep, aiStep], issue }
+}
+
+/* ── Stage row ────────────────────────────────────────────────────── */
+
+function StepRow({ step, last }: { step: StepView; last: boolean }) {
+  const color = STEP_COLOR[step.status]
+  const isActive = step.status === 'active'
+  const isPending = step.status === 'pending'
+  return (
+    <div style={{ display: 'flex', gap: '0.6rem' }}>
+      <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center' }}>
+        <span style={{
+          width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
+          display: 'flex', alignItems: 'center', justifyContent: 'center',
+          fontSize: '0.72rem', fontWeight: 700, color: isPending ? 'var(--text-secondary, #999)' : '#fff',
+          background: isPending ? 'var(--surface-sunken)' : color,
+          border: isPending ? '1px solid var(--border)' : 'none',
+        }}>
+          {isActive
+            ? <span className="step-spin" style={{ width: 10, height: 10, border: '2px solid rgba(255,255,255,0.45)', borderTopColor: '#fff', borderRadius: '50%' }} />
+            : STEP_ICON[step.status]}
+        </span>
+        {!last && <span style={{ flex: 1, width: 2, minHeight: 12, background: 'var(--border)', margin: '2px 0' }} />}
+      </div>
+      <div style={{ paddingBottom: last ? 0 : '0.7rem', flex: 1, minWidth: 0, opacity: isPending ? 0.55 : 1 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', gap: '0.5rem' }}>
+          <span style={{ fontSize: '0.82rem', fontWeight: 500 }}>{step.label}</span>
+          {isActive && step.progress != null && (
+            <span style={{ fontSize: '0.75rem', color, fontWeight: 600 }}>{Math.round(step.progress * 100)}%</span>
+          )}
+        </div>
+        <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary, #888)', marginTop: 1 }}>{step.detail}</div>
+        {isActive && step.progress != null && (
+          <div style={{ height: 3, background: 'var(--surface-sunken)', borderRadius: 2, overflow: 'hidden', marginTop: 5 }}>
+            <div style={{ width: `${Math.round(step.progress * 100)}%`, height: '100%', background: color, transition: 'width 0.3s ease-out' }} />
+          </div>
+        )}
+      </div>
+    </div>
+  )
 }
 
 /**
@@ -165,6 +285,7 @@ export function PipelineStatusBox({ state, phase }: { state: PipelineState; phas
   const logContainerRef = useRef<HTMLDivElement>(null)
   const prevLogCountRef = useRef(0)
   const [elapsed, setElapsed] = useState(0)
+  const [showLog, setShowLog] = useState(false)
   const startTsRef = useRef(0)
 
   // Elapsed timer — ticks every second while pipeline is active
@@ -229,6 +350,7 @@ export function PipelineStatusBox({ state, phase }: { state: PipelineState; phas
 
   const isActive = phase === 'uploading' || phase === 'processing' || phase === 'stalled'
   const eta = isActive ? estimateEta(state, elapsed) : null
+  const { steps, issue } = deriveSteps(state, phase)
 
   return (
     <div className="card" style={{ marginTop: '1rem', padding: '1rem', border: '1px solid var(--border)' }}>
@@ -272,73 +394,67 @@ export function PipelineStatusBox({ state, phase }: { state: PipelineState; phas
         />
       </div>
 
-      {/* Per-job mini progress — only shown when there are multiple active jobs */}
-      {state.jobs.length > 1 && (
+      {/* ── Stages: Upload → Save to Drive → AI analysis ── */}
+      <div style={{ marginTop: '0.9rem' }}>
+        {steps.map((s, i) => (
+          <StepRow key={s.key} step={s} last={i === steps.length - 1} />
+        ))}
+      </div>
+
+      {/* Plain-language issue summary (replaces decoding "Batch N: Done (with errors)") */}
+      {issue && (
         <div style={{
-          marginTop: '0.75rem',
-          display: 'flex',
-          flexWrap: 'wrap',
-          gap: '0.5rem',
-          fontSize: '0.7rem',
-          fontFamily: 'monospace',
+          marginTop: '0.4rem', padding: '0.5rem 0.6rem', borderRadius: 4, fontSize: '0.76rem',
+          display: 'flex', gap: '0.45rem', alignItems: 'flex-start',
+          background: issue.level === 'error' ? 'rgba(244,67,54,0.08)' : 'rgba(255,152,0,0.10)',
+          color: issue.level === 'error' ? 'var(--error, #f44336)' : '#e65100',
         }}>
-          {state.jobs.map((job, idx) => (
-            <span
-              key={job.id}
-              style={{
-                padding: '0.2rem 0.5rem',
-                borderRadius: '4px',
-                background: 'var(--surface-sunken)',
-                color: jobStatusColor(job.status),
-                border: `1px solid ${jobStatusColor(job.status)}22`,
-              }}
-            >
-              Batch {idx + 1}: {job.status === 'completed' || job.status === 'completed_with_errors' || job.status === 'failed' || job.status === 'skipped'
-                ? jobStatusLabel(job.status)
-                : `${Math.round((job.progress || 0) * 100)}%`
-              }
-            </span>
-          ))}
+          <span aria-hidden>{issue.level === 'error' ? '⚠️' : 'ℹ️'}</span>
+          <span>{issue.text}</span>
         </div>
       )}
 
-      <div
-        ref={logContainerRef}
-        style={{
-          marginTop: '0.75rem',
-          fontSize: '0.8rem',
-          maxHeight: '180px',
-          overflowY: 'auto',
-          fontFamily: 'monospace',
-          background: 'var(--surface-sunken)',
-          padding: '0.5rem',
-          borderRadius: '4px'
-        }}
+      {/* Technical log — collapsed by default so it doesn't drown the summary */}
+      <button
+        onClick={() => setShowLog(v => !v)}
+        style={{ marginTop: '0.6rem', background: 'none', border: 'none', padding: 0, cursor: 'pointer', color: 'var(--text-secondary, #888)', fontSize: '0.75rem' }}
       >
-        {state.logs.map((l, i) => {
-           let color = 'inherit'
-           if (l.level === 'error') color = 'var(--error)'
-           if (l.level === 'success') color = 'var(--success, #4CAF50)'
-           if (l.level === 'warning') color = 'var(--warning, #FF9800)'
+        {showLog ? '▾ Hide technical details' : '▸ Show technical details'}
+      </button>
+      {showLog && (
+        <div
+          ref={logContainerRef}
+          style={{
+            marginTop: '0.4rem', fontSize: '0.72rem', maxHeight: '150px', overflowY: 'auto',
+            fontFamily: 'monospace', background: 'var(--surface-sunken)', padding: '0.5rem', borderRadius: 4,
+          }}
+        >
+          {state.logs.map((l, i) => {
+            let color = 'inherit'
+            if (l.level === 'error') color = 'var(--error)'
+            if (l.level === 'success') color = 'var(--success, #4CAF50)'
+            if (l.level === 'warning') color = 'var(--warning, #FF9800)'
+            return (
+              <div key={`${l.ts}-${i}`} style={{ opacity: 0.9, color, marginBottom: '0.2rem' }}>
+                <span style={{ opacity: 0.5, marginRight: '0.5rem' }}>
+                  {new Date(l.ts).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
+                </span>
+                {l.message}
+              </div>
+            )
+          })}
+          {state.logs.length === 0 && <div style={{ opacity: 0.5 }}>Waiting for pipeline to start…</div>}
+        </div>
+      )}
 
-           return (
-            <div key={`${l.ts}-${i}`} style={{ opacity: 0.9, color, marginBottom: '0.25rem' }}>
-              <span style={{ opacity: 0.5, marginRight: '0.5rem' }}>
-                {new Date(l.ts).toLocaleTimeString([], { hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' })}
-              </span>
-              {l.message}
-            </div>
-          )
-        })}
-        {state.logs.length === 0 && <div style={{ opacity: 0.5 }}>Waiting for pipeline to start...</div>}
-      </div>
-
-      {/* Pulse animation */}
+      {/* Animations */}
       <style>{`
         @keyframes pipeline-pulse {
           0%, 100% { opacity: 1; transform: scale(1); }
           50% { opacity: 0.4; transform: scale(0.75); }
         }
+        @keyframes step-spin { to { transform: rotate(360deg); } }
+        .step-spin { animation: step-spin 0.8s linear infinite; display: inline-block; }
       `}</style>
     </div>
   )

@@ -27,9 +27,10 @@ or orphaned, and both are bugs.
 ## Azure
 
 **Subscription:** `Microsoft Azure Sponsorship` (`f14bd966-e052-4c53-b26c-459dc764c33c`).
-⚠️ **Sponsorship subs have no GPU quota** (no NCasT4_v3 SKUs in any region) — GPU work needs a separate
-PAYG sub (see [gpu-worker-infra-spec](../development%20reports/gpu-worker-infra-spec.md)). The env is
-created **workload-profiles-enabled** so a GPU profile can be added later without recreating it.
+✅ **GPU is live (2026-07-03).** The ML worker runs on a **serverless T4 GPU** — a
+`Consumption-GPU-NC8as-T4` workload profile named **`gpu-t4`** on `ww-env`, with the worker on `cuda`
+and **scale-to-zero** (idle cost ≈ $0). This works on the sponsorship sub: ACA *serverless* GPU did not
+require the `NCasv3_T4` VM-family quota we'd assumed was blocking it. See the worker row + scaling note.
 
 **Convention:** **everything** lives in **one resource group, `WW-AE`**, in **Australia East**. There is
 no other RG. Do not let tooling auto-create resource groups (`DefaultResourceGroup-*`), other regions, or
@@ -39,12 +40,12 @@ extra Log Analytics workspaces — that is the main source of sprawl and cost co
 
 | Resource | Type | Purpose | Status | Maintenance |
 |----------|------|---------|--------|-------------|
-| `ww-env` | Container Apps **environment** | Hosts all container apps; workload-profiles (Consumption profile); KEDA. | ✅ | Region-locked — recreating it means recreating its apps. |
+| `ww-env` | Container Apps **environment** | Hosts all container apps; workload profiles **`Consumption`** (CPU apps) + **`gpu-t4`** (`Consumption-GPU-NC8as-T4`, serverless T4 for the worker); KEDA. | ✅ | Region-locked — recreating it means recreating its apps. GPU profile: `az containerapp env workload-profile list -g WW-AE -n ww-env`. |
 | `wwregistry` | Container Registry (ACR) | Image repos `ww-backend` (api, `--target api`) + `ww-backend-worker` (worker). | ✅ | Standard SKU, admin-enabled; `az acr build` builds in-cloud (no local Docker). Login server `wwregistry.azurecr.io`. |
 | `wwuploadsae` | Storage account | **Azure Blob** temporary upload buffer (deleted after Drive archival). | ✅ | Connection string is an ACA secret on the apps. |
 | `ww-redis-dev` | Container App | **ARQ broker** (internal `redis:7-alpine`, TCP, `exposedPort=6379`). | ✅ | Reach app-to-app via the **short name** `redis://ww-redis-dev:6379` (the `.internal.*` FQDN times out for TCP). **Not KEDA-reachable** — see the worker row. |
 | `ww-backend-dev` | Container App | **Dev API** (`--target api`), min-1, external ingress. `REDIS_URL` → offloads jobs to the worker. FQDN `ww-backend-dev.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. | ✅ | Dev Supabase project; secrets as **ACA secrets**. |
-| `ww-embedding-worker-dev` | Container App | **Dev ML worker** (`--target worker`, CPU). SpeciesNet detect + per-crop BioCLIP. | ✅ | Scales 0↔1 via **KEDA Postgres scaler on `api_jobs`** (see below). Secrets as ACA secrets. |
+| `ww-embedding-worker-dev` | Container App | **Dev ML worker** (`--target worker`) on the **`gpu-t4` serverless T4 GPU** profile. SpeciesNet detect + per-crop BioCLIP (+ DINOv3 when the Brain is on). ~1–2 s/image vs ~30–50 s on CPU. | ✅ | `EMBEDDING_DEVICE=cuda` / `BIOCLIP_DEVICE=cuda` (SpeciesNet auto-detects CUDA). Scales **0↔1** via **KEDA Postgres scaler on `api_jobs`** (see below). Secrets as ACA secrets. |
 | `ww-backend` | Container App | **Prod API** (`--target api`). FQDN `ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. Currently unused. | ✅ | Prod Supabase project. |
 | Log Analytics workspace | Log Analytics | Container Apps logs (auto-created with the env). | ✅ | Keep exactly one. |
 
@@ -58,17 +59,33 @@ SELECT count(*) FROM api_jobs WHERE status IN ('queued','processing')
   AND updated_at > now() - interval '1 hour'      -- targetQueryValue=1
 ```
 
-A pending job → `count ≥ 1` → KEDA scales the worker **0→1**; queue drains → back to **0**. The pooler
-connection string lives in the ACA secret **`pg-conn`** (must point at the **dev** project's *shared
-Transaction pooler* — `postgres.<ref>@aws-…pooler.supabase.com:6543`, using the **database password**,
-not the service-role key). **Verified 2026-06-30: scales to 0 when idle.** If `pg-conn` is ever wrong/unset
-the scaler errors and KEDA holds the worker at its current replica count (functional, just not scaling down).
+A pending job → `count ≥ 1` → KEDA scales the worker **0→1** (on the GPU node); queue drains → back to
+**0**. The pooler connection string lives in the ACA secret **`pg-conn`** (must point at the **dev**
+project's *shared Transaction pooler* — `postgres.<ref>@aws-…pooler.supabase.com:6543`, using the
+**database password**, not the service-role key). **Verified 2026-07-03: scales to 0 when idle** (GPU T4,
+so idle cost ≈ $0). If `pg-conn` is wrong/unset the scaler errors and KEDA holds the worker at its current
+replica count (functional, just not scaling down).
+
+> ⚠️ **Gotcha — never set the scale rule via `az containerapp update --scale-rule-metadata`.** The CLI
+> silently drops metadata values containing spaces/quotes (i.e. the SQL), leaving `query`/`targetQueryValue`
+> **empty**. With `min=0` an empty query means KEDA never wakes the worker → **uploads queue but AI never
+> runs.** Edit the rule in the **Portal** (Container App → *Scale and replicas* → `pg-pending` rule) or via a
+> full `--yaml` manifest. Confirm with:
+> `az containerapp show -n ww-embedding-worker-dev -g WW-AE --query "properties.template.scale.rules[0].custom.metadata"`.
+
+**GPU verification / readiness.** Confirm the worker actually has the GPU with
+`az containerapp exec -n ww-embedding-worker-dev -g WW-AE --command "python -c \"import torch;print(torch.cuda.is_available())\""`
+(→ `True`). Pipeline code is GPU-ready: BioCLIP/DINOv3 read `BIOCLIP_DEVICE`/`EMBEDDING_DEVICE`
+(`services/bioclip_service.py`, `services/dinov3.py`); SpeciesNet passes no device and auto-detects CUDA.
+The `ww-backend-worker:dev-latest` image already ships CUDA-enabled torch.
 
 ### How to keep Azure clean
 - **Audit:** `az resource list -o table` — every resource should be in `WW-AE` and map to a row above.
   Anything in another RG/region is sprawl.
-- **Cost:** check **Cost Management → Cost analysis** monthly. The worker is the main variable cost — keep
-  it near $0 by confirming KEDA returns it to **0 replicas when idle**.
+- **Cost:** check **Cost Management → Cost analysis** monthly. The **GPU worker** is now the main variable
+  cost — a T4 billed per-second **while running**. Keep it near $0 by confirming KEDA returns it to
+  **0 replicas when idle** (`az containerapp replica list -n ww-embedding-worker-dev -g WW-AE -o table`
+  → empty). A worker stuck at ≥1 replica is an idle T4 burning money — investigate the scaler.
 - **Don't** create resources outside `WW-AE` / AU East without adding them here.
 
 ---
