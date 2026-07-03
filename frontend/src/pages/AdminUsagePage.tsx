@@ -123,7 +123,16 @@ export function AdminUsagePage() {
     supabase.rpc('admin_user_usage').then(({ data, error: err }) => {
       if (cancelled) return
       if (err) setError(err.message)
-      else setRows((data ?? []) as UsageRow[])
+      else setRows(((data ?? []) as any[]).map(r => ({
+        ...r,
+        photos_uploaded: Number(r.photos_uploaded),
+        storage_bytes: Number(r.storage_bytes),
+        compute_runs: Number(r.compute_runs),
+        compute_seconds: Number(r.compute_seconds),
+        max_photos: r.max_photos == null ? null : Number(r.max_photos),
+        max_storage_bytes: r.max_storage_bytes == null ? null : Number(r.max_storage_bytes),
+        max_compute_seconds: r.max_compute_seconds == null ? null : Number(r.max_compute_seconds),
+      })))
       setLoading(false)
     })
     return () => { cancelled = true }
