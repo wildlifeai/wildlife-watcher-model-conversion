@@ -65,6 +65,17 @@ def test_parse_prediction_string_empty():
     assert parse_prediction_string(None) == (None, None)
 
 
+def test_parse_prediction_string_drops_no_cv_result_sentinel():
+    """SpeciesNet's 'no cv result' (unclassifiable detection) must not surface as a species
+    name (was showing 'No cv result no cv result')."""
+    uuid = "12345678-1234-1234-1234-123456789abc"
+    assert parse_prediction_string(f"{uuid};no cv result") == (None, None)
+    assert parse_prediction_string(f"{uuid};no cv result;no cv result") == (None, None)
+    # A real classification alongside is unaffected.
+    sci, common = parse_prediction_string(f"{uuid};aves;;;apteryx;mantelli;north island brown kiwi")
+    assert sci == "Apteryx mantelli"
+
+
 def test_parse_speciesnet_output_shapes():
     preds = parse_speciesnet_output(_RAW)
     assert len(preds) == 2

@@ -488,9 +488,10 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
     built from the enabled feature flags; failures are logged, never raised.
 
     ``run_pipeline`` scopes itself to unannotated media (idempotency guard), so re-runs
-    on an already-annotated deployment are cheap no-ops. When ``job_id`` is given,
-    per-deployment progress is reported to it so the dock/banner show real movement
-    (and the stale-job reaper sees a heartbeat) instead of 0% → 100%.
+    on an already-annotated deployment are cheap no-ops. When ``job_id`` is given, progress is
+    reported **per pipeline step** (media-prep → detect → crop → identify) *within* each
+    deployment, so the dock/banner climb smoothly instead of sitting at 0% until a whole
+    deployment finishes (and the stale-job reaper sees a heartbeat).
     """
     from app.domain.pipeline import run_pipeline
 
@@ -502,16 +503,27 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
     deployment_ids = [d for d in deployment_ids if _is_uuid(d)]
 
     total = len(deployment_ids)
+    # Friendlier labels for the per-step progress messages the dock surfaces.
+    step_labels = {
+        "media_prep": "Preparing thumbnails",
+        "speciesnet": "Detecting animals",
+        "animal_crop": "Cropping detections",
+        "bioclip": "Identifying species",
+    }
+
     for i, dep_id in enumerate(deployment_ids):
-        if job_id:
-            await update_job(
-                job_id,
-                progress=i / total if total else 0.0,
-                message=f"🔬 Analysing deployment {i + 1}/{total} ({dep_id[:8]})…",
-            )
+        # Fine-grained progress: overall = (deployments_done + step_fraction) / total. on_step
+        # fires at the START of each step, so this advances the bar several times per deployment.
+        async def _on_step(step_name: str, step_idx: int, step_total: int, _i: int = i) -> None:
+            if not job_id or not step_total or not total:
+                return
+            frac = (_i + step_idx / step_total) / total
+            label = step_labels.get(step_name, step_name)
+            await update_job(job_id, progress=min(0.99, frac), message=f"🔬 {label} — deployment {_i + 1}/{total}")
+
         try:
             logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
-            await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id)
+            await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id, on_step=_on_step if job_id else None)
             await emit_detection_notifications(dep_id)
             # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
             # without a manual per-deployment trigger. Needs the animal crops the

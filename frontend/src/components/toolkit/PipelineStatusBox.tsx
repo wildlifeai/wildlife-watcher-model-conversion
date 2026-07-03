@@ -93,9 +93,9 @@ function deriveSteps(state: PipelineState, phase: string): StepsResult {
   const dt = driveJobs.reduce(
     (a, j) => {
       if (j.summary) {
-        a.uploaded += j.summary.uploaded
-        a.skipped += j.summary.skipped
-        a.failed += j.summary.failed
+        a.uploaded += j.summary.uploaded ?? 0
+        a.skipped += j.summary.skipped ?? 0
+        a.failed += j.summary.failed ?? 0
       }
       return a
     },
@@ -105,14 +105,18 @@ function deriveSteps(state: PipelineState, phase: string): StepsResult {
   const driveProg = driveFiles > 0
     ? driveJobs.reduce((s, j) => s + Math.max(0, Math.min(1, j.progress || 0)) * j.fileCount, 0) / driveFiles
     : 0
+  // A drive job can fail (crash / network) *before* it writes a summary, so dt.failed stays 0 —
+  // fall back to the job status so a hard failure still shows as an error, not "done".
+  const driveFailed = driveJobs.some((j) => j.status === 'failed')
   const driveTerm = driveJobs.length > 0 && driveJobs.every((j) => _TERMINAL.includes(j.status))
   let driveStatus: StepStatus
   if (driveJobs.length === 0) driveStatus = done ? 'done' : upDone ? 'active' : 'pending'
-  else if (done || driveTerm) driveStatus = dt.failed > 0 ? 'error' : dt.skipped > 0 ? 'warn' : 'done'
+  else if (done || driveTerm) driveStatus = driveFailed || dt.failed > 0 ? 'error' : dt.skipped > 0 ? 'warn' : 'done'
   else driveStatus = 'active'
   const driveDetail =
     driveStatus === 'pending' ? 'Waiting for upload'
     : dt.failed > 0 ? `${dt.uploaded} saved · ${dt.failed} failed`
+    : driveFailed ? 'Saving to Google Drive failed'
     : dt.skipped > 0 ? `${dt.uploaded} saved · ${dt.skipped} skipped`
     : driveStatus === 'active' ? `${dt.uploaded} saved so far…`
     : `${dt.uploaded} saved`
@@ -140,9 +144,18 @@ function deriveSteps(state: PipelineState, phase: string): StepsResult {
   }
 
   let issue: StepsResult['issue'] = null
-  if (dt.failed > 0) issue = { level: 'error', text: `${dt.failed} photo${dt.failed !== 1 ? 's' : ''} couldn't be saved to Google Drive. See technical details.` }
-  else if (aiFailed) issue = { level: 'error', text: 'AI analysis hit an error on some deployments. Your photos are safe — you can retry from Processing history.' }
-  else if (dt.skipped > 0) issue = { level: 'warn', text: `${dt.skipped} photo${dt.skipped !== 1 ? 's' : ''} skipped — already in your library. Nothing to do.` }
+  if (driveFailed || dt.failed > 0) {
+    issue = {
+      level: 'error',
+      text: dt.failed > 0
+        ? `${dt.failed} photo${dt.failed !== 1 ? 's' : ''} couldn't be saved to Google Drive. See technical details.`
+        : 'Saving to Google Drive failed. See technical details.',
+    }
+  } else if (aiFailed) {
+    issue = { level: 'error', text: 'AI analysis hit an error on some deployments. Your photos are safe — you can retry from Processing history.' }
+  } else if (dt.skipped > 0) {
+    issue = { level: 'warn', text: `${dt.skipped} photo${dt.skipped !== 1 ? 's' : ''} skipped — already in your library. Nothing to do.` }
+  }
 
   return { steps: [uploadStep, driveStep, aiStep], issue }
 }
