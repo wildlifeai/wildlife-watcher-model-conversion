@@ -17,7 +17,8 @@ import { Modal } from '../ui/Modal'
 import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { apiClient } from '../../lib/apiClient'
 import { supabase } from '../../config/supabase'
-import { useUploadStore, type UploadDeployment } from '../../contexts/UploadContext'
+import { useNavigate } from 'react-router-dom'
+import { useUploadStore, type UploadDeployment, type PendingUpload } from '../../contexts/UploadContext'
 import { useProjectSelection } from '../../hooks/useProjectSelection'
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -51,6 +52,7 @@ const CAMTRAP_STAGES: { label: string; pct: number; after: number }[] = [
 
 export function UploadModal() {
   const { modalOpen, closeModal, startUpload, isActive } = useUploadStore()
+  const navigate = useNavigate()
 
   // ── File selection state (local — lives only for modal lifetime) ───────────
   const [files, setFiles] = useState<File[]>([])
@@ -285,9 +287,36 @@ export function UploadModal() {
       setAssigning(false)
     }
 
+    // Resolve which deployment each file belongs to: folder-prefix match against the fetched
+    // deployments, else the manual assignment. Powers the annotations redirect + optimistic grid.
+    const prefixToDep = new Map<string, string>()
+    for (const pfx of detectedPrefixes) {
+      const match = deployments.find((d) => d.id.toUpperCase().startsWith(pfx as string))
+      if (match) prefixToDep.set(pfx as string, match.id)
+    }
+    const depForFile = (path: string): string | undefined => {
+      const m = path.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
+      const pfx = m ? m[1].toUpperCase() : null
+      return (pfx && prefixToDep.get(pfx)) || assignedDeploymentId
+    }
+    const pending: PendingUpload[] = files
+      .map((f, i) => {
+        const deploymentId = depForFile(filePaths[i] ?? f.name)
+        return deploymentId ? { fileName: f.name, deploymentId } : null
+      })
+      .filter((p): p is PendingUpload => p !== null)
+    const resolvedDeploymentIds = [...new Set(pending.map((p) => p.deploymentId))]
+
     // Images always sync to Google Drive (long-term storage is the default).
-    startUpload(files, filePaths, true, deployments, assignedDeploymentId)
+    startUpload(files, filePaths, true, deployments, assignedDeploymentId, resolvedDeploymentIds, pending)
     // Modal closes inside startUpload → no explicit closeModal needed
+
+    // Land the user on Annotations, filtered to the just-uploaded deployment, so they watch their
+    // images + AI progress fill in live (banner + optimistic cards). One deployment is the common
+    // case; for several, focus the first — the banner/refetch cover the rest.
+    if (resolvedDeploymentIds.length > 0) {
+      navigate(`/annotations?deployment=${resolvedDeploymentIds[0]}`)
+    }
   }
 
   const clearSelection = () => {

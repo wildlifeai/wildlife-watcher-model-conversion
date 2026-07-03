@@ -45,3 +45,6 @@ service-account.json
 
 # FiftyOne
 backend/MEDIA/fiftyone_cache/
+
+# Azure Container Apps Config
+worker.yaml

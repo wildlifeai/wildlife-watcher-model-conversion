@@ -1,6 +1,9 @@
 # Spec — ARQ GPU Worker infrastructure (Wildlife Watcher AI pipeline)
 
-> **Status:** 🔧 Active spec — infra hand-off; ww-website (CI/CD + Azure). Pure infra/config — **no application code changes**: the dispatch seam, `worker` image target, and ARQ/KEDA wiring already exist.
+> **Status:** ✅ **SHIPPED (dev, 2026-07-03).** The dev worker `ww-embedding-worker-dev` now runs on a
+> **serverless T4 GPU** (`gpu-t4` = `Consumption-GPU-NC8as-T4` profile on `ww-env`, `cuda`, scale-to-zero).
+> Live operational details + gotchas: [cloud-infrastructure.md](../resources/cloud-infrastructure.md).
+> This doc is retained as the original design spec/history.
 
 **Goal:** stand up the **ARQ GPU worker** that runs the heavy ML pipeline (SpeciesNet detect, BioCLIP
 classify, DINOv3 embeddings) off the lean API. This is the **infrastructure prerequisite** for (a)
