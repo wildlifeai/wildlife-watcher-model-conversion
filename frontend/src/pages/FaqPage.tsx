@@ -154,6 +154,12 @@ export function FaqPage() {
 
       <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Camera & Hardware</h3>
 
+      <FaqItem q="What does the button on the camera do?">
+        A short press of the button at the bottom of the device turns on Bluetooth so the mobile
+        app can connect — the blue light flashes while the camera is discoverable. Holding the
+        button for 10 seconds or more puts the camera into firmware-update (recovery) mode.
+      </FaqItem>
+
       <FaqItem q="Can I use Wildlife Watcher photos with other software?">
         Yes. The Wildlife Watcher is built for an end-to-end approach — all information collected in the field
         (GPS coordinates, timestamps, AI detections) is embedded with the images to save time during data analysis
