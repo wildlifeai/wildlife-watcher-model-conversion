@@ -458,6 +458,10 @@ async def _enqueue_drive_upload(
             "project": file_context["project"],
             "deployment": file_context["deployment"],
             "newly_uploaded": uploaded,
+            # Full parsed EXIF (already JSON-safe) — threaded through the upload
+            # job onto media.exif_metadata so camera variant, capture settings
+            # and on-device NN scores survive past this request.
+            "exif": exif_data or None,
         }
 
     tasks = [_process_file(i, upload, content) for i, (upload, content) in enumerate(zip(files, file_contents))]

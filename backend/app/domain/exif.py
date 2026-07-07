@@ -19,11 +19,13 @@ logger = structlog.get_logger()
 
 EXIF_TAGS = {
     0x010F: "Make",  # WW500 writes "Wildlife.ai"
-    0x0110: "Model",  # WW500 writes "WW500"
+    0x0110: "Model",  # WW500 writes "WW500 RP3" / "WW500 HM0360" (bare "WW500" pre camera-variant firmware)
+    0x0131: "Software",  # WW500 firmware build string, e.g. "WW500_C02 09:16:17 Jul  7 2026"
     0x0132: "DateTime",
     0x9003: "Datetime_Original",
     0x9004: "Datetime_Create",
-    0x927C: "MakerNote",  # WW500 auto-exposure registers (when firmware EXIF_MAKER_NOTES is on)
+    0x9209: "Flash",  # standard EXIF Flash: bit0 = flash/IR illumination fired
+    0x927C: "MakerNote",  # WW500 capture settings CSV (AE regs [+ WB gains + flash on newer firmware])
     0x9286: "UserComment",  # WW500 on-device NN scores + telemetry, "label: value; ..."
     0xC000: "Custom_Data",  # WW500 raw NN output tensor
     0xF200: "Deployment_ID",
@@ -248,11 +250,86 @@ def parse_exif_from_bytes(jpeg_bytes: bytes) -> Dict[str, Any]:
     # scores + telemetry) into structured fields.
     _apply_user_comment_fields(parsed_data)
 
+    # Camera variant, capture settings (MakerNote CSV) and flash state — written
+    # by the camera-variant-aware firmware; absent on older images.
+    _apply_camera_fields(parsed_data)
+
     # Extract deployment ID from custom firmware EXIF tags
     deployment_id = _extract_deployment_id(parsed_data)
     parsed_data["deployment_id"] = deployment_id
 
     return parsed_data
+
+
+def parse_maker_note_fields(maker_note: Any) -> Dict[str, Any]:
+    """Parse the WW500 MakerNote capture-settings CSV into typed fields.
+
+    Legacy firmware writes 5 fields::
+
+        "<integration>, <analogGain>, <digitalGain>, <aeMean>, <Y|N>"
+
+    Camera-variant firmware appends 3 more (backward-compatible)::
+
+        "..., <wbRedGain>, <wbBlueGain>, <flashFired>"
+
+    Returns ``{}`` for anything that does not look like the WW500 CSV.
+    """
+    if not maker_note or not isinstance(maker_note, str):
+        return {}
+    parts = [p.strip() for p in maker_note.replace("\x00", "").split(",")]
+    if len(parts) < 5:
+        return {}
+    try:
+        fields: Dict[str, Any] = {
+            "integration_lines": int(parts[0]),
+            "analog_gain": int(parts[1]),
+            "digital_gain": int(parts[2]),
+            "ae_mean": int(parts[3]),
+            "ae_converged": parts[4].upper() == "Y",
+        }
+    except (TypeError, ValueError):
+        return {}
+    if len(parts) >= 8:
+        try:
+            fields["wb_red_gain"] = int(parts[5])
+            fields["wb_blue_gain"] = int(parts[6])
+            fields["flash_fired"] = bool(int(parts[7]))
+        except (TypeError, ValueError):
+            pass  # keep the AE fields; ignore a malformed extension
+    return fields
+
+
+def _camera_variant_from_model(model: Any) -> Optional[str]:
+    """Map the EXIF Model string to the firmware camera_variant nomenclature.
+
+    "WW500 RP3" -> "RP3", "WW500 HM0360" -> "HM0360", "WW500 RP2" -> "RP2".
+    Bare "WW500" (pre-variant firmware) and non-WW500 models -> None.
+    """
+    if not model or not isinstance(model, str):
+        return None
+    parts = model.replace("\x00", "").strip().split()
+    if len(parts) >= 2 and parts[0].upper() == "WW500":
+        variant = parts[1].upper()
+        if variant in ("RP3", "HM0360", "RP2"):
+            return variant
+    return None
+
+
+def _apply_camera_fields(parsed_data: Dict[str, Any]) -> None:
+    """Surface camera variant, capture settings and flash state as typed fields."""
+    variant = _camera_variant_from_model(parsed_data.get("Model"))
+    if variant:
+        parsed_data["camera_variant"] = variant
+
+    # MakerNote capture-settings CSV (AE registers [+ WB gains + flash])
+    for key, val in parse_maker_note_fields(parsed_data.get("MakerNote")).items():
+        parsed_data.setdefault(key, val)
+
+    # Standard EXIF Flash tag (bit0 = fired) takes precedence over the
+    # MakerNote copy when both are present.
+    flash_raw = parsed_data.get("Flash")
+    if isinstance(flash_raw, int):
+        parsed_data["flash_fired"] = bool(flash_raw & 1)
 
 
 def parse_user_comment_fields(user_comment: Any) -> Dict[str, str]:

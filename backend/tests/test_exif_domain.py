@@ -5,10 +5,13 @@
 import struct
 
 from app.domain.exif import (
+    _apply_camera_fields,
     _apply_user_comment_fields,
+    _camera_variant_from_model,
     _extract_deployment_id,
     match_deployment,
     parse_exif_from_bytes,
+    parse_maker_note_fields,
     parse_user_comment_fields,
 )
 
@@ -133,6 +136,66 @@ class TestUserCommentFields:
         data = {}
         _apply_user_comment_fields(data)
         assert "user_comment_fields" not in data
+
+
+class TestCameraFields:
+    def test_maker_note_legacy_five_fields(self):
+        # Pre-camera-variant firmware: AE registers only.
+        fields = parse_maker_note_fields("76, 0, 64, 68, Y")
+        assert fields == {
+            "integration_lines": 76,
+            "analog_gain": 0,
+            "digital_gain": 64,
+            "ae_mean": 68,
+            "ae_converged": True,
+        }
+
+    def test_maker_note_extended_eight_fields(self):
+        # Camera-variant firmware appends WB gains + flash state.
+        fields = parse_maker_note_fields("376, 4, 192, 35, N, 286, 326, 1")
+        assert fields["integration_lines"] == 376
+        assert fields["ae_converged"] is False
+        assert fields["wb_red_gain"] == 286
+        assert fields["wb_blue_gain"] == 326
+        assert fields["flash_fired"] is True
+
+    def test_maker_note_rejects_non_ww500(self):
+        assert parse_maker_note_fields(None) == {}
+        assert parse_maker_note_fields(1234) == {}
+        assert parse_maker_note_fields("Canon MakerNote blob") == {}
+        assert parse_maker_note_fields("1, 2, 3") == {}
+
+    def test_maker_note_malformed_extension_keeps_ae(self):
+        # A garbled extension must not discard the valid AE fields.
+        fields = parse_maker_note_fields("76, 0, 64, 68, Y, x, y, z")
+        assert fields["ae_mean"] == 68
+        assert "wb_red_gain" not in fields
+
+    def test_camera_variant_mapping(self):
+        assert _camera_variant_from_model("WW500 RP3") == "RP3"
+        assert _camera_variant_from_model("WW500 HM0360") == "HM0360"
+        assert _camera_variant_from_model("WW500 RP2") == "RP2"
+        assert _camera_variant_from_model("WW500") is None  # pre-variant firmware
+        assert _camera_variant_from_model("iPhone 15") is None
+        assert _camera_variant_from_model(None) is None
+
+    def test_apply_camera_fields_full(self):
+        data = {
+            "Model": "WW500 RP3",
+            "MakerNote": "376, 4, 192, 35, Y, 286, 326, 0",
+            "Flash": 1,  # standard tag says fired -> wins over MakerNote's 0
+        }
+        _apply_camera_fields(data)
+        assert data["camera_variant"] == "RP3"
+        assert data["ae_mean"] == 35
+        assert data["wb_red_gain"] == 286
+        assert data["flash_fired"] is True
+
+    def test_apply_camera_fields_absent_data_harmless(self):
+        data = {"Model": "WW500"}
+        _apply_camera_fields(data)
+        assert "camera_variant" not in data
+        assert "flash_fired" not in data
 
 
 class TestMatchDeployment:

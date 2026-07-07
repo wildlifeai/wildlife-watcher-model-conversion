@@ -947,6 +947,9 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                 "timestamp": _normalize_exif_timestamp(uf.get("timestamp")),
                 "file_public": False,
                 "file_hash": uf.get("file_hash"),
+                # Full parsed EXIF from upload time (camera variant, capture
+                # settings, NN scores) — None is dropped by the chunk filter below.
+                "exif_metadata": uf.get("exif"),
             }
             for uf in candidates
             if ("hash", uf.get("file_hash")) not in existing_keys and ("path", f"gdrive://{uf['file_id']}") not in existing_keys

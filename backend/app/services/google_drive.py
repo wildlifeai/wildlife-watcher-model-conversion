@@ -548,6 +548,9 @@ class GoogleDriveService:
                                 "timestamp": file_info.get("timestamp"),
                                 "file_hash": file_hash,
                                 "was_new": was_new,
+                                # Parsed EXIF from the upload request (may be None) —
+                                # destined for media.exif_metadata.
+                                "exif": file_info.get("exif"),
                             }
                         )
                         if file_callback:
