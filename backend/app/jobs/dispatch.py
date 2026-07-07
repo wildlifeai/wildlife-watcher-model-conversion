@@ -39,7 +39,8 @@ async def enqueue_job(name: str, *args, **kwargs) -> str:
 
     ``**kwargs`` are forwarded to ARQ's ``enqueue_job`` — e.g. ``_defer_by`` (delay
     execution) and ``_job_id`` (dedup). These let callers debounce a burst of enqueues.
-    They only apply on the ARQ path; the in-process fallback runs immediately and ignores them.
+    The ARQ control kwargs (_defer_by, _job_id) only apply on the Redis path; the in-process
+    fallback runs immediately, ignoring those but forwarding any real job kwargs to the function.
 
     Returns the routing mode actually used ("arq" or "local") for logging/telemetry.
     """
@@ -74,6 +75,9 @@ async def enqueue_job(name: str, *args, **kwargs) -> str:
     func = getattr(definitions, name, None)
     if func is None:
         raise ValueError(f"Unknown job: {name}")
-    enqueue_local_job(func(*args))
+    # Forward real job kwargs; drop ARQ control kwargs (_defer_by/_job_id, etc.),
+    # which only apply to the Redis/ARQ path.
+    func_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+    enqueue_local_job(func(*args, **func_kwargs))
     logger.info("job_enqueued_local", job=name)
     return "local"

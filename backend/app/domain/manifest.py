@@ -246,7 +246,7 @@ async def _fetch_himax_firmware(
     himax_firmware_id: Optional[str] = None,
     variant: Optional[str] = None,
     use_storage_fallback: bool = True,
-) -> tuple[bool, str]:
+) -> tuple[bool, str, Optional[str]]:
     """Fetch a Himax firmware image into manifest_dir.
 
     The firmware is stored in the `firmware` bucket under the `himax/` prefix.
@@ -260,7 +260,8 @@ async def _fetch_himax_firmware(
     Otherwise, fetches the latest active Himax firmware record - filtered to
     the given camera variant when one is specified.
 
-    Returns (success, filename) — filename is the 8.3 name used on disk.
+    Returns (success, filename, variant) — filename is the 8.3 name used on disk,
+    variant is the record's camera_variant (None on the storage-listing fallback).
     """
     default_name = "output.img"
 
@@ -294,13 +295,13 @@ async def _fetch_himax_firmware(
                     filename=img_name,
                     size_bytes=len(content),
                 )
-                return True, img_name
+                return True, img_name, himax_fw.get("camera_variant") or variant
     except Exception as e:
         logger.warning("himax_firmware_db_failed", error=str(e))
 
     # Strategy 2: Fallback — list files in the himax/ folder of the firmware bucket
     if not use_storage_fallback:
-        return False, default_name
+        return False, default_name, None
     try:
         files = await asyncio.to_thread(
             client.storage.from_("firmware").list,
@@ -326,11 +327,11 @@ async def _fetch_himax_firmware(
                         pass
                 (manifest_dir / img_name).write_bytes(content)
                 logger.info("himax_firmware_fallback", filename=latest, saved_as=img_name)
-                return True, img_name
+                return True, img_name, None
     except Exception as e:
         logger.warning("himax_firmware_discovery_failed", error=str(e))
 
-    return False, default_name
+    return False, default_name, None
 
 
 async def _fetch_himax_firmware_pair(
@@ -356,29 +357,26 @@ async def _fetch_himax_firmware_pair(
 
     # Explicitly selected record first (any variant, including legacy NULL)
     if himax_firmware_id:
-        ok, name = await _fetch_himax_firmware(client, manifest_dir, himax_firmware_id, use_storage_fallback=False)
+        ok, name, var = await _fetch_himax_firmware(client, manifest_dir, himax_firmware_id, use_storage_fallback=False)
         if ok:
             filenames.append(name)
-            # Work out which variant that record was, so the pair completes it
-            try:
-                resp = await asyncio.to_thread(client.table("firmware").select("camera_variant").eq("id", himax_firmware_id).limit(1).execute)
-                if resp.data and resp.data[0].get("camera_variant"):
-                    fetched_variants.add(resp.data[0]["camera_variant"])
-            except Exception as e:
-                logger.warning("himax_variant_lookup_failed", error=str(e))
+            # _fetch_himax_firmware already read the row, so it returns the variant
+            # directly — no second query needed to complete the pair.
+            if var:
+                fetched_variants.add(var)
 
     # Latest active per remaining variant
     for variant in ("RP3", "HM0360"):
         if variant in fetched_variants:
             continue
-        ok, name = await _fetch_himax_firmware(client, manifest_dir, variant=variant, use_storage_fallback=False)
+        ok, name, _ = await _fetch_himax_firmware(client, manifest_dir, variant=variant, use_storage_fallback=False)
         if ok:
             filenames.append(name)
             fetched_variants.add(variant)
 
     # Legacy fallback: no variant-labelled records at all
     if not filenames:
-        ok, name = await _fetch_himax_firmware(client, manifest_dir)
+        ok, name, _ = await _fetch_himax_firmware(client, manifest_dir)
         if ok:
             filenames.append(name)
 
