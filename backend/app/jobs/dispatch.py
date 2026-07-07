@@ -31,11 +31,15 @@ logger = structlog.get_logger()
 GPU_PENDING_KEY = "ww:gpu:pending"
 
 
-async def enqueue_job(name: str, *args) -> str:
+async def enqueue_job(name: str, *args, **kwargs) -> str:
     """Dispatch a job by its definition function name.
 
     ``name`` must match a function in ``app.jobs.definitions`` (and, for the ARQ
     path, be registered in ``app.jobs.worker.WorkerSettings.functions``).
+
+    ``**kwargs`` are forwarded to ARQ's ``enqueue_job`` — e.g. ``_defer_by`` (delay
+    execution) and ``_job_id`` (dedup). These let callers debounce a burst of enqueues.
+    They only apply on the ARQ path; the in-process fallback runs immediately and ignores them.
 
     Returns the routing mode actually used ("arq" or "local") for logging/telemetry.
     """
@@ -46,7 +50,7 @@ async def enqueue_job(name: str, *args) -> str:
 
             pool = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
             try:
-                job = await pool.enqueue_job(name, *args)
+                job = await pool.enqueue_job(name, *args, **kwargs)
                 # Mirror a pending marker onto the KEDA-readable list (best-effort:
                 # a missing marker only affects autoscaling, never correctness).
                 if job is not None:

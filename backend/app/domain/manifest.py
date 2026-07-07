@@ -56,21 +56,33 @@ _MONTH_CHAR = {i: (str(i) if i <= 9 else chr(ord("A") + i - 10)) for i in range(
 _HOUR_CHAR = {i: (str(i) if i <= 9 else chr(ord("A") + i - 10)) for i in range(24)}
 
 
-def firmware_83_filename(version: str, build_date: Optional[str] = None) -> str:
+# Camera variant letter used as the first character of the 8.3 filename when
+# a variant is known, so the two images of a dual-image MANIFEST are
+# distinguishable at a glance (R........IMG / H........IMG)
+_VARIANT_LETTER = {"RP3": "R", "HM0360": "H"}
+
+
+def firmware_83_filename(version: str, build_date: Optional[str] = None, variant: Optional[str] = None) -> str:
     """Convert a Himax firmware version string into an 8.3 filename.
 
-    Format: YYMDDHMM.IMG
+    Without a variant: YYMDDHMM.IMG
         YY  = last 2 digits of year
         M   = month (1-9 for Jan-Sep, A for Oct, B for Nov, C for Dec)
         DD  = day of month (01-31)
         H   = hour (0-9 for hours 0-9, A-N for hours 10-23)
         MM  = minute (00-59)
 
+    With a variant ('RP3' or 'HM0360'): VYMDDHMM.IMG - the variant letter
+    (R/H) replaces the first year digit so both images of a dual-image
+    MANIFEST have distinct, self-describing names.
+
     The version string from CI looks like:
         "WW500_C02 10:59:43 May 20 2026"
 
-    Falls back to 'output.img' if the version cannot be parsed.
+    Falls back to 'output.img' (or 'R_OUT.IMG'/'H_OUT.IMG') if the version
+    cannot be parsed.
     """
+    letter = _VARIANT_LETTER.get(variant or "")
     try:
         # Try to extract time and date from version string
         # Pattern: optional_board HH:MM:SS Mon DD YYYY
@@ -86,18 +98,23 @@ def firmware_83_filename(version: str, build_date: Optional[str] = None) -> str:
             year = int(m.group(5))
 
             month_num = list(calendar.month_abbr).index(month_abbr)
+            if letter:
+                y = year % 10
+                return f"{letter}{y}{_MONTH_CHAR[month_num]}{day:02d}{_HOUR_CHAR[hour]}{minute:02d}.IMG"
             yy = year % 100
             return f"{yy:02d}{_MONTH_CHAR[month_num]}{day:02d}{_HOUR_CHAR[hour]}{minute:02d}.IMG"
 
         # Fallback: try parsing build_date (e.g. "May 20 2026") — no time info
         if build_date:
             dt = datetime.strptime(build_date, "%b %d %Y")
+            if letter:
+                return f"{letter}{dt.year % 10}{_MONTH_CHAR[dt.month]}{dt.day:02d}000.IMG"
             yy = dt.year % 100
             return f"{yy:02d}{_MONTH_CHAR[dt.month]}{dt.day:02d}000.IMG"
     except (ValueError, IndexError, KeyError):
         pass
 
-    return "output.img"
+    return f"{letter}_OUT.IMG" if letter else "output.img"
 
 
 class ManifestDomainError(Exception):
@@ -223,8 +240,14 @@ async def _fetch_config_firmware(client, manifest_dir: Path) -> bool:
 # ── Himax firmware fetching ──────────────────────────────────────────
 
 
-async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: Optional[str] = None) -> tuple[bool, str]:
-    """Fetch the Himax firmware image into manifest_dir.
+async def _fetch_himax_firmware(
+    client,
+    manifest_dir: Path,
+    himax_firmware_id: Optional[str] = None,
+    variant: Optional[str] = None,
+    use_storage_fallback: bool = True,
+) -> tuple[bool, str]:
+    """Fetch a Himax firmware image into manifest_dir.
 
     The firmware is stored in the `firmware` bucket under the `himax/` prefix.
     The CI pipeline (upload_firmware.yml) uploads it with type='himax'.
@@ -234,7 +257,8 @@ async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: O
     identify the build from its filename on the SD card.
 
     If himax_firmware_id is provided, fetches that specific record.
-    Otherwise, fetches the latest active Himax firmware record.
+    Otherwise, fetches the latest active Himax firmware record - filtered to
+    the given camera variant when one is specified.
 
     Returns (success, filename) — filename is the 8.3 name used on disk.
     """
@@ -247,6 +271,8 @@ async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: O
             query = query.eq("id", himax_firmware_id)
         else:
             query = query.eq("is_active", True)
+            if variant:
+                query = query.eq("camera_variant", variant)
 
         response = await asyncio.to_thread(query.order("created_at", desc=True).limit(1).execute)
 
@@ -259,6 +285,7 @@ async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: O
                 img_name = firmware_83_filename(
                     himax_fw.get("version") or "",
                     himax_fw.get("build_date"),
+                    himax_fw.get("camera_variant") or variant,
                 )
                 (manifest_dir / img_name).write_bytes(content)
                 logger.info(
@@ -272,6 +299,8 @@ async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: O
         logger.warning("himax_firmware_db_failed", error=str(e))
 
     # Strategy 2: Fallback — list files in the himax/ folder of the firmware bucket
+    if not use_storage_fallback:
+        return False, default_name
     try:
         files = await asyncio.to_thread(
             client.storage.from_("firmware").list,
@@ -302,6 +331,64 @@ async def _fetch_himax_firmware(client, manifest_dir: Path, himax_firmware_id: O
         logger.warning("himax_firmware_discovery_failed", error=str(e))
 
     return False, default_name
+
+
+async def _fetch_himax_firmware_pair(
+    client,
+    manifest_dir: Path,
+    himax_firmware_id: Optional[str] = None,
+) -> tuple[bool, list[str]]:
+    """Fetch the Himax firmware image PAIR (RP3 + HM0360) into manifest_dir.
+
+    The WW500 holds two firmware images in A/B flash slots, so the MANIFEST
+    should carry both camera variants. Selection rules:
+
+    - himax_firmware_id given: fetch that record, then the latest active record
+      of the OTHER variant (when the selected record has a variant).
+    - Otherwise: latest active record of each variant.
+    - Legacy databases with no variant-labelled records fall back to the old
+      single-image behaviour (latest active, storage-listing fallback allowed).
+
+    Returns (any_added, filenames).
+    """
+    filenames: list[str] = []
+    fetched_variants: set[str] = set()
+
+    # Explicitly selected record first (any variant, including legacy NULL)
+    if himax_firmware_id:
+        ok, name = await _fetch_himax_firmware(client, manifest_dir, himax_firmware_id, use_storage_fallback=False)
+        if ok:
+            filenames.append(name)
+            # Work out which variant that record was, so the pair completes it
+            try:
+                resp = await asyncio.to_thread(client.table("firmware").select("camera_variant").eq("id", himax_firmware_id).limit(1).execute)
+                if resp.data and resp.data[0].get("camera_variant"):
+                    fetched_variants.add(resp.data[0]["camera_variant"])
+            except Exception as e:
+                logger.warning("himax_variant_lookup_failed", error=str(e))
+
+    # Latest active per remaining variant
+    for variant in ("RP3", "HM0360"):
+        if variant in fetched_variants:
+            continue
+        ok, name = await _fetch_himax_firmware(client, manifest_dir, variant=variant, use_storage_fallback=False)
+        if ok:
+            filenames.append(name)
+            fetched_variants.add(variant)
+
+    # Legacy fallback: no variant-labelled records at all
+    if not filenames:
+        ok, name = await _fetch_himax_firmware(client, manifest_dir)
+        if ok:
+            filenames.append(name)
+
+    if len(filenames) == 1:
+        logger.warning(
+            "manifest_single_himax_variant",
+            detail="only one camera variant available - dual-image switching needs both",
+        )
+
+    return bool(filenames), filenames
 
 
 # ── AI model fetching ────────────────────────────────────────────────
@@ -563,9 +650,9 @@ async def generate_manifest(
             gh_results = await _fetch_github_manifest_files(github_branch, manifest_dir)
             config_added = gh_results.get("CONFIG.TXT", False)
 
-            # 2. Download Himax firmware from database
+            # 2. Download Himax firmware pair (both camera variants) from database
             await _report("Downloading Himax firmware from database…")
-            himax_added, _ = await _fetch_himax_firmware(client, manifest_dir, himax_firmware_id)
+            himax_added, _ = await _fetch_himax_firmware_pair(client, manifest_dir, himax_firmware_id)
 
             # 3. Resolve project model
             await _report("Resolving project model…")
@@ -713,8 +800,8 @@ async def generate_manifest(
             else:
                 model_added = await _fetch_default_model(client, manifest_dir)
 
-            # 3. Fetch Himax firmware image (YYMDDHMM.IMG) from database
-            himax_added, _ = await _fetch_himax_firmware(client, manifest_dir)
+            # 3. Fetch Himax firmware image pair (both camera variants) from database
+            himax_added, _ = await _fetch_himax_firmware_pair(client, manifest_dir)
             if not himax_added:
                 logger.warning("manifest_no_himax_firmware")
 

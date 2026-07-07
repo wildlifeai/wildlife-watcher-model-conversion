@@ -29,6 +29,11 @@ from app.services.notifications_service import emit_detection_notifications
 
 logger = structlog.get_logger()
 
+# Delay before an offloaded AI job runs, so the many per-chunk uploads of one upload collapse
+# into a single run (the job stays 'queued' during this window, letting later chunks coalesce
+# onto it, and every image is registered before it starts). See upload_drive_images_job.
+ANNOTATE_DEBOUNCE_SECONDS = 60
+
 # Human-readable labels for AI pipeline steps, surfaced in the upload progress log.
 _STEP_LABEL = {
     "media_prep": "Generating thumbnails",
@@ -1122,17 +1127,23 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         # Processing-history job. enqueue_job falls back to in-process if Redis is
         # unreachable, so this never silently drops the analysis. ──
         elif _dep_ids and _steps and settings.REDIS_URL:
+            from datetime import timedelta  # noqa: PLC0415
+
             from app.jobs.dispatch import enqueue_job  # noqa: PLC0415
             from app.jobs.store import find_queued_ai_jobs  # noqa: PLC0415
 
             await start_phase(job_id, ProgressPhase.AI_PIPELINE)
 
-            # Coalesce: chunked uploads (the frontend sends ~10 images per request) previously
-            # enqueued one AI job PER CHUNK for the same deployment — ~18 redundant model runs
-            # for one 171-image upload. A deployment covered by a still-QUEUED AI job will be
-            # picked up when that job starts (it fetches media at start, and the pipeline scopes
-            # itself to unannotated media), so only enqueue for the uncovered ones and chain the
-            # dock onto the existing job otherwise.
+            # Debounced coalescing. A chunked upload sends ~18 requests (10 images each), each
+            # firing its own AI job → a queue full of redundant runs. The fix is two parts:
+            #   1) Enqueue the AI job **deferred** by ANNOTATE_DEBOUNCE_SECONDS. During that window
+            #      the api_jobs row stays 'queued' AND the worker hasn't fetched media yet — so all
+            #      later chunks (2) find it and reuse it, and when it finally runs every image is
+            #      already registered. (Previously the job completed in ~1s, before the next chunk
+            #      could coalesce, so nothing deduped.)
+            #   2) Reuse any still-queued AI job covering the deployment instead of enqueuing again.
+            # Net: one AI run per deployment per upload instead of ~18. run_pipeline's unannotated
+            # scoping keeps even a stray extra run a cheap no-op.
             active_ai = await find_queued_ai_jobs()
             covered: dict[str, str] = {}
             for j in active_ai:
@@ -1147,7 +1158,13 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                     label=f"AI analysis — {len(new_dep_ids)} deployment(s)",
                     deployment_ids=new_dep_ids,
                 )
-                await enqueue_job("annotate_deployments_job", ai_job_id, new_dep_ids, _user_id)
+                await enqueue_job(
+                    "annotate_deployments_job",
+                    ai_job_id,
+                    new_dep_ids,
+                    _user_id,
+                    _defer_by=timedelta(seconds=ANNOTATE_DEBOUNCE_SECONDS),
+                )
                 await emit_event(
                     job_id,
                     ProgressEvent(
