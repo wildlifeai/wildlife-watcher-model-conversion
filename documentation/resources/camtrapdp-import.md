@@ -131,8 +131,8 @@ python scripts/seed_camtrapdp_example.py \
 
 | User | UUID | Role | Use Case |
 |------|------|------|----------|
-| `bob@ww.org` | `a0000000-0000-0000-0000-000000000002` | Org Manager (General) | Default for dev seeding |
-| `alice@ww.org` | `a0000000-0000-0000-0000-000000000001` | ww_admin | Full platform access |
+| `tama@ww.org` | `a0000000-0000-0000-0000-000000000002` | Org Manager (General) | Default for dev seeding |
+| `tui@ww.org` | `a0000000-0000-0000-0000-000000000001` | ww_admin | Full platform access |
 
 ### What Gets Imported (MICA Example)
 

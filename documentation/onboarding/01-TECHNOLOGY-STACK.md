@@ -68,8 +68,14 @@ Toggle behaviour without code changes (defined in `backend/app/config.py`):
 | `FF_CAMTRAPDP_IMPORT_ENABLED` | `true` | CamtrapDP package import |
 | `FF_PIPELINE_ENABLED` | `false` | AI pipeline inference endpoints |
 | `FF_SPECIESNET_ENABLED` | `false` | SpeciesNet detector+classifier step |
+| `FF_BIOCLIP_ENABLED` | `false` | BioCLIP secondary/zero-shot classifier step |
+| `FF_PER_CROP_CLASSIFY_ENABLED` | `false` | One AI observation per detection (not collapsed per image) |
+| `FF_MOTION_ROI_FALLBACK_ENABLED` | `false` | Motion-ROI crop fallback when SpeciesNet finds no bbox |
 | `FF_WILDLIFE_BRAIN_ENABLED` | `false` | DINOv3 embedding / clustering / similarity |
+| `FF_LOCAL_EMBEDDING_ENABLED` | `false` | Accept client-computed (WebGPU) embedding vectors |
 | `FF_MEDIA_REGISTRY_ENABLED` | `false` | Thumbnail/crop generation + resolve endpoints |
 | `FF_ACTIVE_LEARNING_ENABLED` | `false` | Active-learning review queue + QA report |
+| `FF_INTELLIGENCE_ENABLED` | `false` | Conservation-intelligence endpoints (health, alerts, shift) |
+| `FF_BMP_INGEST_ENABLED` | `false`¹ | Raw-BMP ingest → JPEG re-compress on upload (¹ compose default: `true`) |
 
 > Always confirm the current set against `config.py` — flags are added as features land.

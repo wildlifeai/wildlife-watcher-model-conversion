@@ -45,7 +45,7 @@ in both environments — no manual step:
 
 The generated SQL recreates the **real** project/device/deployment with their production
 UUIDs, but **re-homed to the seed General org (`b0000000-…-000001`) and owned by the seed
-admin `a0000000-…-000001` (alice@ww.org)** so the seed test users can see them. It is fully
+admin `a0000000-…-000001` (tui@ww.org)** so the seed test users can see them. It is fully
 idempotent (`ON CONFLICT` / `IF NOT EXISTS`).
 
 ---
@@ -55,7 +55,7 @@ idempotent (`ON CONFLICT` / `IF NOT EXISTS`).
 1. Get a fresh dev DB:
    - **Cloud:** run `deploy_cloud_projects.yml` (target `dev`), **or**
    - **Local:** `supabase db reset && bash scripts/seed-local.sh` (in `ww-backend`).
-2. Open the website and **log in as `alice@ww.org`** (she owns the template project).
+2. Open the website and **log in as `tui@ww.org`** (she owns the template project).
 3. Drag a `sdcard/<label>/IMAGES.000/` folder into the website upload.
 4. The backend reads each image's EXIF, matches the deployment, creates the media rows on
    the seeded deployment, and the **AI/annotation pipeline** runs (SpeciesNet → crop →
@@ -156,7 +156,7 @@ images in `sdcard/` (which `prepare.py` never touches), not in `MEDIA/`.
 |-------|---------|-----------|------|:------:|-------|
 | `tests-in-new-plymouth` | Tests in New Plymouth | User Location | `32f55229-25b3-4887-a253-b2aae9edec05` | 18 | Wildlife.ai WW500, night session (2026-06-08 22:08–23:05), self-bind via `Deployment_ID` |
 
-Owner for all template projects: **alice@ww.org** (`a0000000-…-000001`), General org.
+Owner for all template projects: **tui@ww.org** (`a0000000-…-000001`), General org.
 
 ---
 
@@ -170,8 +170,8 @@ seeded so they bind; only the *not-found* (08702E50) and *no-id* (00000000 / IMA
 deliberately don't.**
 
 > ⚠️ **Log in as a _non-admin_ seed user to test `no_access`** (e.g. Tama Jones, `a0…002`).
-> alice (`a0…001`) is a global **`ww_admin`** (`system` scope) and therefore sees *every*
-> deployment in *every* org — so the `no_access` case never triggers for her. Use alice only for
+> tui (`a0…001`) is a global **`ww_admin`** (`system` scope) and therefore sees *every*
+> deployment in *every* org — so the `no_access` case never triggers for her. Use tui only for
 > the **valid** / **not-found** / **no-id** cases; switch to a non-admin (General-only member) for
 > **no-access**.
 
@@ -183,6 +183,7 @@ deliberately don't.**
 | `MEDIA/32f55229/` | `32f55229-25b3-4887-a253-b2aae9edec05` | **Valid — New Plymouth night session** | Seeded by `fixtures.generated.sql` |
 | `MEDIA/242025DF/` (3 JPG + 3 BMP) | `242025df-5d55-47d6-b245-e1690ef44126` | **No access** — deployment exists but in an org the **non-admin** test user is not in → `no_access` warning | Seeded in org **`b0…003`** (owner `a0…004`); Tama `a0…002` is not a member → no access |
 | `MEDIA/08702E50/` (1) | `08702e50-f7c6-499f-8b9d-3ecf9cfe050a` | **Not found** — UUID not in the DB → `not_found` warning | **Do not seed** |
+| `MEDIA/EAB2AA23/` (2 JPG) | `eab2aa23-ff7e-4f85-ad5b-00fb43603f1c` | **Not found** — second unseeded-UUID sample → `not_found` warning | Currently unseeded |
 | `MEDIA/00000000/` (4) | _(none — tag absent)_ | **No deployment ID** — camera captured while unconfigured → no binding | n/a |
 | `MEDIA/IMAGES.000/` (4) | _(none — 2024 epoch date)_ | **Unconfigured camera** — no `Deployment_ID`, no RTC set | n/a |
 
