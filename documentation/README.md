@@ -22,7 +22,9 @@ active engineering hand-offs; **archive** is frozen history. Start with onboardi
 | [demo-account](resources/demo-account.md) | Read-only "Try the demo" account: access, 3-layer read-only enforcement, API usage, per-environment seeding |
 | [deployment-guide](resources/deployment-guide.md) | Dev/prod environments, Azure + Cloudflare, CI/CD, vector store (pgvector → Qdrant), security checklist |
 | [cloud-infrastructure](resources/cloud-infrastructure.md) | **Inventory + maintenance** of every Azure/Supabase/Cloudflare/Drive resource: what exists, what's essential vs sprawl, quarterly review checklist |
+| [prod-worker-provisioning-runbook](resources/prod-worker-provisioning-runbook.md) | Runbook to stand up the **production** GPU ML worker (ARQ + Redis + serverless T4) — ready to run once prod has real traffic |
 | [ai-model-pipeline](resources/ai-model-pipeline.md) | Edge Impulse → Vela on-camera model conversion |
+| [embedded-model-lifecycle](resources/embedded-model-lifecycle.md) | End-to-end on-device model flow across website / backend / mobile / firmware |
 | [camtrapdp-import](resources/camtrapdp-import.md) | Importing CamtrapDP packages |
 | [lorawan-webhook-setup](resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server config |
 | [ui-components](resources/ui-components.md) | Shared frontend design-system primitives |

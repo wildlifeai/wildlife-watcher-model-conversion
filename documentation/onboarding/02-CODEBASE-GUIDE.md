@@ -7,8 +7,11 @@ How the repository is organised, how the frontend is routed, and how the backend
 ```
 ww-website/
 ├── readme.md                  # entry point (setup + command reference)
-├── docker-compose.yml         # full-stack run
+├── docker-compose.yml         # full-stack run (lean API image)
+├── docker-compose.dev.yml     # dev overlay: ML image + Drive credential mount — always use BOTH files
 ├── documentation/             # all docs (onboarding / resources / development reports)
+├── scripts/                   # dev utilities (seed-fixture generator, demo seeding, exports, …)
+├── test-fixtures/             # camera-trap SD-card fixtures for upload testing (see its README)
 ├── backend/                   # FastAPI service
 └── frontend/                  # React + Vite SPA
 ```
@@ -38,13 +41,13 @@ src/
 ### Signed-in navigation
 
 Defined as `USER_TABS` in `App.tsx`. The active tab is highlighted, so pages no longer repeat
-their own title. Lifecycle order: **prepare → collect → analyse**. The 📡 **Field** tab appears only
+their own title. Lifecycle order: **prepare → collect → analyse**. The 📡 **Realtime** tab appears only
 when the user has an active deployment.
 
 | Tab | Route | Page |
 |-----|-------|------|
 | 🧰 Toolkit | `/toolkit` | `ToolkitPage` (upload, SD-card prep, manifest, model upload) |
-| 📡 Field | `/field` | `FieldPage` (active-deployment view; shown only with a live deployment) |
+| 📡 Realtime | `/field` | `FieldPage` (live-deployment view; shown only with an active deployment) |
 | 🏷️ Annotations | `/annotations` | `AnnotationsPage` → `MediaBrowser` (+ full-screen modal) |
 | 📈 Insights | `/insights` | `InsightsPage` (projects, deployments, charts, maps) |
 
@@ -65,15 +68,22 @@ when the user has an active deployment.
 | `/upload-model` | `UploadModelPage` | Edge Impulse → Vela model upload (org managers) |
 | `/clusters/:id` | `ClusterReviewPage` | Bulk-confirm HDBSCAN clusters |
 | `/review/:id` | `ReviewQueuePage` | Active-learning review queue |
-| `/explore/:id`, `/umap/:id` | `ImageExplorerPage`, `UmapExplorerPage` | Embedding-space exploration |
-| `/events/:id` | `EventReviewPage` | Temporal event aggregation |
+| `/umap/:id` | `UmapExplorerPage` | Embedding-space exploration |
 | `/intelligence/:id` | `DatasetHealthPage` | Dataset health + QA agreement (per project) |
-| `/analysis/:id`, `/reporting/:id` | `AnalysisPage`, `ReportingPage` | Diel activity, CamtrapDP / Darwin Core exports |
+| `/reporting/:id` | `ReportingPage` | Diel activity, CamtrapDP / Darwin Core exports |
+| `/processing` | `ProcessingHistoryPage` | Upload & pipeline job history |
+| `/notifications` | `NotificationsPage` | Notification inbox |
+| `/settings` | `SettingsPage` | Account settings |
+| `/admin/usage` | `AdminUsagePage` | Per-user usage limits (platform admin) |
 
 **Redirects / legacy**: `/results` → `/insights`, `/other` → `/toolkit`, `/my-data` → `/insights`,
-`/analyse-images` → `/upload-data` (query strings preserved). The old `MyDataPage` is retained only at
+`/analyse-images` → `/upload-data` (query strings preserved), `/explore/:id` →
+`/annotations?deployment=:id` (the Annotations grid now does clustering, bulk cluster-confirm and
+similar-image search), `/analysis/:id` → `/reporting/:id`. The old `MyDataPage` is retained only at
 `/my-data-legacy`. `LabelingPage` was **removed** — its rich editor now lives in the Annotations
-full-screen modal (see [05-ANNOTATION-WORKFLOW](./05-ANNOTATION-WORKFLOW.md)).
+full-screen modal (see [05-ANNOTATION-WORKFLOW](./05-ANNOTATION-WORKFLOW.md)). `EventReviewPage` is
+currently **unrouted** (`/events/:id` was removed from `App.tsx`; the file remains pending
+re-route-or-delete).
 
 ## Backend (`backend/app/`)
 
