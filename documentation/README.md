@@ -18,6 +18,7 @@ active engineering hand-offs; **archive** is frozen history. Start with onboardi
 
 | Doc | Covers |
 |-----|--------|
+| [AI-ARCHITECTURE](resources/AI-ARCHITECTURE.md) | The three AI layers (Camera AI / Cloud AI / Wildlife Brain): canonical naming, cross-repo contracts, integration map |
 | [api-reference](resources/api-reference.md) | Backend `/api/*` endpoint reference |
 | [demo-account](resources/demo-account.md) | Read-only "Try the demo" account: access, 3-layer read-only enforcement, API usage, per-environment seeding |
 | [deployment-guide](resources/deployment-guide.md) | Dev/prod environments, Azure + Cloudflare, CI/CD, vector store (pgvector in Supabase), security checklist |
@@ -36,6 +37,7 @@ Current hand-offs; kept up to date until the work ships, then moved to `_archive
 
 | Spec | For | Covers |
 |------|-----|--------|
+| [dual-layer-ai-architecture-proposal](development%20reports/dual-layer-ai-architecture-proposal.md) | all repos | Camera AI / Cloud AI / Wildlife Brain naming, edge↔cloud integration framework, LoRaWAN alert-logic spec (instant/digest/back-off), validation roadmap + user stories |
 | [bmp-ingestion-analysis](development%20reports/bmp-ingestion-analysis.md) | website + firmware | Raw-BMP ingest + in-pipeline JPEG re-compress; device capture behaviour; #1 same-frame dual-write |
 | [dual-camera-rpi-analysis](development%20reports/dual-camera-rpi-analysis.md) | firmware/hardware | HM0360 (night/IR) ↔ Raspberry Pi (day/colour) camera swap + dual-write interaction |
 | [exif-telemetry-firmware-spec](development%20reports/exif-telemetry-firmware-spec.md) | firmware | Add temperature/battery to EXIF via UserComment (smallest change) |

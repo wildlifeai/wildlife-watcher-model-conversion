@@ -15,7 +15,7 @@ import shutil
 import tempfile
 import zipfile
 from pathlib import Path
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
@@ -58,8 +58,29 @@ def _safe_move(src: Path, dst: Path) -> None:
     shutil.move(str(src), str(dst))
 
 
+def _declared_label_count(header_content: str) -> Optional[int]:
+    """The classifier output size the Edge Impulse metadata itself declares.
+
+    Present as ``.label_count = N`` (model_variables.h impulse struct) and/or
+    ``EI_CLASSIFIER_LABEL_COUNT N`` (model_metadata.h). None when neither is found.
+    """
+    m = re.search(r"\.label_count\s*=\s*(\d+)", header_content) or re.search(
+        r"EI_CLASSIFIER_LABEL_COUNT\s+(\d+)", header_content
+    )
+    return int(m.group(1)) if m else None
+
+
 def _extract_labels_from_header(vars_h_path: Path) -> List[str]:
-    """Extract classification labels from model_variables.h."""
+    """Extract classification labels from model_variables.h.
+
+    Labels are taken in the model's own declared order — never sorted — because
+    device class index *i* must map to ``labels[i]`` (the labels.txt line) and on
+    to ``ai_models.label_map``. Enforces the label-integrity check LM-1: when the
+    header also declares the classifier output size, the extracted label list
+    must match it, otherwise every on-device class index would resolve to the
+    wrong species. (Score-level verification against the physical device is the
+    golden-set parity harness's job, LM-3.)
+    """
     with open(vars_h_path, "r", encoding="utf-8", errors="replace") as f:
         content = f.read()
 
@@ -71,6 +92,13 @@ def _extract_labels_from_header(vars_h_path: Path) -> List[str]:
     if match:
         labels = re.findall(r'"([^"]+)"', match.group(1))
         if labels:
+            declared = _declared_label_count(content)
+            if declared is not None and declared != len(labels):
+                raise ModelDomainError(
+                    f"Label/tensor mismatch: the model metadata declares {declared} output "
+                    f"classes but {len(labels)} labels were extracted ({labels}). "
+                    "Re-export the model from Edge Impulse rather than editing metadata by hand."
+                )
             return labels
 
     raise ModelDomainError("No labels found in model_variables.h")
@@ -230,6 +258,24 @@ async def convert_uploaded_model(zip_content: bytes, filename: str) -> Tuple[byt
 
             labels = labels_txt.read_text().splitlines()
             labels = [lbl.strip() for lbl in labels if lbl.strip()]
+            if not labels:
+                raise ModelDomainError("labels.txt in the package is empty — the device would have no class names to report.")
+
+            # Label-integrity check LM-2: when the package also carries the Edge
+            # Impulse metadata, the precompiled labels.txt must agree with it in
+            # count AND order — class order defines the device index→label mapping.
+            vars_h = next(iter(_real(work_dir.rglob("model_variables.h"))), None)
+            if vars_h is not None:
+                try:
+                    header_labels = _extract_labels_from_header(vars_h)
+                except ModelDomainError:
+                    header_labels = None
+                if header_labels and header_labels != labels:
+                    raise ModelDomainError(
+                        "labels.txt does not match the model's own metadata "
+                        f"(labels.txt: {labels}; model_variables.h: {header_labels}). "
+                        "Fix the export rather than reordering labels by hand."
+                    )
 
             tfl_bytes = tfl_file.read_bytes()
             txt_bytes = labels_txt.read_bytes()

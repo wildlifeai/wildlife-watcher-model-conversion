@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     )
     FF_BIOCLIP_ENABLED: bool = Field(False, description="Enable the BioCLIP secondary/zero-shot classifier pipeline step")
     FF_PER_CROP_CLASSIFY_ENABLED: bool = Field(False, description="One AI observation per detection (not collapsed per image)")
+    FF_EDGE_REFLECT_ENABLED: bool = Field(
+        False,
+        description=(
+            "Reflect on-device (edge) model EXIF scores as ai_origin='edge' observations beside the "
+            "cloud pipeline's — requires the ww-backend observations.ai_origin column (dual_ai_v0)"
+        ),
+    )
     FF_WILDLIFE_BRAIN_ENABLED: bool = Field(False, description="Enable DINOv3 embedding / clustering / similarity endpoints")
     FF_MEDIA_REGISTRY_ENABLED: bool = Field(False, description="Enable Media Registry thumbnails/crops + resolve endpoints")
     FF_ACTIVE_LEARNING_ENABLED: bool = Field(False, description="Enable active-learning review queue scoring")

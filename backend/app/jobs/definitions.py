@@ -545,6 +545,13 @@ async def auto_annotate_deployments(
                     force=force,
                     media_ids=media_ids,
                 )
+                # Reflect the camera's own EXIF scores as edge observations so the
+                # Camera AI result sits beside the Cloud AI result (and feeds the
+                # detection notifications below). Self-gated on FF_EDGE_REFLECT_ENABLED;
+                # best-effort (never raises).
+                from app.domain.edge_reflection import reflect_edge_deployment
+
+                await reflect_edge_deployment(dep_id)
                 await emit_detection_notifications(dep_id)
                 # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
                 # without a manual per-deployment trigger. Needs the animal crops the

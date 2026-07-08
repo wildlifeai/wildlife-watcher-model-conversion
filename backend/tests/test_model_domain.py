@@ -134,3 +134,78 @@ class TestConvertUploadedModelDiscovery:
         zip_bytes = self._zip({"readme.txt": b"hi", "weights.bin": b"x"})
         with pytest.raises(ModelDomainError, match="No .tflite model found"):
             await convert_uploaded_model(zip_bytes, "bad.zip")
+
+
+class TestLabelIntegrity:
+    """LM-1/LM-2 label-chain checks: device class index i → labels[i] → label_map.
+
+    LM-1: extracted label count must match the output size the metadata itself
+    declares. LM-2: a precompiled labels.txt must agree with the Edge Impulse
+    metadata in count AND order (labels are never sorted).
+    """
+
+    HEADER = """
+    const char* ei_classifier_inferencing_categories[] = { "not rat", "rat" };
+    const ei_impulse_t impulse = { .label_count = %d, };
+    """
+
+    def _header_file(self, content: str) -> Path:
+        f = tempfile.NamedTemporaryFile(mode="w", suffix=".h", delete=False)
+        f.write(content)
+        f.flush()
+        f.close()
+        return Path(f.name)
+
+    def test_matching_declared_count_passes(self):
+        labels = _extract_labels_from_header(self._header_file(self.HEADER % 2))
+        assert labels == ["not rat", "rat"]
+
+    def test_mismatched_declared_count_raises(self):
+        with pytest.raises(ModelDomainError, match="Label/tensor mismatch"):
+            _extract_labels_from_header(self._header_file(self.HEADER % 3))
+
+    def test_ei_classifier_label_count_define_is_also_honoured(self):
+        content = """
+        #define EI_CLASSIFIER_LABEL_COUNT 3
+        const char* ei_classifier_inferencing_categories[] = { "cat", "dog" };
+        """
+        with pytest.raises(ModelDomainError, match="Label/tensor mismatch"):
+            _extract_labels_from_header(self._header_file(content))
+
+    @pytest.mark.asyncio
+    async def test_precompiled_labels_txt_must_match_metadata_order(self):
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = TestConvertUploadedModelDiscovery._zip(
+            {
+                "out/MOD00001.tfl": b"\x00tfl",
+                "out/labels.txt": b"rat\nnot rat\n",  # reversed vs metadata
+                "model-parameters/model_variables.h": (self.HEADER % 2).encode(),
+            }
+        )
+        with pytest.raises(ModelDomainError, match="does not match the model's own metadata"):
+            await convert_uploaded_model(zip_bytes, "pkg.zip")
+
+    @pytest.mark.asyncio
+    async def test_precompiled_labels_txt_matching_metadata_passes(self):
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = TestConvertUploadedModelDiscovery._zip(
+            {
+                "out/MOD00001.tfl": b"\x00tfl",
+                "out/labels.txt": b"not rat\nrat\n",
+                "model-parameters/model_variables.h": (self.HEADER % 2).encode(),
+            }
+        )
+        _tfl, _txt, labels = await convert_uploaded_model(zip_bytes, "pkg.zip")
+        assert labels == ["not rat", "rat"]
+
+    @pytest.mark.asyncio
+    async def test_empty_labels_txt_raises(self):
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = TestConvertUploadedModelDiscovery._zip(
+            {"out/MOD00001.tfl": b"\x00tfl", "out/labels.txt": b"\n\n"}
+        )
+        with pytest.raises(ModelDomainError, match="empty"):
+            await convert_uploaded_model(zip_bytes, "pkg.zip")
