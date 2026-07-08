@@ -291,11 +291,17 @@ def parse_maker_note_fields(maker_note: Any) -> Dict[str, Any]:
         return {}
     if len(parts) >= 8:
         try:
-            fields["wb_red_gain"] = int(parts[5])
-            fields["wb_blue_gain"] = int(parts[6])
-            fields["flash_fired"] = bool(int(parts[7]))
+            # Parse into temporaries first so a malformed extension is ignored
+            # atomically (never a partial wb-without-flash state).
+            wb_red = int(parts[5])
+            wb_blue = int(parts[6])
+            flash = bool(int(parts[7]))
         except (TypeError, ValueError):
             pass  # keep the AE fields; ignore a malformed extension
+        else:
+            fields["wb_red_gain"] = wb_red
+            fields["wb_blue_gain"] = wb_blue
+            fields["flash_fired"] = flash
     return fields
 
 

@@ -171,6 +171,15 @@ class TestCameraFields:
         assert fields["ae_mean"] == 68
         assert "wb_red_gain" not in fields
 
+    def test_maker_note_partially_malformed_extension_is_atomic(self):
+        # Valid WB gains but a garbled flash field: the extension must be
+        # ignored as a whole - no wb-without-flash partial state.
+        fields = parse_maker_note_fields("76, 0, 64, 68, Y, 286, 326, z")
+        assert fields["ae_mean"] == 68
+        assert "wb_red_gain" not in fields
+        assert "wb_blue_gain" not in fields
+        assert "flash_fired" not in fields
+
     def test_camera_variant_mapping(self):
         assert _camera_variant_from_model("WW500 RP3") == "RP3"
         assert _camera_variant_from_model("WW500 HM0360") == "HM0360"

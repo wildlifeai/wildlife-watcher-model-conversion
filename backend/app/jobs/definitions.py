@@ -744,6 +744,9 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                         "timestamp": entry.get("timestamp"),
                         "project": entry.get("project"),
                         "deployment": entry.get("deployment"),
+                        # Parsed EXIF from the upload request — must be forwarded
+                        # through this hop or media.exif_metadata ends up None.
+                        "exif": entry.get("exif"),
                     }
                 )
 
