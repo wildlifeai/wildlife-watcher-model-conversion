@@ -25,7 +25,7 @@ import structlog
 from fastapi import APIRouter, File, Form, Header, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from app.authz import classify_deployment_access
+from app.authz import classify_deployment_access, deployment_id_prefix_bounds
 from app.config import settings
 from app.dependencies import get_optional_user, is_email_confirmed
 from app.domain.exif import parse_exif_from_bytes
@@ -312,14 +312,23 @@ async def _enqueue_drive_upload(
         except Exception as exc:
             logger.warning("deployment_batch_lookup_failed", error=str(exc))
 
-    # 2. Prefix lookup for 8-char folder-derived IDs
+    # 2. Prefix lookup for 8-char folder-derived IDs. deployments.id is a uuid
+    # column, so match a uuid range, not `ilike` (which raises 42883 — that error
+    # was swallowed below and silently dropped every BMP frame, which binds by
+    # folder prefix rather than EXIF). See deployment_id_prefix_bounds.
     if folder_prefixes:
         for prefix in folder_prefixes:
+            bounds = deployment_id_prefix_bounds(prefix)
+            if not bounds:
+                logger.warning("folder_prefix_invalid", prefix=prefix)
+                continue
+            lo, hi = bounds
             try:
                 prefix_resp = (
                     client.table("deployments")
                     .select("id, deployment_start, deployment_end, location_name, latitude, longitude, project_id, projects(id, name)")
-                    .ilike("id", f"{prefix}%")
+                    .gte("id", lo)
+                    .lte("id", hi)
                     .limit(1)
                     .execute()
                 )

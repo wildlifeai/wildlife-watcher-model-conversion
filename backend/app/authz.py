@@ -149,6 +149,29 @@ async def accessible_deployment_ids(user_id: str, deployment_ids: list[str]) -> 
     return await asyncio.to_thread(_check)
 
 
+def deployment_id_prefix_bounds(prefix: str) -> tuple[str, str] | None:
+    """UUID range bounds for an 8-hex camera folder prefix (e.g. ``MEDIA/7785FABB/``).
+
+    ``deployments.id`` is a ``uuid`` column, so filtering it with
+    ``ILIKE '{prefix}%'`` raises Postgres 42883 (``operator does not exist: uuid
+    ~~* unknown``). That error was swallowed at every call site, which silently
+    dropped BMP frames (they bind by folder prefix, not EXIF) and made
+    ``/deployments/validate`` misreport existing deployments as ``not_found``.
+
+    A UUID's canonical text begins with its ``time_low`` field — the first 8 hex
+    digits, which is exactly our folder prefix — and uuid ordering matches that
+    hex order, so every id whose text starts with ``prefix`` falls in
+    ``[{prefix}-0000-…-…0000, {prefix}-ffff-…-…ffff]``. Range-scanning that band
+    on the uuid index needs no cast and no ``ilike``.
+
+    Returns ``(lo, hi)`` for a valid 8-char hex prefix, else ``None``.
+    """
+    p = prefix.lower()
+    if len(p) != 8 or any(c not in "0123456789abcdef" for c in p):
+        return None
+    return f"{p}-0000-0000-0000-000000000000", f"{p}-ffff-ffff-ffff-ffffffffffff"
+
+
 async def classify_deployment_access(user_id: str, deployment_ids: list[str]) -> dict[str, str]:
     """Classify each **full-UUID** deployment id as ``valid`` (exists + caller has access),
     ``no_access`` (exists but caller lacks a role), or ``not_found`` (not in the DB).

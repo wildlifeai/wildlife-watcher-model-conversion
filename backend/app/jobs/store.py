@@ -40,6 +40,18 @@ _memory_events: Dict[str, List[str]] = {}
 # Per-job locks to serialise summary updates
 _summary_locks: Dict[str, asyncio.Lock] = {}
 
+# Strong references to in-flight detached Supabase syncs, keyed by job_id. asyncio
+# holds only a WEAK reference to a bare create_task(), so a fire-and-forget sync
+# could be garbage-collected before it ran — which is how the ARQ worker left
+# completed jobs stuck at 'processing' (and pinned the GPU awake). Keep a reference
+# until the task finishes. Keying by job_id lets a terminal write drain only ITS
+# own syncs (flush_pending_syncs(job_id)) so a slow sync on another job can't block
+# it; the worker teardown drains all (flush_pending_syncs()).
+_pending_sync_tasks: dict[str, set[asyncio.Task]] = {}
+
+# Statuses after which no further work happens — their sync must be durable.
+_TERMINAL_STATUSES = frozenset({JobStatus.COMPLETED.value, JobStatus.COMPLETED_WITH_ERRORS.value, JobStatus.FAILED.value})
+
 MAX_EVENTS_RETURNED = 50
 
 
@@ -103,20 +115,36 @@ def _refresh_if_newer(job_id: str, local_updated_at: Optional[str]) -> Optional[
         return None
 
 
-async def _sync_to_supabase(job_id: str) -> None:
-    """Synchronize local memory state to Supabase in the background."""
-    raw_data = _memory_store.get(f"job:{job_id}")
-    if not raw_data:
+async def _sync_to_supabase(job_id: str, *, flush: bool = False) -> None:
+    """Synchronize local memory state to Supabase.
+
+    ``flush=True`` **awaits** the write so it's durable before returning — used for
+    terminal status writes: a detached task can be dropped when the coroutine
+    returns and the event loop settles (exactly what stranded ARQ-worker jobs at
+    'processing'). Otherwise the write is detached for speed, but tracked in
+    ``_pending_sync_tasks`` so it isn't garbage-collected mid-flight.
+    """
+    key = f"job:{job_id}"
+    if key not in _memory_store:
         return
 
-    mem_events = _memory_events.get(f"job:{job_id}:events", [])
-    events_json = [json.loads(e) for e in mem_events]
-    data_json = json.loads(raw_data)
-
-    # Bundle events inside the data for storage
-    data_json["events"] = events_json
-
     def _run_sync():
+        # Snapshot the LATEST memory state at *write* time, not when this sync was
+        # scheduled. A detached sync queued mid-run (status 'processing') would
+        # otherwise carry that stale snapshot and, if it lands after the awaited
+        # terminal write, clobber 'completed' back to 'processing' — exactly what
+        # stranded ARQ jobs and kept the GPU billing. Reading here means every sync
+        # (however late) writes the current state.
+        raw = _memory_store.get(key)
+        if not raw:
+            return
+        data_json = json.loads(raw)
+        # Snapshot the events list before iterating: emit_event may append to the
+        # live list from the event-loop thread while this runs in the thread pool.
+        # ``list(...)`` is a single GIL-held copy (atomic); the Python-level
+        # comprehension then iterates our private copy.
+        events_raw = list(_memory_events.get(f"{key}:events", []))
+        data_json["events"] = [json.loads(e) for e in events_raw]
         try:
             client = create_service_client()
             status_val = data_json.get("status", "queued")
@@ -124,7 +152,37 @@ async def _sync_to_supabase(job_id: str) -> None:
         except Exception as e:
             logger.debug("supabase_sync_skipped", error=str(e))
 
-    asyncio.create_task(asyncio.to_thread(_run_sync))
+    if flush:
+        await asyncio.to_thread(_run_sync)
+        return
+
+    task = asyncio.create_task(asyncio.to_thread(_run_sync))
+    _pending_sync_tasks.setdefault(job_id, set()).add(task)
+
+    def _discard(t: asyncio.Task) -> None:
+        tasks = _pending_sync_tasks.get(job_id)
+        if tasks is not None:
+            tasks.discard(t)
+            if not tasks:
+                _pending_sync_tasks.pop(job_id, None)
+
+    task.add_done_callback(_discard)
+
+
+async def flush_pending_syncs(job_id: Optional[str] = None) -> None:
+    """Await in-flight detached Supabase syncs.
+
+    With ``job_id``, drains only that job's syncs — used before a terminal write so
+    a slow/hung sync on a DIFFERENT job can't block it. Without it, drains every
+    job's syncs: the ARQ adapter's ``finally`` teardown net, so a job's last writes
+    reach ``api_jobs`` before the worker goes idle / scales to zero.
+    """
+    if job_id is not None:
+        pending = [t for t in _pending_sync_tasks.get(job_id, set()) if not t.done()]
+    else:
+        pending = [t for tasks in _pending_sync_tasks.values() for t in tasks if not t.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
 
 
 async def reap_stale_jobs(max_age_minutes: int = 60) -> int:
@@ -359,8 +417,16 @@ async def update_job(
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     _memory_store[f"job:{job_id}"] = json.dumps(data)
 
-    # Background sync
-    await _sync_to_supabase(job_id)
+    if data.get("status") in _TERMINAL_STATUSES:
+        # Terminal write: drain any in-flight detached syncs FIRST (let their writes
+        # land), then write the terminal state LAST and durably (awaited) so nothing
+        # overwrites it back to a running state. Combined with the write-time snapshot
+        # in _sync_to_supabase, this makes 'completed'/'failed' the final word. Scope
+        # the drain to THIS job so another job's slow sync can't stall completion.
+        await flush_pending_syncs(job_id)
+        await _sync_to_supabase(job_id, flush=True)
+    else:
+        await _sync_to_supabase(job_id)
 
 
 async def emit_event(job_id: str, event: ProgressEvent) -> None:

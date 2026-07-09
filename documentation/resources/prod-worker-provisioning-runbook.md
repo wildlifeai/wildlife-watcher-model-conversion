@@ -12,6 +12,24 @@ the shared `ww-env` environment, so the prod worker reuses it (no extra quota, n
 
 ## Prerequisites
 - The dev GPU setup working (proves the profile + image). Worker image: `wwregistry.azurecr.io/ww-backend-worker` (CUDA-ready). Use a **prod tag** (e.g. `latest`), not `dev-latest`.
+- **Cost guardrails (learned on dev, 2026-07-09):** a job left in `status='processing'` pins the
+  GPU awake for the whole KEDA query window. Before provisioning prod:
+  1. Confirm the **ARQ terminal-status fix** is merged (the worker must write
+     `completed`/`failed` to `api_jobs` — on dev the row froze at `processing`/progress 1.0 and
+     held the T4 up for ~1 h per 84 s job).
+  2. **The Azure Monitor alert is the primary guard** (below) — it catches a stuck GPU without
+     any risk of killing live work. Add it first.
+  3. Shortening the KEDA query window is secondary and has a **sharp edge**: the annotate job only
+     refreshes `updated_at` at the *start of each pipeline step* (`_on_step` in
+     `auto_annotate_deployments`), NOT within a step. A single long step on a large deployment
+     (e.g. SpeciesNet over thousands of images) can exceed the window with no heartbeat, so KEDA
+     scales the worker to zero **mid-inference and kills the job**. So:
+     - **Dev** (small test deployments) runs a **15-minute** window safely — applied 2026-07-09.
+     - **Prod** (real, potentially huge deployments) must either keep a generous window
+       (≥ the reaper's 60 min) OR add an intra-step heartbeat first; do not blanket-copy 15 min.
+  4. Create an **Azure Monitor alert** on the worker: `Replicas >= 1` sustained > 30 min → email
+     (dev: action group `ww-gpu-alerts`, alert `ww-gpu-worker-stuck-dev`, created 2026-07-09).
+  5. Keep `--max-replicas 1` unless the queue demonstrably needs more.
 - Prod Supabase project: **`nuhwmubvygxyddkycmpa`** — have its **service-role key**, **anon key**, and **DB password** (for the pooler).
 - The Google service-account JSON + Azure Storage connection string (can be the same as dev, or prod-specific).
 - `az` logged in; default RG `WW-AE`, region `australiaeast`.
