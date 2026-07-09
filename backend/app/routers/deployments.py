@@ -3,13 +3,17 @@ import uuid
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Optional
 
+import structlog
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 
-from app.authz import assert_access, assert_project_writer
+from app.authz import assert_access, assert_project_writer, deployment_id_prefix_bounds
 from app.dependencies import get_current_user, get_user_client, get_verified_user, require_not_demo
 from app.domain.soft_delete import now_iso, restore_deployments, soft_delete_deployments
+from app.schemas.common import ApiResponse
 from app.services.supabase_client import create_service_client
+
+logger = structlog.get_logger()
 
 router = APIRouter(prefix="/api/deployments", tags=["deployments"])
 
@@ -167,15 +171,18 @@ async def batch_restore_deployments(
 @router.post("/validate")
 async def validate_deployments(
     request: ValidateDeploymentsRequest, user: Any = Depends(get_current_user), user_client: Any = Depends(get_user_client)
-) -> Dict[str, str]:
+) -> ApiResponse:
     """
-    Given a list of deployment IDs (or 8-char prefixes), determine their state:
+    Given a list of deployment IDs (or 8-char folder prefixes), determine their state:
     - 'valid': exists and user has access
     - 'no_access': exists but user does not belong to project
     - 'not_found': does not exist
+
+    Returned inside the standard ``{data, error, meta}`` envelope (``data`` is the
+    ``{id: status}`` map). The frontend pre-upload banner reads ``response.data``.
     """
     if not request.deployment_ids:
-        return {}
+        return ApiResponse(data={})
 
     results = {dep_id: "not_found" for dep_id in request.deployment_ids}
 
@@ -184,43 +191,44 @@ async def validate_deployments(
     full_uuids = [d for d in request.deployment_ids if len(d) > 8]
     prefixes = [d for d in request.deployment_ids if len(d) == 8]
 
-    user_found_ids = set()
-    admin_found_ids = set()
+    user_found_ids: set[str] = set()
+    admin_found_ids: set[str] = set()
 
-    # 1. Check full UUIDs
+    # 1. Check full UUIDs. An exception here is a real DB error (RLS filters rows,
+    # it never raises), so log it instead of silently treating the id as missing.
     if full_uuids:
-        # Admin check
         try:
             admin_res = admin_client.table("deployments").select("id").in_("id", full_uuids).execute()
             admin_found_ids.update(r["id"].lower() for r in admin_res.data)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("validate_admin_uuid_lookup_failed", error=str(exc))
 
-        # User check
         try:
             user_res = user_client.table("deployments").select("id").in_("id", full_uuids).execute()
             user_found_ids.update(r["id"].lower() for r in user_res.data)
-        except Exception:
-            pass
+        except Exception as exc:
+            logger.warning("validate_user_uuid_lookup_failed", error=str(exc))
 
-    # 2. Check prefixes
-    if prefixes:
-        for prefix in prefixes:
-            # Admin check
-            try:
-                admin_res = admin_client.table("deployments").select("id").ilike("id", f"{prefix}%").limit(1).execute()
-                if admin_res.data:
-                    admin_found_ids.add(prefix.lower())
-            except Exception:
-                pass
+    # 2. Check 8-hex folder prefixes via a uuid range (NOT ilike — deployments.id
+    # is a uuid column; see deployment_id_prefix_bounds).
+    for prefix in prefixes:
+        bounds = deployment_id_prefix_bounds(prefix)
+        if not bounds:
+            continue  # not 8-hex → cannot match a uuid; leave as not_found
+        lo, hi = bounds
+        try:
+            admin_res = admin_client.table("deployments").select("id").gte("id", lo).lte("id", hi).limit(1).execute()
+            if admin_res.data:
+                admin_found_ids.add(prefix.lower())
+        except Exception as exc:
+            logger.warning("validate_admin_prefix_lookup_failed", prefix=prefix, error=str(exc))
 
-            # User check
-            try:
-                user_res = user_client.table("deployments").select("id").ilike("id", f"{prefix}%").limit(1).execute()
-                if user_res.data:
-                    user_found_ids.add(prefix.lower())
-            except Exception:
-                pass
+        try:
+            user_res = user_client.table("deployments").select("id").gte("id", lo).lte("id", hi).limit(1).execute()
+            if user_res.data:
+                user_found_ids.add(prefix.lower())
+        except Exception as exc:
+            logger.warning("validate_user_prefix_lookup_failed", prefix=prefix, error=str(exc))
 
     # 3. Compile results
     for dep_id in request.deployment_ids:
@@ -232,7 +240,7 @@ async def validate_deployments(
         else:
             results[dep_id] = "not_found"
 
-    return results
+    return ApiResponse(data=results)
 
 
 @router.post("/backfill-timezones")
