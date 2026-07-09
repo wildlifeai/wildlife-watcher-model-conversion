@@ -271,9 +271,9 @@ async def similar(request: Request, media_id: str, n: int = Query(20, ge=1, le=1
     if vector is None:
         return ApiResponse(error=ApiError(code="NOT_FOUND", message="No embedding for this media"), meta=ApiMeta(request_id=req_id))
 
-    # +1 then drop self.
-    results = await store.search(vector, limit=n + 1)
-    hits = [{"media_id": r.id, "score": r.score, "payload": r.payload} for r in results if r.id != media_id][:n]
+    # Exclude self at the DB level so exactly n neighbours come back.
+    results = await store.search(vector, limit=n, exclude_media_id=media_id)
+    hits = [{"media_id": r.id, "score": r.score, "payload": r.payload} for r in results]
     return ApiResponse(data={"media_id": media_id, "results": hits}, meta=ApiMeta(request_id=req_id))
 
 

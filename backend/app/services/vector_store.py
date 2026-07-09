@@ -150,12 +150,15 @@ class PgVectorService:
         vector: Sequence[float],
         limit: int = 20,
         conditions: Optional[dict[str, Any]] = None,
+        exclude_media_id: Optional[str] = None,
     ) -> list[SimilarPoint]:
         """Cosine nearest-neighbour search via ``match_media_embeddings``.
 
         ``conditions['deployment_id']`` (scalar or list) scopes the search; other
-        keys are ignored (the row's model already fixes the vector space). Score is
-        cosine similarity (1 − distance), matching the old Qdrant semantics.
+        keys are ignored (the row's model already fixes the vector space).
+        ``exclude_media_id`` drops the query media itself at the DB level (for
+        "find similar to X"). Score is cosine similarity (1 − distance), matching
+        the old Qdrant semantics.
         """
         if len(vector) != self.dim:
             raise ValueError(f"Embedding dim mismatch: got {len(vector)}, expected {self.dim}")
@@ -170,7 +173,7 @@ class PgVectorService:
             "p_model": self.model_name,
             "match_count": limit,
             "p_deployment_ids": dep_ids,
-            "p_exclude_media_id": None,
+            "p_exclude_media_id": exclude_media_id,
         }
 
         def _run() -> list[dict]:
@@ -178,10 +181,12 @@ class PgVectorService:
             return client.rpc(_MATCH_FN, params).execute().data or []
 
         rows = await asyncio.to_thread(_run)
+        # `distance` is `embedding <=> query` over non-null vectors, so never NULL in
+        # practice — the guard is belt-and-suspenders against a malformed row.
         return [
             SimilarPoint(
                 id=str(r["media_id"]),
-                score=1.0 - float(r["distance"]),
+                score=(1.0 - float(r["distance"])) if r.get("distance") is not None else 0.0,
                 payload={"deployment_id": r.get("deployment_id"), "cluster_id": r.get("cluster_id")},
             )
             for r in rows
@@ -201,10 +206,14 @@ class PgVectorService:
         """Clear the stored vector for the given media ids (metadata row is kept)."""
         if not ids:
             return
+        id_list = list(ids)
 
         def _run() -> None:
             client = create_service_client()
-            client.table(_TABLE).update({"embedding": None, "embedding_model": None}).in_("media_id", list(ids)).execute()
+            # Chunk like upsert: PostgREST puts .in_() ids in the URL, so a big list
+            # would blow the URL length (414). 100 per request stays well under it.
+            for i in range(0, len(id_list), 100):
+                client.table(_TABLE).update({"embedding": None, "embedding_model": None}).in_("media_id", id_list[i : i + 100]).execute()
 
         await asyncio.to_thread(_run)
 
