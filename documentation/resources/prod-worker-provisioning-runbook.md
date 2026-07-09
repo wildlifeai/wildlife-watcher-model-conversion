@@ -58,9 +58,10 @@ az containerapp secret set -n ww-embedding-worker -g WW-AE --secrets \
   supabase-anon-key="<PROD anon key>" \
   azure-storage-conn="<storage connection string>" \
   google-sa-json="<service-account JSON>" \
+  hf-token="<HuggingFace token with gated access to facebook/dinov3-*>" \
   pg-conn="postgres.nuhwmubvygxyddkycmpa:<PROD DB password>@aws-0-<region>.pooler.supabase.com:6543/postgres?sslmode=require"
 ```
-*(If creating the app first, set secrets in `create` via `--secrets`. `pg-conn` must be the **shared Transaction pooler** — IPv4, port 6543 — not the direct/dedicated host, which is IPv6-only and unreachable by KEDA.)*
+*(If creating the app first, set secrets in `create` via `--secrets`. `pg-conn` must be the **shared Transaction pooler** — IPv4, port 6543 — not the direct/dedicated host, which is IPv6-only and unreachable by KEDA. `hf-token` is **required** — DINOv3 is a gated HF model; without it the Wildlife Brain embed 401s. The dev deploy syncs this secret from the `HF_TOKEN` GitHub org secret; mirror that or set it here.)*
 
 ## 3 · Prod worker on the GPU profile
 ```bash
@@ -71,6 +72,7 @@ az containerapp create -n ww-embedding-worker -g WW-AE --environment ww-env \
   --min-replicas 0 --max-replicas 1 \
   --env-vars \
     SUPABASE_URL="https://nuhwmubvygxyddkycmpa.supabase.co" \
+    HF_TOKEN=secretref:hf-token \
     SUPABASE_SERVICE_ROLE_KEY=secretref:supabase-service-key \
     SUPABASE_ANON_KEY=secretref:supabase-anon-key \
     AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-conn \
