@@ -12,6 +12,16 @@ the shared `ww-env` environment, so the prod worker reuses it (no extra quota, n
 
 ## Prerequisites
 - The dev GPU setup working (proves the profile + image). Worker image: `wwregistry.azurecr.io/ww-backend-worker` (CUDA-ready). Use a **prod tag** (e.g. `latest`), not `dev-latest`.
+- **Cost guardrails (learned on dev, 2026-07-09):** a job left in `status='processing'` pins the
+  GPU awake for the whole KEDA query window. Before provisioning prod:
+  1. Confirm the **ARQ terminal-status fix** is merged (the worker must write
+     `completed`/`failed` to `api_jobs` — on dev the row froze at `processing`/progress 1.0 and
+     held the T4 up for ~1 h per 84 s job).
+  2. Use a **15-minute** KEDA query window, not 1 hour (active jobs heartbeat `updated_at`, so
+     15 min is safe): `… AND updated_at > now() - interval '15 minutes'`.
+  3. Create an **Azure Monitor alert** on the worker: `Replicas >= 1` sustained > 30 min → email
+     — a stuck job then costs minutes, not a silent GPU-day.
+  4. Keep `--max-replicas 1` unless the queue demonstrably needs more.
 - Prod Supabase project: **`nuhwmubvygxyddkycmpa`** — have its **service-role key**, **anon key**, and **DB password** (for the pooler).
 - The Google service-account JSON + Azure Storage connection string (can be the same as dev, or prod-specific).
 - `az` logged in; default RG `WW-AE`, region `australiaeast`.

@@ -33,6 +33,15 @@ try:
             try:
                 return await func(*args, **kwargs)
             finally:
+                # Flush any detached job-status syncs BEFORE the worker goes idle /
+                # scales to zero, so a completed job can't be left 'processing' in
+                # api_jobs (which would keep the KEDA scaler awake and the GPU billing).
+                try:
+                    from app.jobs.store import flush_pending_syncs
+
+                    await flush_pending_syncs()
+                except Exception:
+                    pass
                 # Drop this job's KEDA scale-to-zero marker so the worker can scale
                 # back to 0 once the queue drains (paired with the LPUSH in
                 # dispatch.enqueue_job). Best-effort — never fails the job.
