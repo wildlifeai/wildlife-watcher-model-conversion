@@ -3,7 +3,7 @@
 """Wildlife Brain router — DINOv3 embeddings, clusters, similarity.
 
 Thin HTTP layer (envelope responses); all logic in domain/wildlife_brain.py and
-the Qdrant service. Gated behind ``FF_WILDLIFE_BRAIN_ENABLED``.
+the pgvector vector store. Gated behind ``FF_WILDLIFE_BRAIN_ENABLED``.
 """
 
 from __future__ import annotations
@@ -248,12 +248,12 @@ async def list_outliers(request: Request, deployment_id: str, user=Depends(get_c
 
 @router.get("/similar/{media_id}", dependencies=[Depends(require_media_access)])
 async def similar(request: Request, media_id: str, n: int = Query(20, ge=1, le=100), org_scoped: bool = True, user=Depends(get_current_user)):
-    """Qdrant nearest-neighbour search for a media item."""
+    """pgvector nearest-neighbour search for a media item."""
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
         return _disabled(req_id)
 
-    from app.services.qdrant_client import get_qdrant_service
+    from app.services.vector_store import get_vector_service
 
     svc = create_service_client()
 
@@ -266,14 +266,14 @@ async def similar(request: Request, media_id: str, n: int = Query(20, ge=1, le=1
         return (run.data or {}).get("model_name")
 
     model_name = await asyncio.to_thread(_run_model)
-    qdrant = get_qdrant_service(model_name)  # variant collection (falls back to default)
-    vector = await qdrant.retrieve_vector(media_id)
+    store = get_vector_service(model_name)  # per-model vector space (falls back to default)
+    vector = await store.retrieve_vector(media_id)
     if vector is None:
         return ApiResponse(error=ApiError(code="NOT_FOUND", message="No embedding for this media"), meta=ApiMeta(request_id=req_id))
 
-    # +1 then drop self.
-    results = await qdrant.search(vector, limit=n + 1)
-    hits = [{"media_id": r.id, "score": r.score, "payload": r.payload} for r in results if r.id != media_id][:n]
+    # Exclude self at the DB level so exactly n neighbours come back.
+    results = await store.search(vector, limit=n, exclude_media_id=media_id)
+    hits = [{"media_id": r.id, "score": r.score, "payload": r.payload} for r in results]
     return ApiResponse(data={"media_id": media_id, "results": hits}, meta=ApiMeta(request_id=req_id))
 
 
@@ -509,8 +509,10 @@ async def review_media(request: Request, media_id: str, body: ReviewDecisionRequ
 
 
 @router.post("/backup", dependencies=[Depends(require_system_admin)])
-async def backup_qdrant_endpoint(request: Request, user=Depends(get_current_user)):
-    """Enqueue a Qdrant snapshot → private Supabase Storage backup (DR)."""
+async def backup_embeddings_endpoint(request: Request, user=Depends(get_current_user)):
+    """Vector-store DR. Retained for compatibility; a no-op now that embeddings live
+    in Postgres (pgvector) under Supabase PITR — the job completes with nothing to do.
+    """
     req_id = getattr(request.state, "request_id", None)
     if not settings.FF_WILDLIFE_BRAIN_ENABLED:
         return _disabled(req_id)
@@ -518,6 +520,6 @@ async def backup_qdrant_endpoint(request: Request, user=Depends(get_current_user
     from app.jobs.dispatch import enqueue_job
     from app.jobs.store import create_job
 
-    job_id = await create_job(user_id=user.id, kind="maintenance", label="Qdrant backup")
-    await enqueue_job("qdrant_backup_job", job_id)
+    job_id = await create_job(user_id=user.id, kind="maintenance", label="Embeddings backup")
+    await enqueue_job("embeddings_backup_job", job_id)
     return ApiResponse(data={"job_id": job_id, "status": "queued"}, meta=ApiMeta(request_id=req_id))

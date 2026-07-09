@@ -1,26 +1,23 @@
 # Copyright (c) 2026
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Embedding lifecycle — versioning, reprocessing, comparison, and Qdrant DR.
+"""Embedding lifecycle — versioning, reprocessing, and run comparison.
 
 Lets embedding models evolve safely after deployment: every re-embed creates a
 new ``embedding_runs`` row, marks the prior run ``superseded`` (its
 ``cluster_assignments`` are retained for history), and overwrites the current
-``media_embeddings``. Provides dry-run cost estimates, run comparison, and Qdrant
-snapshot backup to a private Supabase Storage bucket.
+``media_embeddings``. Provides dry-run cost estimates and run comparison. Vector
+DR needs nothing here — vectors live in Postgres (pgvector) under Supabase PITR.
 
-Layering: orchestration here; DINOv3/Qdrant/Supabase in services (lazy). The cost
-and comparison helpers are pure and unit-tested.
+Layering: orchestration here; DINOv3/Supabase in services (lazy). The cost and
+comparison helpers are pure and unit-tested.
 """
 
 from __future__ import annotations
 
 import asyncio
-from datetime import datetime, timezone
 from typing import Optional
 
 import structlog
-
-from app.config import settings
 
 logger = structlog.get_logger()
 
@@ -193,34 +190,11 @@ async def compare_runs(run_a: str, run_b: str) -> dict:
 # ── Disaster recovery ────────────────────────────────────────────────
 
 
-async def backup_qdrant_snapshot() -> Optional[str]:
-    """Snapshot the Qdrant collection and store it in the private backup bucket.
+async def backup_embeddings_snapshot() -> Optional[str]:
+    """No-op — vectors now live in Postgres (``media_embeddings.embedding``) and are
+    covered by Supabase PITR, so there is no separate vector-store snapshot to take.
 
-    Returns the stored object path, or None if unavailable. Qdrant remains fully
-    rebuildable from Drive originals + Supabase run configs even without this.
+    Kept so the ``/api/brain/backup`` endpoint stays valid; returns None (nothing to do).
     """
-    import httpx
-
-    from app.services.qdrant_client import get_qdrant_service
-    from app.services.storage import upload_to_storage
-
-    qdrant = get_qdrant_service()
-    name = await qdrant.create_snapshot()
-    if not name:
-        logger.warning("qdrant_snapshot_unavailable")
-        return None
-
-    url = f"{settings.QDRANT_URL.rstrip('/')}/collections/{qdrant.collection}/snapshots/{name}"
-    headers = {"api-key": settings.QDRANT_API_KEY} if settings.QDRANT_API_KEY else {}
-    async with httpx.AsyncClient(timeout=600.0) as client:
-        resp = await client.get(url, headers=headers)
-        resp.raise_for_status()
-        data = resp.content
-
-    date = datetime.now(timezone.utc).strftime("%Y%m%d_%H%M%S")
-    path = f"{qdrant.collection}/{date}.snapshot"
-    ok = await upload_to_storage(settings.SUPABASE_QDRANT_BACKUP_BUCKET, path, data, "application/octet-stream")
-    if ok:
-        logger.info("qdrant_backup_stored", path=path, bytes=len(data))
-        return path
+    logger.info("embeddings_backup_noop", reason="pgvector covered by Supabase PITR")
     return None

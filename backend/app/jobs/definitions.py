@@ -546,7 +546,7 @@ async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) 
 
     Gated on ``FF_WILDLIFE_BRAIN_ENABLED``; no-op when the Brain is disabled or
     the deployment has no animal crops yet. Failures are logged, never raised, so
-    a missing GPU / Qdrant never breaks the upload flow.
+    a missing GPU / vector store never breaks the upload flow.
     """
     from app.config import settings
 
@@ -1098,7 +1098,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                     # Wildlife Brain: embed + cluster the new animal crops so the
                     # Group → Cluster (embeddings) view populates. No-op unless
                     # FF_WILDLIFE_BRAIN_ENABLED; best-effort (never raises) so a
-                    # missing GPU / Qdrant can't break the upload.
+                    # missing GPU / vector store can't break the upload.
                     if settings.FF_WILDLIFE_BRAIN_ENABLED:
                         await emit_event(
                             job_id,
@@ -1360,20 +1360,24 @@ async def recompute_al_job(job_id: str, deployment_id: str):
         await update_job(job_id, status=JobStatus.FAILED, error=str(e))
 
 
-async def qdrant_backup_job(job_id: str):
-    """Snapshot Qdrant and store it in the private backup bucket (Phase 5.5 DR)."""
-    logger.info("job_start", job_type="qdrant_backup", job_id=job_id)
-    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.1, message="Creating Qdrant snapshot…")
+async def embeddings_backup_job(job_id: str):
+    """Vector-store DR. No-op now that vectors live in Postgres (pgvector) under
+    Supabase PITR — there's no separate snapshot to take. Kept so the endpoint +
+    job name stay valid; completes immediately.
+    """
+    logger.info("job_start", job_type="embeddings_backup", job_id=job_id)
     try:
-        from app.domain.embedding_lifecycle import backup_qdrant_snapshot
+        from app.domain.embedding_lifecycle import backup_embeddings_snapshot
 
-        path = await backup_qdrant_snapshot()
-        if path:
-            await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Backed up to {path}")
-        else:
-            await update_job(job_id, status=JobStatus.FAILED, error="Snapshot unavailable (Qdrant/Storage not configured)")
+        await backup_embeddings_snapshot()  # no-op (returns None)
+        await update_job(
+            job_id,
+            status=JobStatus.COMPLETED,
+            progress=1.0,
+            message="No snapshot needed — embeddings live in Postgres (covered by Supabase PITR).",
+        )
     except Exception as e:
-        logger.error("job_failed", job_type="qdrant_backup", job_id=job_id, error=str(e))
+        logger.error("job_failed", job_type="embeddings_backup", job_id=job_id, error=str(e))
         await update_job(job_id, status=JobStatus.FAILED, error=str(e))
 
 
@@ -1391,5 +1395,5 @@ JOBS = [
     reprocess_project_job,
     reprocess_all_job,
     recompute_al_job,
-    qdrant_backup_job,
+    embeddings_backup_job,
 ]
