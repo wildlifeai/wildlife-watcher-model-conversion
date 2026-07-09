@@ -27,6 +27,10 @@ export type PipelineState = {
   jobs: PipelineJob[]
   logs: LogEntry[]
   lastUpdateTs: number
+  /** Set when staging/enqueue failed before any job was created (e.g. Azure buffer
+   *  unreachable). Drives the failed phase + issue banner so the run can't read as
+   *  a false success. */
+  uploadError?: string | null
 }
 
 /* ── Helpers ──────────────────────────────────────────────────────── */
@@ -110,7 +114,8 @@ function deriveSteps(state: PipelineState, phase: string): StepsResult {
   const driveFailed = driveJobs.some((j) => j.status === 'failed')
   const driveTerm = driveJobs.length > 0 && driveJobs.every((j) => _TERMINAL.includes(j.status))
   let driveStatus: StepStatus
-  if (driveJobs.length === 0) driveStatus = done ? 'done' : upDone ? 'active' : 'pending'
+  if (state.uploadError && driveJobs.length === 0) driveStatus = 'error'
+  else if (driveJobs.length === 0) driveStatus = done ? 'done' : upDone ? 'active' : 'pending'
   else if (done || driveTerm) driveStatus = driveFailed || dt.failed > 0 ? 'error' : dt.skipped > 0 ? 'warn' : 'done'
   else driveStatus = 'active'
   const driveDetail =
@@ -144,7 +149,9 @@ function deriveSteps(state: PipelineState, phase: string): StepsResult {
   }
 
   let issue: StepsResult['issue'] = null
-  if (driveFailed || dt.failed > 0) {
+  if (state.uploadError) {
+    issue = { level: 'error', text: state.uploadError }
+  } else if (driveFailed || dt.failed > 0) {
     issue = {
       level: 'error',
       text: dt.failed > 0

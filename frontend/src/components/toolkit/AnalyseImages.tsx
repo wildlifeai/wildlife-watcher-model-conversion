@@ -37,6 +37,11 @@ interface ExifResult {
 }
 
 function derivePhase(state: PipelineState): 'idle' | 'uploading' | 'processing' | 'completed' | 'failed' | 'stalled' {
+  // Staging/enqueue failed before any job was created (e.g. Azure buffer down) —
+  // must beat the "0 jobs → completed" edge case below, or a failed upload would
+  // be reported as "✅ Complete".
+  if (state.uploadError) return 'failed'
+
   if (state.jobs.some(j => j.status === 'failed')) return 'failed'
 
   if (state.jobs.length > 0 && state.jobs.every(j =>
@@ -334,38 +339,44 @@ export function AnalyseImages() {
           setPipelineState(prev => {
               const logs = [...prev.logs]
               const jobs = [...prev.jobs]
+              let uploadError = prev.uploadError ?? null
               const startIdx = i + 1
               const endIdx = Math.min(i + chunkSize, imageFiles.length)
-              
+
               if (driveInfo) {
                 if (driveInfo.status === 'skipped') {
                     const reason = driveInfo.reason === 'no_files_stored' ? 'Images already exist in system (duplicates)' : driveInfo.reason
                     logs.push({ ts: Date.now(), level: 'warning', message: `⏭️ Images ${startIdx}-${endIdx} skipped: ${reason}` })
                 } else if (driveInfo.job_id) {
-                    jobs.push({ 
-                        id: driveInfo.job_id, 
-                        status: driveInfo.status || 'queued', 
-                        progress: 0, 
-                        fileCount: driveInfo.file_count || chunk.length 
+                    jobs.push({
+                        id: driveInfo.job_id,
+                        status: driveInfo.status || 'queued',
+                        progress: 0,
+                        fileCount: driveInfo.file_count || chunk.length
                     })
-                    
+
                     if (driveInfo.duplicates_skipped > 0) {
                         logs.push({ ts: Date.now(), level: 'warning', message: `⏭️ ${driveInfo.duplicates_skipped} images in batch already exist in system.` })
                     }
-                    
+
                     if (driveInfo.file_count > 0) {
                         logs.push({ ts: Date.now(), level: 'success', message: `✅ Buffered locally. Drive sync queued for ${driveInfo.file_count} images.` })
                     }
                 } else if (driveInfo.status === 'error') {
-                    logs.push({ ts: Date.now(), level: 'error', message: `❌ Azure/Drive integration failed: ${driveInfo.error || 'Unknown error'}` })
+                    // No job was enqueued — record a fatal error so derivePhase reports
+                    // failure instead of a false "✅ Complete" (the 0-jobs edge case).
+                    const msg = driveInfo.error || 'Unknown error'
+                    logs.push({ ts: Date.now(), level: 'error', message: `❌ Storage/Drive integration failed: ${msg}` })
+                    uploadError = uploadError || `Storage/Drive integration failed — no images were saved. ${msg}`
                 }
               }
-              
+
               return {
                   ...prev,
                   uploadedFiles: endIdx,
                   jobs,
                   logs,
+                  uploadError,
                   lastUpdateTs: Date.now()
               }
           })
@@ -376,6 +387,9 @@ export function AnalyseImages() {
           setPipelineState(prev => ({
               ...prev,
               logs: [...prev.logs, { ts: Date.now(), level: 'error', message: `❌ Failed to process images ${i+1}-${Math.min(i+chunkSize, imageFiles.length)}: ${errorMessage}` }],
+              // A transport/parse failure creates no job either — flag it so the run
+              // can't finish as a false "✅ Complete".
+              uploadError: prev.uploadError || `Failed to process some images: ${errorMessage}`,
               uploadedFiles: Math.min(i + chunkSize, prev.totalFiles)
           }))
         }
@@ -442,9 +456,12 @@ export function AnalyseImages() {
         const response = await apiClient.post('/api/deployments/validate', {
           deployment_ids: unknownIds
         })
-        const validationResults: Record<string, 'valid' | 'no_access' | 'not_found'> = response.data
+        // /validate returns the {id: status} map in the standard {data,...} envelope;
+        // tolerate a bare map too (defensive across the split frontend/backend deploy).
+        const validationResults: Record<string, 'valid' | 'no_access' | 'not_found'> =
+          (response?.data ?? response ?? {}) as Record<string, 'valid' | 'no_access' | 'not_found'>
         const newInvalid: Record<string, 'no_access' | 'not_found'> = {}
-        
+
         for (const [id, status] of Object.entries(validationResults)) {
           if (status === 'no_access' || status === 'not_found') {
             newInvalid[id] = status
