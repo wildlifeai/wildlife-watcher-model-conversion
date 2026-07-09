@@ -40,12 +40,14 @@ _memory_events: Dict[str, List[str]] = {}
 # Per-job locks to serialise summary updates
 _summary_locks: Dict[str, asyncio.Lock] = {}
 
-# Strong references to in-flight detached Supabase syncs. asyncio holds only a
-# WEAK reference to a bare create_task(), so a fire-and-forget sync could be
-# garbage-collected before it ran — which is how the ARQ worker left completed
-# jobs stuck at 'processing' (and pinned the GPU awake). Keep a reference until
-# the task finishes; flush_pending_syncs() drains them at worker teardown.
-_pending_sync_tasks: set[asyncio.Task] = set()
+# Strong references to in-flight detached Supabase syncs, keyed by job_id. asyncio
+# holds only a WEAK reference to a bare create_task(), so a fire-and-forget sync
+# could be garbage-collected before it ran — which is how the ARQ worker left
+# completed jobs stuck at 'processing' (and pinned the GPU awake). Keep a reference
+# until the task finishes. Keying by job_id lets a terminal write drain only ITS
+# own syncs (flush_pending_syncs(job_id)) so a slow sync on another job can't block
+# it; the worker teardown drains all (flush_pending_syncs()).
+_pending_sync_tasks: dict[str, set[asyncio.Task]] = {}
 
 # Statuses after which no further work happens — their sync must be durable.
 _TERMINAL_STATUSES = frozenset({JobStatus.COMPLETED.value, JobStatus.COMPLETED_WITH_ERRORS.value, JobStatus.FAILED.value})
@@ -137,7 +139,12 @@ async def _sync_to_supabase(job_id: str, *, flush: bool = False) -> None:
         if not raw:
             return
         data_json = json.loads(raw)
-        data_json["events"] = [json.loads(e) for e in _memory_events.get(f"{key}:events", [])]
+        # Snapshot the events list before iterating: emit_event may append to the
+        # live list from the event-loop thread while this runs in the thread pool.
+        # ``list(...)`` is a single GIL-held copy (atomic); the Python-level
+        # comprehension then iterates our private copy.
+        events_raw = list(_memory_events.get(f"{key}:events", []))
+        data_json["events"] = [json.loads(e) for e in events_raw]
         try:
             client = create_service_client()
             status_val = data_json.get("status", "queued")
@@ -150,17 +157,30 @@ async def _sync_to_supabase(job_id: str, *, flush: bool = False) -> None:
         return
 
     task = asyncio.create_task(asyncio.to_thread(_run_sync))
-    _pending_sync_tasks.add(task)
-    task.add_done_callback(_pending_sync_tasks.discard)
+    _pending_sync_tasks.setdefault(job_id, set()).add(task)
+
+    def _discard(t: asyncio.Task) -> None:
+        tasks = _pending_sync_tasks.get(job_id)
+        if tasks is not None:
+            tasks.discard(t)
+            if not tasks:
+                _pending_sync_tasks.pop(job_id, None)
+
+    task.add_done_callback(_discard)
 
 
-async def flush_pending_syncs() -> None:
-    """Await all in-flight detached Supabase syncs (worker-teardown safety net).
+async def flush_pending_syncs(job_id: Optional[str] = None) -> None:
+    """Await in-flight detached Supabase syncs.
 
-    Called from the ARQ adapter's ``finally`` so the job's last writes reach
-    ``api_jobs`` before the worker goes idle / scales to zero.
+    With ``job_id``, drains only that job's syncs — used before a terminal write so
+    a slow/hung sync on a DIFFERENT job can't block it. Without it, drains every
+    job's syncs: the ARQ adapter's ``finally`` teardown net, so a job's last writes
+    reach ``api_jobs`` before the worker goes idle / scales to zero.
     """
-    pending = [t for t in _pending_sync_tasks if not t.done()]
+    if job_id is not None:
+        pending = [t for t in _pending_sync_tasks.get(job_id, set()) if not t.done()]
+    else:
+        pending = [t for tasks in _pending_sync_tasks.values() for t in tasks if not t.done()]
     if pending:
         await asyncio.gather(*pending, return_exceptions=True)
 
@@ -401,8 +421,9 @@ async def update_job(
         # Terminal write: drain any in-flight detached syncs FIRST (let their writes
         # land), then write the terminal state LAST and durably (awaited) so nothing
         # overwrites it back to a running state. Combined with the write-time snapshot
-        # in _sync_to_supabase, this makes 'completed'/'failed' the final word.
-        await flush_pending_syncs()
+        # in _sync_to_supabase, this makes 'completed'/'failed' the final word. Scope
+        # the drain to THIS job so another job's slow sync can't stall completion.
+        await flush_pending_syncs(job_id)
         await _sync_to_supabase(job_id, flush=True)
     else:
         await _sync_to_supabase(job_id)

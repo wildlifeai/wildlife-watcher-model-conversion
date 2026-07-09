@@ -188,8 +188,10 @@ async def validate_deployments(
 
     admin_client = create_service_client()
 
-    full_uuids = [d for d in request.deployment_ids if len(d) > 8]
-    prefixes = [d for d in request.deployment_ids if len(d) == 8]
+    # Dedupe: a batch upload from one folder repeats the same prefix on every
+    # image, and the prefix branch runs one query each — don't look them up N times.
+    full_uuids = list({d for d in request.deployment_ids if len(d) > 8})
+    prefixes = list({d for d in request.deployment_ids if len(d) == 8})
 
     user_found_ids: set[str] = set()
     admin_found_ids: set[str] = set()
