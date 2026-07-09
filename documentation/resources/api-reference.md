@@ -248,10 +248,11 @@ DINOv3 embeddings → UMAP → HDBSCAN clustering → vector-store similarity, a
 queue. JWT required; gated by **`FF_WILDLIFE_BRAIN_ENABLED`** (returns `FEATURE_DISABLED` when off).
 Prefix `/api/brain`. Architecture: [04-AI-PIPELINE](../onboarding/04-AI-PIPELINE.md).
 
-> **Vector store:** these endpoints are vector-store-backed. Current code uses **Qdrant**; the chosen
-> cloud target is **`pgvector`** in Supabase (Qdrant kept as the scale-up path) — see
-> [deployment guide → Vector Store](deployment-guide.md#vector-store--pgvector-chosen-for-cloud--qdrant-future-scale-up).
-> The `/api/brain/backup` Qdrant-snapshot endpoint is Qdrant-specific (pgvector inherits Supabase PITR).
+> **Vector store:** these endpoints are vector-store-backed by **`pgvector` in Supabase**. The code
+> still uses a local **Qdrant** container (being migrated out) — see
+> [deployment guide → Vector Store](deployment-guide.md#vector-store--pgvector-supabase).
+> The `/api/brain/backup` Qdrant-snapshot endpoint is Qdrant-specific and becomes obsolete once
+> vectors live in Postgres (pgvector inherits Supabase PITR).
 
 > Distinct from [Image Clustering](#image-clustering) (`/api/clustering`), which is the legacy
 > perceptual-hash near-duplicate grouping. `/api/brain` is the semantic DINOv3 clustering the

@@ -102,6 +102,10 @@ the job.
 
 ## 4. Vector store — pgvector vs Qdrant (decision)
 
+> **Decided: `pgvector` in Supabase. Qdrant will NOT be adopted** (not even as a scale-up path) and is
+> being removed from the code. The comparison below is retained as the rationale; treat any "Qdrant
+> option / scale-up" wording as historical. Canonical: [deployment-guide → Vector Store](../resources/deployment-guide.md#vector-store--pgvector-supabase).
+
 DINOv3 embeddings need a vector store. Today `QDRANT_URL` defaults to `http://qdrant:6333` (a
 Docker-network address that doesn't resolve in Azure) and the store is **"NOT yet in cloud"**
 (deployment-guide) — so this is a genuinely **open choice, not a migration**. The embedding

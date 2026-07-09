@@ -33,7 +33,7 @@ CamtrapDP / Darwin Core datasets.
 - **AI**: SpeciesNet ensemble (detector + species classifier); DINOv3 "Wildlife Brain" embeddings → HDBSCAN clustering → active-learning review
 - **Charts / Maps**: Vega-Lite (`vega-embed`), Leaflet (`react-leaflet`)
 - **Hosting**: Cloudflare Pages (frontend) + Azure Container Apps (backend)
-- **External services**: Google Drive (image archive), Azure Blob (temp buffer), Qdrant (embedding vectors), iNaturalist, Sentry
+- **External services**: Google Drive (image archive), Azure Blob (temp buffer), iNaturalist, Sentry (DINOv3 embedding vectors live in Supabase via **pgvector**)
 - **Schema owner**: the database schema is owned by the [`ww-backend`](https://github.com/wildlifeai/wildlife-watcher-backend) repo (see [Database Migrations](#database-migrations))
 
 > For the complete dependency reference with versions and rationale, see the
@@ -65,12 +65,12 @@ and production — only the instances and scale differ (see the
    └────────────────────┘            │        │          │
                                      ▼        ▼          ▼
                           ┌─────────────┐ ┌──────────┐ ┌────────────────┐
-                          │ Azure Blob  │ │ Google   │ │ Qdrant         │
+                          │ Azure Blob  │ │ Google   │ │ pgvector       │
                           │ (TEMP buffer│ │ Drive    │ │ (DINOv3 vectors│
-                          │  during     │ │ (PERMANENT│ │  similarity /  │
-                          │  upload;    │ │  original │ │  clustering)   │
-                          │  deleted    │ │  archive) │ │  ⚠ local only  │
-                          │  after)     │ │           │ │  today         │
+                          │  during     │ │ (PERMANENT│ │  in Supabase)  │
+                          │  upload;    │ │  original │ │  ⚠ code still  │
+                          │  deleted    │ │  archive) │ │  on local      │
+                          │  after)     │ │           │ │  Qdrant        │
                           └─────────────┘ └──────────┘ └────────────────┘
 
    iNaturalist ──▶ taxa autocomplete + lineage, observation publish + community-ID sync
@@ -84,15 +84,15 @@ and production — only the instances and scale differ (see the
 2. Backend parses EXIF, matches the deployment, **buffers bytes to Azure Blob** (temporary), enqueues a job.
 3. Job downloads from the buffer → **uploads originals to Google Drive** (content-hash dedup) → **inserts `media` rows in Supabase** (`file_path = gdrive://…`).
 4. Thumbnails/previews are generated and stored in the **public Supabase `media-renditions` bucket** — that's what the grid displays (Drive is never on the hot path).
-5. The **AI pipeline** auto-runs (SpeciesNet → crop → classify), writing `observations` to Supabase; embeddings optionally go to **Qdrant**.
+5. The **AI pipeline** auto-runs (SpeciesNet → crop → classify), writing `observations` to Supabase; DINOv3 embeddings go to **Supabase pgvector** (the code still writes them to a local Qdrant container, being migrated out).
 6. **Azure blobs are deleted** — they're purely transient; Drive is the archive, Supabase holds the rows + renditions.
 
 The browser reads observations **directly from Supabase** (RLS-scoped by the user's JWT) and only calls the **Azure backend** for privileged/heavy work. **iNaturalist** is contacted when reviewers publish observations or look up taxa.
 
-> **Cloud gap:** Qdrant runs in the local `docker-compose` stack but is **not yet provisioned**
-> in the dev-cloud or staging environments. Until it is, the Wildlife Brain
-> (embeddings → clustering → similarity) is local-only — see the
-> [Deployment Guide](./documentation/resources/deployment-guide.md#qdrant-vector-store-not-yet-in-cloud).
+> **Cloud gap:** the vector store is **pgvector in Supabase**, but the code still writes vectors to a
+> local `docker-compose` **Qdrant** container that isn't provisioned in cloud — so the Wildlife Brain
+> (embeddings → clustering → similarity) is local-only until the pgvector migration lands. See the
+> [Deployment Guide → Vector Store](./documentation/resources/deployment-guide.md#vector-store--pgvector-supabase).
 
 ## Prerequisites
 
