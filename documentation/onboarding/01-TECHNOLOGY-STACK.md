@@ -49,7 +49,7 @@ The exact dependencies the web app runs on. Versions are the source of truth in
 | **Cloudflare** | Frontend hosting (Pages, per-branch previews), DNS for `wildlifewatcher.ai`, CDN, anonymous web analytics | always (hosting) |
 | **Azure** | Backend hosting (Container Apps + ACR); **Blob** = temporary image buffer during upload (deleted after Drive archival) | hosting; Blob with Drive uploads |
 | **Google Drive** | Permanent image archive (`gdrive://` originals) | `GOOGLE_DRIVE_ENABLED` |
-| **Vector store** | DINOv3 embeddings for the Wildlife Brain (similarity / clustering). **Cloud target: `pgvector`** in the Supabase Postgres — no new vendor. Implemented today against **Qdrant** (local compose container), kept as the **>5–10M scale-up path**; **not yet provisioned in cloud**. See [Deployment Guide → Vector Store](../resources/deployment-guide.md#vector-store--pgvector-chosen-for-cloud--qdrant-future-scale-up) | `FF_WILDLIFE_BRAIN_ENABLED` |
+| **Vector store** | DINOv3 embeddings for the Wildlife Brain (similarity / clustering). **`pgvector` in the Supabase Postgres** — no new vendor. The code still uses a local **Qdrant** container (**not provisioned in cloud**, being **migrated out** to pgvector). See [Deployment Guide → Vector Store](../resources/deployment-guide.md#vector-store--pgvector-supabase) | `FF_WILDLIFE_BRAIN_ENABLED` |
 | **iNaturalist** | Taxa autocomplete + lineage registration, observation publishing + community-ID sync | `FF_INAT_ENABLED` |
 | **TTN / Chirpstack** | LoRaWAN uplink webhooks | `FF_LORAWAN_WEBHOOKS_ENABLED` |
 | **Sentry** | Error tracking | `SENTRY_DSN` |
