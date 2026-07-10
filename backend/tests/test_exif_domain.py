@@ -9,11 +9,41 @@ from app.domain.exif import (
     _apply_user_comment_fields,
     _camera_variant_from_model,
     _extract_deployment_id,
+    _strip_nul,
     match_deployment,
     parse_exif_from_bytes,
     parse_maker_note_fields,
     parse_user_comment_fields,
 )
+
+NUL = chr(0)
+
+
+def test_strip_nul_sanitises_usercomment_charset_prefix():
+    """The EXIF UserComment charset prefix ("ASCII\\x00\\x00\\x00…") and any stray
+    NUL must be removed so exif_metadata stores as jsonb (Postgres rejects
+    \\u0000 with 22P05 → media registration fails)."""
+    d = {
+        "UserComment": "ASCII" + NUL * 3 + "rat: 91; not rat: 9; ",
+        "nested": {"k" + NUL: "a" + NUL + "b"},
+        "list": ["p" + NUL + "q"],
+        "num": 87,
+    }
+    out = _strip_nul(d)
+
+    def has_nul(o):
+        if isinstance(o, str):
+            return NUL in o
+        if isinstance(o, dict):
+            return any(has_nul(k) or has_nul(v) for k, v in o.items())
+        if isinstance(o, list):
+            return any(has_nul(v) for v in o)
+        return False
+
+    assert not has_nul(out)
+    assert out["nested"] == {"k": "ab"}
+    assert out["list"] == ["pq"]
+    assert out["num"] == 87
 
 
 def _make_minimal_jpeg_with_exif(exif_data: bytes = b"") -> bytes:
