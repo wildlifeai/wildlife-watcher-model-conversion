@@ -326,7 +326,9 @@ def cluster_hdbscan(embeddings: list[list[float]], preset: str = DEFAULT_HDBSCAN
 def reduce_umap(embeddings: list[list[float]], n_components: int, params: dict) -> list[tuple[float, ...]]:
     """UMAP-reduce embeddings to ``n_components``. No-op-ish for tiny inputs."""
     n = len(embeddings)
-    if n < max(4, params.get("n_neighbors", 15) // 3):
+    # Floor at MIN_UMAP_POINTS: below it a UMAP projection is meaningless AND its spectral
+    # init can raise "k >= N" (scipy eigh) — e.g. N=4 slipped past the old max(4, …) guard.
+    if n < max(MIN_UMAP_POINTS, params.get("n_neighbors", 15) // 3):
         # Too few points for a meaningful projection.
         return [tuple([0.0] * n_components) for _ in range(n)]
 
