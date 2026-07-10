@@ -31,7 +31,7 @@ The two repos promote **differently**, and that asymmetry is why this is safe:
 
 | Repo | dev | staging / production |
 |---|---|---|
-| **ww-backend** (schema) | **destructive reset + full reseed** (`db reset --no-seed` then `seed.sql` + `dev/data.sql` + fixtures) — this is why the demo Rat model + deployment exist only on dev | **schema-only `supabase db push`** — additive migrations, **no reset, no reseed** ([deploy_cloud_projects.yml](../../../ww-backend/.github/workflows/deploy_cloud_projects.yml)) |
+| **ww-backend** (schema) | **destructive reset + full reseed** (`db reset --no-seed` then `seed.sql` + `dev/data.sql` + fixtures) — this is why the demo Rat model + deployment exist only on dev | **schema-only `supabase db push`** — additive migrations, **no reset, no reseed** ([deploy_cloud_projects.yml](https://github.com/wildlifeai/wildlife-watcher-backend/blob/main/.github/workflows/deploy_cloud_projects.yml)) |
 | **ww-website** (app) | merge to `dev` → build + roll `ww-backend-dev` (API) + `ww-embedding-worker-dev` (worker) | merge to the staging branch → build + roll `ww-backend` / `ww-embedding-worker` |
 
 **Consequences:**
