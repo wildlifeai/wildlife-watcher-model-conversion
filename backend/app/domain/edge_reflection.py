@@ -114,9 +114,7 @@ def _project_model_for_deployment(svc, deployment_id: str) -> dict | None:
     """The deployment's project model (with label_map + firmware identity), or None."""
     res = (
         svc.table("deployments")
-        .select(
-            "id, projects(model_id, ai_models(id, name, version_number, label_map, ai_model_families(firmware_model_id)))"
-        )
+        .select("id, projects(model_id, ai_models(id, name, version_number, label_map, ai_model_families(firmware_model_id)))")
         .eq("id", deployment_id)
         .limit(1)
         .execute()
@@ -158,11 +156,7 @@ async def reflect_edge_deployment(deployment_id: str) -> int:
         offset = 0
         while True:
             page = (
-                svc.table("media")
-                .select("id, exif_metadata")
-                .eq("deployment_id", deployment_id)
-                .range(offset, offset + _MEDIA_PAGE - 1)
-                .execute()
+                svc.table("media").select("id, exif_metadata").eq("deployment_id", deployment_id).range(offset, offset + _MEDIA_PAGE - 1).execute()
             ).data or []
             for m in page:
                 media_rows = build_edge_observations(m, deployment_id, model, timestamp)

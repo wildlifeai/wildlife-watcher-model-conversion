@@ -204,8 +204,6 @@ class TestLabelIntegrity:
     async def test_empty_labels_txt_raises(self):
         from app.domain.model import convert_uploaded_model
 
-        zip_bytes = TestConvertUploadedModelDiscovery._zip(
-            {"out/MOD00001.tfl": b"\x00tfl", "out/labels.txt": b"\n\n"}
-        )
+        zip_bytes = TestConvertUploadedModelDiscovery._zip({"out/MOD00001.tfl": b"\x00tfl", "out/labels.txt": b"\n\n"})
         with pytest.raises(ModelDomainError, match="empty"):
             await convert_uploaded_model(zip_bytes, "pkg.zip")

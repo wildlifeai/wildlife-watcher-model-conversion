@@ -64,9 +64,7 @@ def _declared_label_count(header_content: str) -> Optional[int]:
     Present as ``.label_count = N`` (model_variables.h impulse struct) and/or
     ``EI_CLASSIFIER_LABEL_COUNT N`` (model_metadata.h). None when neither is found.
     """
-    m = re.search(r"\.label_count\s*=\s*(\d+)", header_content) or re.search(
-        r"EI_CLASSIFIER_LABEL_COUNT\s+(\d+)", header_content
-    )
+    m = re.search(r"\.label_count\s*=\s*(\d+)", header_content) or re.search(r"EI_CLASSIFIER_LABEL_COUNT\s+(\d+)", header_content)
     return int(m.group(1)) if m else None
 
 
