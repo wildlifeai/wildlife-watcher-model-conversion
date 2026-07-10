@@ -15,6 +15,7 @@ in-memory dicts so endpoints don't crash.
 """
 
 import asyncio
+import contextlib
 import json
 import uuid
 from datetime import datetime, timezone
@@ -51,6 +52,11 @@ _pending_sync_tasks: dict[str, set[asyncio.Task]] = {}
 
 # Statuses after which no further work happens — their sync must be durable.
 _TERMINAL_STATUSES = frozenset({JobStatus.COMPLETED.value, JobStatus.COMPLETED_WITH_ERRORS.value, JobStatus.FAILED.value})
+
+# How often job_heartbeat() refreshes api_jobs.updated_at during a long pipeline step.
+# Must stay well under the shortest consumer window: the KEDA scaler's query
+# (updated_at > now() - interval '15 minutes' on dev) and the 60-min stale-job reaper.
+_HEARTBEAT_INTERVAL_SECONDS = 60
 
 MAX_EVENTS_RETURNED = 50
 
@@ -427,6 +433,50 @@ async def update_job(
         await _sync_to_supabase(job_id, flush=True)
     else:
         await _sync_to_supabase(job_id)
+
+
+@contextlib.asynccontextmanager
+async def job_heartbeat(job_id: str | None, interval: float = _HEARTBEAT_INTERVAL_SECONDS):
+    """Keep ``api_jobs.updated_at`` fresh while a single long pipeline step runs.
+
+    Progress is normally written only *between* steps (the ``on_step`` callback), so
+    one long step — e.g. SpeciesNet over thousands of images at ~1–2 s/image — writes
+    nothing for many minutes. Two consumers watch ``updated_at`` and would act on that
+    silence:
+      * the **KEDA** Postgres scaler holds the GPU worker on
+        ``updated_at > now() - <window>`` (15 min on dev). Past the window it scales the
+        worker to 0 **mid-inference, killing the job**.
+      * the **stale-job reaper** fails jobs idle for 60 min.
+
+    This runs a background task that bumps ``updated_at`` every ``interval`` seconds
+    (``update_job`` with no field changes still refreshes it and syncs, and the
+    ``BEFORE UPDATE`` trigger on ``api_jobs`` advances the top-level column KEDA reads).
+    The task is cancelled on exit — before the caller returns and any terminal write
+    lands — so it can never resurrect a finished job.
+
+    A no-op when ``job_id`` is falsy (in-process runs with no cloud job to heartbeat).
+    Relies on the heavy step running via ``asyncio.to_thread`` (SpeciesNet/BioCLIP do),
+    which keeps the event loop free to fire this timer.
+    """
+    if not job_id:
+        yield
+        return
+
+    async def _beat() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await update_job(job_id)  # no fields → refresh updated_at + sync only
+            except Exception as exc:  # noqa: BLE001 — a heartbeat must never break the pipeline
+                logger.debug("job_heartbeat_failed", job_id=job_id, error=str(exc))
+
+    task = asyncio.create_task(_beat())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 async def emit_event(job_id: str, event: ProgressEvent) -> None:
