@@ -78,7 +78,7 @@ async def parse_exif(
     deployment_id: Optional[str] = Form(None),
     assigned_deployment_id: Optional[str] = Form(None),
     upload_to_drive: Optional[bool] = Form(False),
-    run_ai: Optional[bool] = Form(True),
+    run_ai: bool = Form(True),
     authorization: Optional[str] = Header(None),
 ):
     """Parse EXIF metadata from one or more uploaded JPEG files.
@@ -243,7 +243,7 @@ async def parse_exif(
                 folder_prefixes=list(folder_prefixes),
                 user_id=user.id if user else None,
                 assigned_deployment_id=assigned_deployment_id,
-                run_ai=run_ai if run_ai is not None else True,
+                run_ai=run_ai,
             )
         except Exception as exc:
             logger.error("drive_enqueue_failed", error=str(exc))
@@ -505,7 +505,7 @@ async def _enqueue_drive_upload(
         "files": storage_entries,
         "user_id": user_id,
         # Gate the post-upload AI/Brain phase (upload_drive_images_job reads this).
-        "run_ai": run_ai if run_ai is not None else True,
+        "run_ai": run_ai,
     }
 
     try:

@@ -542,7 +542,8 @@ export function AnalyseImages() {
         latitude: newDep.lat ? Number(newDep.lat) : undefined,
         longitude: newDep.lon ? Number(newDep.lon) : undefined,
       })
-      const dep = ((res as any).data?.data ?? (res as any).data) as Deployment
+      const dep = ((res as any).data?.data ?? (res as any).data) as Deployment | undefined
+      if (!dep?.id) throw new Error('Deployment was created but the response was malformed — reload and pick it from "Use existing".')
       setDeployments(prev => [...prev, dep])
       setAssignedDeploymentId(dep.id)
       setAssignMode('existing')
