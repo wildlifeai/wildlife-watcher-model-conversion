@@ -436,7 +436,7 @@ async def update_job(
 
 
 @contextlib.asynccontextmanager
-async def job_heartbeat(job_id: Optional[str], interval: float = _HEARTBEAT_INTERVAL_SECONDS):
+async def job_heartbeat(job_id: str | None, interval: float = _HEARTBEAT_INTERVAL_SECONDS):
     """Keep ``api_jobs.updated_at`` fresh while a single long pipeline step runs.
 
     Progress is normally written only *between* steps (the ``on_step`` callback), so
