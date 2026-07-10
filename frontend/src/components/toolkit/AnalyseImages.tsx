@@ -15,6 +15,7 @@ interface CamtrapImportResult {
   media_imported: number
   observations_imported: number
   warnings: string[]
+  ai_job_id?: string | null
 }
 
 interface Deployment {
@@ -60,6 +61,11 @@ function derivePhase(state: PipelineState): 'idle' | 'uploading' | 'processing' 
   return 'idle'
 }
 
+const FIELD: React.CSSProperties = {
+  padding: '0.4rem 0.6rem', fontSize: '0.8125rem', border: '1px solid var(--border)',
+  borderRadius: 'var(--radius)', background: 'var(--surface)', color: 'var(--text-color)', width: '100%',
+}
+
 export function AnalyseImages() {
   const [files, setFiles] = useState<File[]>([])
   const [filePaths, setFilePaths] = useState<string[]>([])
@@ -93,6 +99,18 @@ export function AnalyseImages() {
   const [camtrapStage, setCamtrapStage] = useState(0)
   const [showAllWarnings, setShowAllWarnings] = useState(false)
 
+  // ── Run-AI toggle: photos default on (preserves auto-annotate); CamtrapDP opt-in ──
+  const [runAi, setRunAi] = useState(true)
+  const [camtrapRunAi, setCamtrapRunAi] = useState(false)
+
+  // ── Deployment assignment for uploads with no valid deployment ID ──
+  const [assignedDeploymentId, setAssignedDeploymentId] = useState<string | null>(null)
+  const [assignMode, setAssignMode] = useState<'existing' | 'create'>('existing')
+  const [projects, setProjects] = useState<{ id: string; name: string }[]>([])
+  const [newDep, setNewDep] = useState({ projectId: '', name: '', lat: '', lon: '' })
+  const [creatingDep, setCreatingDep] = useState(false)
+  const [createDepError, setCreateDepError] = useState<string | null>(null)
+
   const CAMTRAP_STAGES = [
     { label: 'Uploading package…',         pct: 10, after: 500   },
     { label: 'Parsing deployments…',       pct: 25, after: 3000  },
@@ -122,6 +140,16 @@ export function AnalyseImages() {
       .is('deleted_at', null)
       .then(({ data }) => {
         if (data) setDeployments(data)
+      })
+  }, [])
+
+  // Fetch the user's projects (RLS-scoped) for the "create deployment" dropdown.
+  useEffect(() => {
+    supabase
+      .from('projects')
+      .select('id, name')
+      .then(({ data }) => {
+        if (data) setProjects(data)
       })
   }, [])
 
@@ -293,7 +321,11 @@ export function AnalyseImages() {
         }
         // Images always sync to Google Drive (default long-term storage).
         formData.append('upload_to_drive', 'true')
-        
+        // Whether to run the AI pipeline + Wildlife Brain after upload (user toggle).
+        formData.append('run_ai', String(runAi))
+        // Bind these images to a chosen/created deployment when they carry no valid one.
+        if (assignedDeploymentId) formData.append('assigned_deployment_id', assignedDeploymentId)
+
         try {
           const response = await apiClient.upload('/api/exif/parse', formData)
           const data = response.data ?? {}
@@ -436,6 +468,8 @@ export function AnalyseImages() {
     setPipelineState({ totalFiles: 0, uploadedFiles: 0, jobs: [], logs: [], lastUpdateTs: Date.now() })
     lastSeenSeqRef.current = {}
     setInvalidDeployments({})
+    setAssignedDeploymentId(null)
+    setCreateDepError(null)
 
     // Detect unique deployment prefixes from paths
     const folderDepIds = Array.from(new Set(
@@ -482,6 +516,8 @@ export function AnalyseImages() {
     try {
       const form = new FormData()
       form.append('file', zipFile)
+      // Opt-in: run SpeciesNet + Wildlife Brain on the image-backed imported deployments.
+      form.append('run_ai', String(camtrapRunAi))
       const res = await apiClient.upload('/api/camtrapdp/import', form) as { data: CamtrapImportResult }
       setCamtrapResult(res.data)
     } catch (err: unknown) {
@@ -489,6 +525,34 @@ export function AnalyseImages() {
       setCamtrapError(msg)
     } finally {
       setCamtrapImporting(false)
+    }
+  }
+
+  const createDeployment = async () => {
+    if (!newDep.projectId || !newDep.name.trim()) {
+      setCreateDepError('Pick a project and enter a name.')
+      return
+    }
+    setCreatingDep(true)
+    setCreateDepError(null)
+    try {
+      const res = await apiClient.post('/api/deployments', {
+        project_id: newDep.projectId,
+        name: newDep.name.trim(),
+        latitude: newDep.lat ? Number(newDep.lat) : undefined,
+        longitude: newDep.lon ? Number(newDep.lon) : undefined,
+      })
+      const dep = ((res as any).data?.data ?? (res as any).data) as Deployment | undefined
+      if (!dep?.id) throw new Error('Deployment was created but the response was malformed — reload and pick it from "Use existing".')
+      setDeployments(prev => [...prev, dep])
+      setAssignedDeploymentId(dep.id)
+      setAssignMode('existing')
+      setNewDep({ projectId: '', name: '', lat: '', lon: '' })
+    } catch (err: unknown) {
+      const msg = (err as any)?.response?.data?.detail || (err as any)?.response?.data?.error?.message || (err instanceof Error ? err.message : String(err))
+      setCreateDepError(msg)
+    } finally {
+      setCreatingDep(false)
     }
   }
 
@@ -501,6 +565,8 @@ export function AnalyseImages() {
     setCamtrapError(null)
     setPipelineState({ totalFiles: 0, uploadedFiles: 0, jobs: [], logs: [], lastUpdateTs: Date.now() })
     lastSeenSeqRef.current = {}
+    setAssignedDeploymentId(null)
+    setCreateDepError(null)
   }
 
   const { isDragging, bind } = useDragAndDrop(processFiles)
@@ -533,6 +599,10 @@ export function AnalyseImages() {
     .map(([id]) => id)
     
   const hasInvalidDeployments = notFoundDeployments.length > 0 || noAccessDeployments.length > 0
+
+  // Offer the assign/create-deployment panel when there's no confirmed valid binding:
+  // no MEDIA/<hex> folder deployment at all, or a folder deployment that doesn't exist.
+  const needsDeployment = files.length > 0 && results.length === 0 && (folderDepCount === 0 || notFoundDeployments.length > 0)
 
   return (
     <div>
@@ -648,13 +718,22 @@ export function AnalyseImages() {
           </p>
 
           {!camtrapResult && !camtrapImporting && (
-            <button
-              className="btn"
-              onClick={handleCamtrapImport}
-              style={{ padding: '0.5rem 1.25rem' }}
-            >
-              ⬆ Import CamtrapDP Package
-            </button>
+            <>
+              <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginBottom: '0.75rem', fontSize: '0.8125rem', cursor: 'pointer' }}>
+                <input type="checkbox" checked={camtrapRunAi} onChange={e => setCamtrapRunAi(e.target.checked)} style={{ marginTop: '0.15rem' }} />
+                <span>
+                  <strong>Run AI analysis after import</strong>
+                  <span style={{ opacity: 0.65 }}> — SpeciesNet detection + Wildlife Brain on images bundled in the package. Off by default (CamtrapDP data usually arrives already labelled).</span>
+                </span>
+              </label>
+              <button
+                className="btn"
+                onClick={handleCamtrapImport}
+                style={{ padding: '0.5rem 1.25rem' }}
+              >
+                ⬆ Import CamtrapDP Package
+              </button>
+            </>
           )}
 
           {camtrapImporting && (
@@ -733,6 +812,11 @@ export function AnalyseImages() {
                   )}
                 </div>
               )}
+              {camtrapResult.ai_job_id && (
+                <div style={{ marginBottom: '0.5rem', opacity: 0.85 }}>
+                  🧠 AI analysis (SpeciesNet + Wildlife Brain) queued for the bundled images — track it in Processing history.
+                </div>
+              )}
               <Link to="/insights" style={{ color: 'var(--primary)', fontWeight: 500, fontSize: '0.875rem', textDecoration: 'none' }}>
                 View imported data in My Data →
               </Link>
@@ -790,7 +874,7 @@ export function AnalyseImages() {
                 <p style={{ margin: '0.5rem 0 0 0', opacity: 0.9, color: '#e65100' }}>
                   The following deployments <strong>do not exist in the database</strong>: <br />
                   <strong style={{ fontFamily: 'monospace' }}>{notFoundDeployments.join(', ')}</strong>.
-                  <br />Please create these deployments before uploading.
+                  <br />Assign these photos to an existing deployment or create one below.
                 </p>
               )}
               
@@ -804,6 +888,74 @@ export function AnalyseImages() {
             </div>
           )}
         </div>
+      )}
+
+      {/* ── Assign / create a deployment for uploads with no valid deployment ── */}
+      {needsDeployment && (
+        <div className="card" style={{ marginTop: '1rem', padding: '1rem 1.25rem', borderLeft: '3px solid var(--primary)' }}>
+          <div style={{ fontWeight: 600, fontSize: '0.875rem', marginBottom: '0.35rem' }}>📍 Assign a deployment</div>
+          <p style={{ fontSize: '0.8125rem', opacity: 0.7, marginTop: 0, marginBottom: '0.75rem' }}>
+            {folderDepCount === 0
+              ? "These photos have no deployment folder. If they don't carry a deployment ID in their EXIF, assign them to a deployment so they bind correctly."
+              : "Some deployment folders don't exist yet. Assign these photos to an existing deployment or create a new one."}
+          </p>
+
+          <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
+            {(['existing', 'create'] as const).map(m => (
+              <button
+                key={m}
+                onClick={() => setAssignMode(m)}
+                style={{
+                  padding: '0.3rem 0.75rem', fontSize: '0.8125rem', borderRadius: 'var(--radius)', cursor: 'pointer',
+                  border: `1px solid ${assignMode === m ? 'var(--primary)' : 'var(--border)'}`,
+                  background: assignMode === m ? 'rgba(76,175,80,0.12)' : 'transparent',
+                  color: 'var(--text-color)', fontWeight: assignMode === m ? 600 : 400,
+                }}
+              >
+                {m === 'existing' ? 'Use existing' : '+ Create new'}
+              </button>
+            ))}
+          </div>
+
+          {assignMode === 'existing' ? (
+            <select value={assignedDeploymentId ?? ''} onChange={e => setAssignedDeploymentId(e.target.value || null)} style={FIELD}>
+              <option value="">— Select a deployment —</option>
+              {deployments.map(d => (
+                <option key={d.id} value={d.id}>{d.location_name || d.id.slice(0, 8)}</option>
+              ))}
+            </select>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <select value={newDep.projectId} onChange={e => setNewDep(v => ({ ...v, projectId: e.target.value }))} style={FIELD}>
+                <option value="">— Select a project —</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              <input placeholder="Deployment name" value={newDep.name} onChange={e => setNewDep(v => ({ ...v, name: e.target.value }))} style={FIELD} />
+              <div style={{ display: 'flex', gap: '0.5rem' }}>
+                <input placeholder="Latitude (optional)" value={newDep.lat} onChange={e => setNewDep(v => ({ ...v, lat: e.target.value }))} style={FIELD} />
+                <input placeholder="Longitude (optional)" value={newDep.lon} onChange={e => setNewDep(v => ({ ...v, lon: e.target.value }))} style={FIELD} />
+              </div>
+              <button className="btn" onClick={createDeployment} disabled={creatingDep} style={{ padding: '0.4rem 1rem', alignSelf: 'flex-start' }}>
+                {creatingDep ? 'Creating…' : 'Create & assign'}
+              </button>
+              {createDepError && <span style={{ color: 'var(--error)', fontSize: '0.8125rem' }}>⚠ {createDepError}</span>}
+            </div>
+          )}
+
+          {assignedDeploymentId && (
+            <div style={{ marginTop: '0.6rem', fontSize: '0.8125rem', color: 'var(--success)' }}>
+              ✓ Assigning uploads to <strong>{deployments.find(d => d.id === assignedDeploymentId)?.location_name || assignedDeploymentId.slice(0, 8)}</strong>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ── Run-AI toggle (image mode) ──────────────────────────── */}
+      {files.length > 0 && results.length === 0 && pipelineState.totalFiles === 0 && (
+        <label style={{ display: 'flex', alignItems: 'flex-start', gap: '0.5rem', marginTop: '1rem', fontSize: '0.8125rem', cursor: 'pointer', maxWidth: 460, marginInline: 'auto' }}>
+          <input type="checkbox" checked={runAi} onChange={e => setRunAi(e.target.checked)} style={{ marginTop: '0.15rem' }} />
+          <span><strong>Run AI analysis + Wildlife Brain</strong> <span style={{ opacity: 0.65 }}>— SpeciesNet detection, species ID & clustering after upload</span></span>
+        </label>
       )}
 
       {/* ── Analyse button ──────────────────────────────────────── */}

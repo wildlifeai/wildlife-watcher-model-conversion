@@ -27,6 +27,7 @@ MAX_UPLOAD_BYTES = 50 * 1024 * 1024  # 50 MB
 async def import_camtrapdp(
     file: UploadFile,
     annotation_mode: str = Form("final"),
+    run_ai: bool = Form(False),
     user=Depends(get_current_user),
     user_client=Depends(get_user_client),
     svc=Depends(get_privileged_client),
@@ -233,6 +234,34 @@ async def import_camtrapdp(
             except Exception as exc:
                 logger.error("camtrapdp_drive_upload_failed", error=str(exc))
                 result.warnings.append(f"Google Drive upload failed: {exc}")
+
+    # ── Optional AI (opt-in): run SpeciesNet + Wildlife Brain on the imported,
+    # image-backed deployments — i.e. the media whose files were physically in the
+    # zip and are now archived to Drive (so resolve_media can fetch them). CamtrapDP
+    # arrives already labelled, so this defaults off. No-op unless FF_ML_ENABLED.
+    if run_ai and result.pending_drive_uploads:
+        from app.config import settings  # noqa: PLC0415
+
+        ai_dep_ids = sorted({p.deployment_id for p in result.pending_drive_uploads if p.deployment_id})
+        # Only the media whose files were physically in the zip — NOT the fileless CSV
+        # references. Scoping the pipeline to these avoids media_prep choking on hundreds
+        # of unresolvable rows (which blocked the event loop → ARQ cancel + KEDA scaledown).
+        ai_media_ids = sorted({p.media_id for p in result.pending_drive_uploads if p.media_id})
+        if settings.FF_ML_ENABLED and ai_dep_ids:
+            from app.jobs.dispatch import enqueue_job  # noqa: PLC0415
+            from app.jobs.store import create_job  # noqa: PLC0415
+
+            ai_job_id = await create_job(
+                user_id=user.id,
+                kind="ai_pipeline",
+                label=f"AI analysis — {len(ai_media_ids)} imported image(s)",
+                deployment_ids=ai_dep_ids,
+            )
+            # force=True: imported CamtrapDP labels (machine → source_type='ai') must not make
+            # run_pipeline skip these media. media_ids scopes it to the image-backed rows only.
+            await enqueue_job("annotate_deployments_job", ai_job_id, ai_dep_ids, user.id, True, ai_media_ids)
+            result.ai_job_id = ai_job_id
+            logger.info("camtrapdp_ai_enqueued", job_id=ai_job_id, deployments=len(ai_dep_ids))
 
     # Strip raw bytes before serialising the response
     result.pending_drive_uploads = []

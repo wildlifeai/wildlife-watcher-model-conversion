@@ -35,3 +35,4 @@ class CamtrapImportResult(BaseModel):
     # returning to the client — handled inside the router).
     pending_drive_uploads: list[PendingDriveUpload] = []
     drive_uploads: Optional[dict[str, Any]] = None  # summary after upload
+    ai_job_id: Optional[str] = None  # set when run_ai enqueued a SpeciesNet/Brain job

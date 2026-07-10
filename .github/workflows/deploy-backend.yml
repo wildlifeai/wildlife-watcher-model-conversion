@@ -82,10 +82,15 @@ jobs:
           # for higher sensitivity switch to container-app secrets + secretref.
           # --min-replicas 1 keeps one instance warm so the public "Try the demo"
           # button doesn't hit a ~1-min cold start on the first click.
+          # Deploy by the IMMUTABLE ${{ github.sha }} tag, NOT the mutable dev-latest:
+          # ACA compares the image *reference string* and won't roll a new revision when
+          # only the code changed (same dev-latest tag + unchanged env) — so the API silently
+          # kept running stale code. The SHA tag forces a fresh revision every deploy, exactly
+          # as the worker's `revision copy --image :${SHA}` already does below.
           az containerapp update \
             --name ${{ steps.target.outputs.app_name }} \
             --resource-group WW-AE \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ steps.target.outputs.image_tag }} \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ github.sha }} \
             --min-replicas 1 \
             --set-env-vars \
               "DEMO_EMAIL=${{ secrets.DEMO_EMAIL }}" \
