@@ -83,25 +83,35 @@ deployment ID. The **cloud SpeciesNet pipeline** runs independently on the same
 images ([04-AI-PIPELINE](../onboarding/04-AI-PIPELINE.md)) — the device and cloud
 models are complementary, not exclusive.
 
-## 8. Reflect on-device prediction (website · built, behind a flag)
+> The parser strips NUL bytes from the result (`_strip_nul`): `UserComment` carries
+> an 8-byte NUL-padded charset code (`ASCII\0\0\0…`) and Postgres `jsonb` rejects the
+> NUL codepoint (22P05), which would otherwise fail media registration for every
+> device frame. See [dual-ai-production-rollout §6](./dual-ai-production-rollout.md).
+
+## 8. Reflect on-device prediction (website · shipped on dev, behind a flag)
 [`backend/app/domain/edge_reflection.py`](../../backend/app/domain/edge_reflection.py)
 turns `user_comment_fields` into observations tagged `ai_origin='edge'` (with
 `source_model_version = '{firmware_model_id}V{version_number}'`, matching the deployed
 `.TFL` filename), mapped to taxa via `label_map`; background/negative classes and
 sub-threshold scores are skipped. Runs automatically after the annotation pipeline
-(`auto_annotate_deployments`), replace-don't-append like the SpeciesNet step, so the
-annotation panel can show *📟 Camera AI: rat 87%* beside *☁ Cloud AI: Rattus rattus 64%*.
-Gated on `FF_EDGE_REFLECT_ENABLED` — enable only after the ww-backend `dual_ai_v0`
-migration adds `observations.ai_origin`. Depends on the firmware fix (stage 6).
+(`auto_annotate_deployments`), replace-don't-append like the SpeciesNet step, and the
+annotation panel shows *📟 Camera AI: rat 87%* beside *☁ Cloud AI: Rattus rattus 64%*
+(`AiOriginBadge`, driven by `observations.ai_origin`).
+Gated on `FF_EDGE_REFLECT_ENABLED`. The ww-backend `dual_ai_v0` migration
+(`observations.ai_origin` + `device_alert_rules`) is **merged** and the flag is on
+**on dev**; real end-to-end value still depends on the firmware fix (stage 6).
 
 ## Open items
 - **Firmware:** merge + verify the `USE_PERCENTAGE` fix (branch
-  `feat/exif-confidence-enable`) so the device emits NN scores (stage 6).
-- **Backend:** run/merge the `dual_ai_v0` schema change (`observations.ai_origin`,
-  `device_alert_rules`), then enable `FF_EDGE_REFLECT_ENABLED` (stage 8).
-- **Frontend:** surface `ai_origin='edge'` rows in the annotation panel (📟 badge).
-- **Backend:** make `ai_models.model_path`/`labels_path` nullable to retire the
-  `_pending` placeholder (stage 2) — see the path-columns design issue.
+  `feat/exif-confidence-enable`) so the device emits percentage NN scores (stage 6).
+  **This is the gating item** — until it ships, edge reflection has no real device data.
+- **Rollout:** promote schema (ww-backend `main`) + app (staging) + enable the flag per
+  [dual-ai-production-rollout](./dual-ai-production-rollout.md); coordinate `ai_origin`
+  with mobile.
+- ✅ **Backend:** `dual_ai_v0` schema merged; `FF_EDGE_REFLECT_ENABLED` on (dev).
+- ✅ **Frontend:** `ai_origin='edge'` rows surfaced with the 📟 Camera-AI badge.
+- ✅ **Backend:** `ai_models.model_path`/`labels_path` nullable (the `_pending`
+  placeholder is retired).
 
 Naming note: the canonical terms are **Camera AI** (user-facing) / **Edge AI**
 (technical) for this on-device layer and **Cloud AI** for the website pipeline — see

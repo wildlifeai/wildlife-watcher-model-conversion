@@ -17,9 +17,10 @@ spec, and validation roadmap live in the
   row), e.g. "Rat Detection v10" — the thing a project assigns and the manifest installs.
   Never call the other layers "brains".
 - Observation provenance: `source_type='ai'` + **`ai_origin`** = `edge` | `cloud`
-  (ww-backend `observations` column, branch `feat/dual-ai-v0-schema`), with
+  (ww-backend `observations` column, `dual_ai_v0` — merged), with
   `source_model_version` = `'{firmware_model_id}V{version_number}'` for edge rows —
-  the same identity that names the `.TFL` file.
+  the same identity that names the `.TFL` file. Promotion to staging/prod:
+  [dual-ai-production-rollout](./dual-ai-production-rollout.md).
 
 ## The contracts that must never break
 
