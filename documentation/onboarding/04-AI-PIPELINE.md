@@ -94,8 +94,9 @@ animal crop ──DINOv3──▶ media_embeddings ──HDBSCAN──▶ cluste
 ```
 
 - **Embeddings**: DINOv3 vectors per animal crop → `media_embeddings` / `embedding_runs`. The vector
-  store is **`pgvector` in Supabase** (the code still uses a local Qdrant container, being migrated
-  out — see [deployment guide → Vector Store](../resources/deployment-guide.md#vector-store--pgvector-supabase)).
+  store is **`pgvector` in Supabase** — vectors live in `media_embeddings.embedding`, searched via the
+  `match_media_embeddings` RPC; the former Qdrant container has been **removed** (see
+  [deployment guide → Vector Store](../resources/deployment-guide.md#vector-store--pgvector-supabase)).
   **Auto-run:** after the annotation pipeline finishes, `auto_annotate_deployments` chains
   `auto_embed_deployment` (gated on `FF_WILDLIFE_BRAIN_ENABLED`), so embeddings/clusters exist
   without a manual `POST /api/brain/embed/{id}` trigger.

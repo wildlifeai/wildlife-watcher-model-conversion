@@ -19,6 +19,7 @@ from app.jobs.store import (
     create_job,
     emit_event,
     get_job,
+    job_heartbeat,
     set_job_deployments,
     start_phase,
     update_job,
@@ -518,31 +519,42 @@ async def auto_annotate_deployments(
         "bioclip": "Identifying species",
     }
 
-    for i, dep_id in enumerate(deployment_ids):
-        # Fine-grained progress: overall = (deployments_done + step_fraction) / total. on_step
-        # fires at the START of each step, so this advances the bar several times per deployment.
-        async def _on_step(step_name: str, step_idx: int, step_total: int, _i: int = i) -> None:
-            if not job_id or not step_total or not total:
-                return
-            frac = (_i + step_idx / step_total) / total
-            label = step_labels.get(step_name, step_name)
-            await update_job(job_id, progress=min(0.99, frac), message=f"🔬 {label} — deployment {_i + 1}/{total}")
+    # Heartbeat api_jobs.updated_at across the whole run: a single long step (e.g.
+    # SpeciesNet over thousands of images) writes no progress between on_step calls,
+    # so without this the KEDA window could elapse mid-inference and scale the GPU
+    # worker to 0, killing the job (and the 60-min reaper could fail it). No-op when
+    # job_id is None. See app.jobs.store.job_heartbeat.
+    async with job_heartbeat(job_id):
+        for i, dep_id in enumerate(deployment_ids):
+            # Fine-grained progress: overall = (deployments_done + step_fraction) / total. on_step
+            # fires at the START of each step, so this advances the bar several times per deployment.
+            async def _on_step(step_name: str, step_idx: int, step_total: int, _i: int = i) -> None:
+                if not job_id or not step_total or not total:
+                    return
+                frac = (_i + step_idx / step_total) / total
+                label = step_labels.get(step_name, step_name)
+                await update_job(job_id, progress=min(0.99, frac), message=f"🔬 {label} — deployment {_i + 1}/{total}")
 
-        try:
-            logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
-            await run_pipeline(
-                deployment_id=dep_id, steps=steps, user_id=user_id, on_step=_on_step if job_id else None, force=force, media_ids=media_ids
-            )
-            await emit_detection_notifications(dep_id)
-            # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
-            # without a manual per-deployment trigger. Needs the animal crops the
-            # pipeline just wrote (ANIMAL_CROP step). Best-effort + gated.
-            await auto_embed_deployment(dep_id, user_id=user_id)
-            logger.info("auto_annotate_complete", deployment_id=dep_id)
-        except Exception as exc:
-            logger.warning("auto_annotate_failed", deployment_id=dep_id, error=str(exc))
-        if job_id:
-            await update_job(job_id, progress=(i + 1) / total if total else 1.0)
+            try:
+                logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
+                await run_pipeline(
+                    deployment_id=dep_id,
+                    steps=steps,
+                    user_id=user_id,
+                    on_step=_on_step if job_id else None,
+                    force=force,
+                    media_ids=media_ids,
+                )
+                await emit_detection_notifications(dep_id)
+                # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
+                # without a manual per-deployment trigger. Needs the animal crops the
+                # pipeline just wrote (ANIMAL_CROP step). Best-effort + gated.
+                await auto_embed_deployment(dep_id, user_id=user_id)
+                logger.info("auto_annotate_complete", deployment_id=dep_id)
+            except Exception as exc:
+                logger.warning("auto_annotate_failed", deployment_id=dep_id, error=str(exc))
+            if job_id:
+                await update_job(job_id, progress=(i + 1) / total if total else 1.0)
 
 
 async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) -> None:

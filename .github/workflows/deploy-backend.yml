@@ -113,9 +113,20 @@ jobs:
             backend/
 
           if az containerapp show -n "$WORKER" -g WW-AE -o none 2>/dev/null; then
+            # Keep the gated-model HF token synced from the org secret BEFORE the revision
+            # copy (the new revision reads the current secret). The worker's HF_TOKEN env is a
+            # secretRef to `hf-token`; without it, DINOv3 (gated on HF) 401s and no embeddings
+            # are produced. Skip cleanly if the secret isn't configured for this environment.
+            if [ -n "${{ secrets.HF_TOKEN }}" ]; then
+              az containerapp secret set -n "$WORKER" -g WW-AE --secrets hf-token="${{ secrets.HF_TOKEN }}"
+            else
+              echo "::warning::HF_TOKEN secret not set — the worker can't download the gated DINOv3 model (Wildlife Brain embeddings will fail)."
+            fi
+
             # `revision copy` clones the CURRENT revision changing only the image — so it PRESERVES
             # the GPU workload profile + the KEDA scale rule (a plain --image / --set-env-vars
-            # update has silently blanked the scaler query before). The SHA tag forces a fresh pull.
+            # update has silently blanked the scaler query before) + the HF_TOKEN env (secretRef).
+            # The SHA tag forces a fresh pull.
             az containerapp revision copy -n "$WORKER" -g WW-AE \
               --image "${{ secrets.ACR_LOGIN_SERVER }}/ww-backend-worker:${SHA}"
 
