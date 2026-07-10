@@ -72,7 +72,9 @@ def build_edge_observations(
     fields = exif.get("user_comment_fields") or {}
     label_map = model.get("label_map") or {}
     version = edge_model_version(model)
-    if not fields or not label_map or not version:
+    # media_row["id"] becomes observations.media_id (a required FK) below, so a
+    # row without one can't yield a valid observation — skip it.
+    if not media_row.get("id") or not fields or not label_map or not version:
         return []
 
     rows: list[dict] = []

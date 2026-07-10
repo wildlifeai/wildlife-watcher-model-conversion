@@ -34,6 +34,19 @@ class ModelDomainError(Exception):
     pass
 
 
+class HeaderLabelsNotFound(ModelDomainError):
+    """``model_variables.h`` is present but its label array couldn't be parsed.
+
+    Distinct from a label/tensor *mismatch* (LM-1): "not parseable" is tolerable
+    where the header is only a cross-check (a precompiled ``.tfl`` + ``labels.txt``
+    are authoritative), whereas a mismatch is a real integrity error that must
+    surface. Subclasses ModelDomainError so callers that treat the header as the
+    label *source* still fail on it.
+    """
+
+    pass
+
+
 # ── Helpers (ported from app.py) ─────────────────────────────────────
 
 
@@ -99,7 +112,7 @@ def _extract_labels_from_header(vars_h_path: Path) -> List[str]:
                 )
             return labels
 
-    raise ModelDomainError("No labels found in model_variables.h")
+    raise HeaderLabelsNotFound("No labels found in model_variables.h")
 
 
 def _build_firmware_filename(vars_h_path: Path) -> str:
@@ -264,9 +277,12 @@ async def convert_uploaded_model(zip_content: bytes, filename: str) -> Tuple[byt
             # count AND order — class order defines the device index→label mapping.
             vars_h = next(iter(_real(work_dir.rglob("model_variables.h"))), None)
             if vars_h is not None:
+                # An unparseable header is only a missing cross-check (the .tfl +
+                # labels.txt are authoritative), so tolerate it — but let a real
+                # LM-1 label/tensor mismatch inside the header propagate.
                 try:
                     header_labels = _extract_labels_from_header(vars_h)
-                except ModelDomainError:
+                except HeaderLabelsNotFound:
                     header_labels = None
                 if header_labels and header_labels != labels:
                     raise ModelDomainError(
