@@ -69,6 +69,7 @@ az containerapp create -n ww-embedding-worker -g WW-AE --environment ww-env \
   --workload-profile-name gpu-t4 \
   --registry-server wwregistry.azurecr.io --registry-username wwregistry --registry-password-secret-ref acr-pw \
   --min-replicas 0 --max-replicas 1 \
+  --cpu 4 --memory 16Gi \
   --env-vars \
     SUPABASE_URL="https://nuhwmubvygxyddkycmpa.supabase.co" \
     SUPABASE_SERVICE_ROLE_KEY=secretref:supabase-service-key \
@@ -83,6 +84,13 @@ az containerapp create -n ww-embedding-worker -g WW-AE --environment ww-env \
     EMBEDDING_DEVICE=cuda BIOCLIP_DEVICE=cuda
 ```
 `FF_ML_ENABLED` **must** be true (else `build_pipeline_steps()` returns `[]` → no AI). `GOOGLE_SERVICE_ACCOUNT_JSON` must be raw JSON, not a list-repr (the `-o tsv` array bug corrupts it — set as a secret, don't round-trip via CLI arrays).
+
+> ⚠️ **`--memory 16Gi` is required — not the 8Gi default.** The auto-chained annotate→embed flow holds
+> SpeciesNet + BioCLIP + **DINOv3 ViT-H16plus** resident in one process; at 8Gi, loading ViT-H on top
+> **OOM-kills the worker (exit 137) mid-embed**, orphaning the embedding run — confirmed on dev
+> 2026-07-10, fixed by bumping to 16Gi (`cpu 4 / memory 16Gi` on the `gpu-t4` profile). The dev worker
+> now runs 16Gi, and `deploy-backend.yml`'s `revision copy` preserves it across rolls. (Durable
+> alternative: run the embed as its own job so the three heavyweight models never coexist.)
 
 ## 4 · KEDA scale-to-zero on prod `api_jobs`
 > ⚠️ **Do NOT use `az containerapp update --scale-rule-metadata`** — the CLI silently drops the SQL (spaces/quotes), leaving `query` empty → with `min=0` the worker never wakes. Set it in the **Portal** or a full `--yaml`.
