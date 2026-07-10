@@ -26,6 +26,7 @@ active engineering hand-offs; **archive** is frozen history. Start with onboardi
 | [prod-worker-provisioning-runbook](resources/prod-worker-provisioning-runbook.md) | Runbook to stand up the **production** GPU ML worker (ARQ + Redis + serverless T4) — ready to run once prod has real traffic |
 | [ai-model-pipeline](resources/ai-model-pipeline.md) | Edge Impulse → Vela on-camera model conversion |
 | [embedded-model-lifecycle](resources/embedded-model-lifecycle.md) | End-to-end on-device model flow across website / backend / mobile / firmware |
+| [dual-ai-production-rollout](resources/dual-ai-production-rollout.md) | Runbook to promote dual-AI (Camera AI + Cloud AI / edge reflection) from dev → staging → production, incl. the firmware gating dependency and rollout checklist |
 | [camtrapdp-import](resources/camtrapdp-import.md) | Importing CamtrapDP packages |
 | [lorawan-webhook-setup](resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server config |
 | [ui-components](resources/ui-components.md) | Shared frontend design-system primitives |
