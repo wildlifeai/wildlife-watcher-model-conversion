@@ -97,7 +97,7 @@ const MEDIA_SELECT =
   'observations(id, deployment_id, media_id, observation_type, scientific_name, vernacular_name, taxon_id, ' +
   'count, life_stage, sex, behavior, ' +
   'classification_method, classified_by, classification_probability, observation_comments, crop_url, ' +
-  'review_status, source_type, source_model_version, reviewer_id, annotator_id, bbox_x, bbox_y, bbox_w, bbox_h)'
+  'review_status, source_type, ai_origin, source_model_version, reviewer_id, annotator_id, bbox_x, bbox_y, bbox_w, bbox_h)'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -151,6 +151,8 @@ export interface ObservationRecord {
   // AN-1/AN-2: validation provenance + lifecycle (authoritative for status)
   review_status?: string | null
   source_type?: string | null
+  /** For source_type='ai': which AI layer produced the row — 'edge' (Camera AI) or 'cloud'. */
+  ai_origin?: string | null
   source_model_version?: string | null
   reviewer_id?: string | null
   annotator_id?: string | null

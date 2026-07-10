@@ -68,9 +68,11 @@ and writes three things into each JPEG's EXIF:
 - **AE telemetry** → `MakerNote` (`0x927C`), `"integration, analogGain, digitalGain, aeMean, converged"`
 - **NN class scores** → `UserComment` (`0x9286`), `"<label>: <pct>%; …"`
 
-> ⚠️ **Known gap:** UserComment is currently **not written** because the firmware
-> `USE_PERCENTAGE` flag is disabled while `ENABLE_EXIF_CONFIDENCE` is on — the
-> confidence producer is compiled out. Fix + detail:
+> ⚠️ **Known gap:** UserComment percentages are currently **not written** because the
+> firmware `USE_PERCENTAGE` flag is disabled (the confidence producer is compiled out;
+> the fallback writes raw int8 logits, which ingestion does not treat as scores).
+> **Fix staged** on firmware branch `feat/exif-confidence-enable` (flag enabled + a
+> compile-time guard coupling the two flags); device build/verification pending. Detail:
 > [firmware NN_confidence_EXIF_not_written](../../../Seeed_Grove_Vision_AI_Module_V2/EPII_CM55M_APP_S/app/ww_projects/ww500_md/doc/NN_confidence_EXIF_not_written.md).
 > Until that ships, stages 7–8 have no embedded prediction to ingest.
 
@@ -81,14 +83,26 @@ deployment ID. The **cloud SpeciesNet pipeline** runs independently on the same
 images ([04-AI-PIPELINE](../onboarding/04-AI-PIPELINE.md)) — the device and cloud
 models are complementary, not exclusive.
 
-## 8. Reflect on-device prediction (website · planned — Phase 2)
-Turn `user_comment_fields` into observations tagged as edge predictions, mapped to
-taxa via `label_map`, shown in the annotation panel beside SpeciesNet (e.g. *📟
-Device: rat 87%* next to *☁ SpeciesNet: Rattus rattus 64%*). Negative classes are
-skipped. Depends on the firmware fix (stage 6). Not yet built.
+## 8. Reflect on-device prediction (website · built, behind a flag)
+[`backend/app/domain/edge_reflection.py`](../../backend/app/domain/edge_reflection.py)
+turns `user_comment_fields` into observations tagged `ai_origin='edge'` (with
+`source_model_version = '{firmware_model_id}V{version_number}'`, matching the deployed
+`.TFL` filename), mapped to taxa via `label_map`; background/negative classes and
+sub-threshold scores are skipped. Runs automatically after the annotation pipeline
+(`auto_annotate_deployments`), replace-don't-append like the SpeciesNet step, so the
+annotation panel can show *📟 Camera AI: rat 87%* beside *☁ Cloud AI: Rattus rattus 64%*.
+Gated on `FF_EDGE_REFLECT_ENABLED` — enable only after the ww-backend `dual_ai_v0`
+migration adds `observations.ai_origin`. Depends on the firmware fix (stage 6).
 
 ## Open items
-- **Firmware:** enable `USE_PERCENTAGE` so the device emits NN scores (stage 6).
-- **Website:** build Phase 2 reflection (stage 8).
+- **Firmware:** merge + verify the `USE_PERCENTAGE` fix (branch
+  `feat/exif-confidence-enable`) so the device emits NN scores (stage 6).
+- **Backend:** run/merge the `dual_ai_v0` schema change (`observations.ai_origin`,
+  `device_alert_rules`), then enable `FF_EDGE_REFLECT_ENABLED` (stage 8).
+- **Frontend:** surface `ai_origin='edge'` rows in the annotation panel (📟 badge).
 - **Backend:** make `ai_models.model_path`/`labels_path` nullable to retire the
   `_pending` placeholder (stage 2) — see the path-columns design issue.
+
+Naming note: the canonical terms are **Camera AI** (user-facing) / **Edge AI**
+(technical) for this on-device layer and **Cloud AI** for the website pipeline — see
+[AI-ARCHITECTURE](./AI-ARCHITECTURE.md).

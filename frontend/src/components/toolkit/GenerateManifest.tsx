@@ -240,7 +240,7 @@ export function GenerateManifest() {
 
                   {/* Project selector */}
                   <div>
-                    <label style={labelStyle}>Project & Species AI</label>
+                    <label style={labelStyle}>Project & Species Brain</label>
                     {isLoadingProjects ? (
                       <div style={{ padding: '0.5rem', opacity: 0.6 }}>Loading projects…</div>
                     ) : projects && projects.length > 0 ? (
@@ -262,7 +262,7 @@ export function GenerateManifest() {
                       </div>
                     )}
                     <p style={{ fontSize: '0.75rem', opacity: 0.6, marginTop: '0.25rem' }}>
-                      Choose which project this camera belongs to. This includes the specific AI "brain" for identifying animals.
+                      Choose which project this camera belongs to. This includes the project's Species Brain — the Camera AI model that identifies animals on the device.
                     </p>
                   </div>
 
