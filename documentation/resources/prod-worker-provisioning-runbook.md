@@ -58,9 +58,10 @@ az containerapp secret set -n ww-embedding-worker -g WW-AE --secrets \
   supabase-anon-key="<PROD anon key>" \
   azure-storage-conn="<storage connection string>" \
   google-sa-json="<service-account JSON>" \
+  hf-token="<HuggingFace token with gated access to facebook/dinov3-*>" \
   pg-conn="postgres.nuhwmubvygxyddkycmpa:<PROD DB password>@aws-0-<region>.pooler.supabase.com:5432/postgres?sslmode=require"
 ```
-*(If creating the app first, set secrets in `create` via `--secrets`. `pg-conn` must be the **shared Session pooler** — IPv4, **port 5432** — not the direct/dedicated host, which is IPv6-only and unreachable by KEDA. Use **Session mode (:5432), not Transaction (:6543)**: the KEDA Postgres scaler reuses prepared statements, which Transaction pooling rejects with `42P05` — this broke the **dev** scaler until we moved to :5432 (2026-07-09). `pg-conn` is used only by the KEDA scale rule here; the worker itself talks to Supabase via the service-role client.)*
+*(If creating the app first, set secrets in `create` via `--secrets`. `pg-conn` must be the **shared Session pooler** — IPv4, **port 5432** — not the direct/dedicated host, which is IPv6-only and unreachable by KEDA. Use **Session mode (:5432), not Transaction (:6543)**: the KEDA Postgres scaler reuses prepared statements, which Transaction pooling rejects with `42P05` — this broke the **dev** scaler until we moved to :5432 (2026-07-09). `pg-conn` is used only by the KEDA scale rule here; the worker itself talks to Supabase via the service-role client. `hf-token` is **required** — DINOv3 is a gated HF model; without it the Wildlife Brain embed 401s; the dev deploy syncs it from the `HF_TOKEN` GitHub org secret, so mirror that or set it here.)*
 
 ## 3 · Prod worker on the GPU profile
 ```bash
@@ -72,6 +73,7 @@ az containerapp create -n ww-embedding-worker -g WW-AE --environment ww-env \
   --cpu 4 --memory 16Gi \
   --env-vars \
     SUPABASE_URL="https://nuhwmubvygxyddkycmpa.supabase.co" \
+    HF_TOKEN=secretref:hf-token \
     SUPABASE_SERVICE_ROLE_KEY=secretref:supabase-service-key \
     SUPABASE_ANON_KEY=secretref:supabase-anon-key \
     AZURE_STORAGE_CONNECTION_STRING=secretref:azure-storage-conn \
