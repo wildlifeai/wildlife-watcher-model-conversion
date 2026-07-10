@@ -485,7 +485,9 @@ def build_pipeline_steps() -> list:
     return steps
 
 
-async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | None = None, job_id: str | None = None, force: bool = False) -> None:
+async def auto_annotate_deployments(
+    deployment_ids: list[str], user_id: str | None = None, job_id: str | None = None, force: bool = False, media_ids: list[str] | None = None
+) -> None:
     """Run the AI annotation pipeline on freshly-uploaded deployments (best-effort).
 
     Enqueued (fire-and-forget) by the upload job after media is registered, so species
@@ -528,7 +530,9 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
 
         try:
             logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
-            await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id, on_step=_on_step if job_id else None, force=force)
+            await run_pipeline(
+                deployment_id=dep_id, steps=steps, user_id=user_id, on_step=_on_step if job_id else None, force=force, media_ids=media_ids
+            )
             await emit_detection_notifications(dep_id)
             # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
             # without a manual per-deployment trigger. Needs the animal crops the
@@ -566,7 +570,9 @@ async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) 
         logger.warning("auto_embed_failed", deployment_id=deployment_id, error=str(exc))
 
 
-async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_id: str | None = None, force: bool = False) -> None:
+async def annotate_deployments_job(
+    job_id: str, deployment_ids: list[str], user_id: str | None = None, force: bool = False, media_ids: list[str] | None = None
+) -> None:
     """Registered (ARQ-routable) AI job: annotate + embed a set of deployments.
 
     This is the offload target for the upload flow's AI phase. When ``REDIS_URL`` is
@@ -580,7 +586,7 @@ async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_
     """
     await update_job(job_id, status=JobStatus.PROCESSING, current_phase=ProgressPhase.AI_PIPELINE)
     try:
-        await auto_annotate_deployments(deployment_ids, user_id=user_id, job_id=job_id, force=force)
+        await auto_annotate_deployments(deployment_ids, user_id=user_id, job_id=job_id, force=force, media_ids=media_ids)
         await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message="AI analysis complete")
     except Exception as exc:
         logger.warning("annotate_deployments_job_failed", job_id=job_id, error=str(exc))

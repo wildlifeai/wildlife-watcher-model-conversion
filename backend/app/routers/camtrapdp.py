@@ -243,6 +243,10 @@ async def import_camtrapdp(
         from app.config import settings  # noqa: PLC0415
 
         ai_dep_ids = sorted({p.deployment_id for p in result.pending_drive_uploads if p.deployment_id})
+        # Only the media whose files were physically in the zip — NOT the fileless CSV
+        # references. Scoping the pipeline to these avoids media_prep choking on hundreds
+        # of unresolvable rows (which blocked the event loop → ARQ cancel + KEDA scaledown).
+        ai_media_ids = sorted({p.media_id for p in result.pending_drive_uploads if p.media_id})
         if settings.FF_ML_ENABLED and ai_dep_ids:
             from app.jobs.dispatch import enqueue_job  # noqa: PLC0415
             from app.jobs.store import create_job  # noqa: PLC0415
@@ -250,12 +254,12 @@ async def import_camtrapdp(
             ai_job_id = await create_job(
                 user_id=user.id,
                 kind="ai_pipeline",
-                label=f"AI analysis — {len(ai_dep_ids)} imported deployment(s)",
+                label=f"AI analysis — {len(ai_media_ids)} imported image(s)",
                 deployment_ids=ai_dep_ids,
             )
-            # force=True: imported CamtrapDP labels (machine → source_type='ai') must not
-            # make run_pipeline skip these media — we want our own SpeciesNet crops + Brain.
-            await enqueue_job("annotate_deployments_job", ai_job_id, ai_dep_ids, user.id, True)
+            # force=True: imported CamtrapDP labels (machine → source_type='ai') must not make
+            # run_pipeline skip these media. media_ids scopes it to the image-backed rows only.
+            await enqueue_job("annotate_deployments_job", ai_job_id, ai_dep_ids, user.id, True, ai_media_ids)
             result.ai_job_id = ai_job_id
             logger.info("camtrapdp_ai_enqueued", job_id=ai_job_id, deployments=len(ai_dep_ids))
 

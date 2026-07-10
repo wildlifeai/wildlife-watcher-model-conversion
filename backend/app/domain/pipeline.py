@@ -847,6 +847,7 @@ async def run_pipeline(
     user_id: str | None = None,
     only_unannotated: bool = True,
     force: bool = False,
+    media_ids: list[str] | None = None,
     on_step: Optional[Callable[[str, int, int], Awaitable[None]]] = None,
 ) -> PipelineRunResult:
     """Execute a sequence of pipeline steps on a deployment.
@@ -904,13 +905,12 @@ async def run_pipeline(
     #  - **Incremental (only_unannotated, the default):** additionally skip any
     #    AI-annotated media, so a normal run only touches NEW images.
     def _fetch_media():
-        resp = (
-            svc.table("media")
-            .select("id, deployment_id, file_path, file_name, file_mediatype, timestamp")
-            .eq("deployment_id", deployment_id)
-            .order("timestamp")
-            .execute()
-        )
+        q = svc.table("media").select("id, deployment_id, file_path, file_name, file_mediatype, timestamp").eq("deployment_id", deployment_id)
+        # Scope to specific media when given (e.g. a CamtrapDP import runs AI only on the
+        # image-backed rows — not the fileless CSV references that would choke media_prep).
+        if media_ids:
+            q = q.in_("id", media_ids)
+        resp = q.order("timestamp").execute()
         rows = resp.data or []
         if force or not rows:
             return rows
