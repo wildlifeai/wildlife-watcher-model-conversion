@@ -1,6 +1,13 @@
 # Wildlife Watcher — Dual-Layer AI Architecture
 
-**Status:** Proposal for adoption · 2026-07-08
+**Status:** Proposal for adoption · 2026-07-08 · *v0 partially built on `feat/dual-ai-v0` (2026-07-10)*
+
+> **Build progress (this branch).** Shipped: the **`AI-ARCHITECTURE.md`** umbrella, the **user guide**,
+> lifecycle **stage 8** (`domain/edge_reflection.py`, gated on `FF_EDGE_REFLECT_ENABLED`), and the
+> **LM-1/2** label-chain checks in `domain/model.py`. Still open for v0: the firmware `USE_PERCENTAGE`
+> fix + `LM-9` guard (cross-repo), the ww-backend `ai_origin` schema (`feat/dual-ai-v0-schema`) must land
+> before edge reflection can run, LM-5 + the golden-set parity harness, and seed/test data (a project
+> model with a real `label_map` + media carrying UserComment NN scores). See §4.1.
 **Scope:** Naming, integration architecture, LoRaWAN alert logic, and validation roadmap for the two AI approaches (Cloud AI and Edge AI), grounded in the current state of `ww-backend`, `ww-website`, `Seeed_Grove_Vision_AI_Module_V2` (Himax firmware), `ww-hardware` (Nordic firmware), and `wwmobile`.
 
 **Companion canon (already exists — this document does not replace it):**
@@ -118,12 +125,12 @@ Keep detail in the repo that owns the stage (matching existing repo doc rules); 
 
 | Level | Doc | Status |
 |---|---|---|
-| Umbrella (both layers + alerting) | **NEW:** `ww-website/documentation/resources/AI-ARCHITECTURE.md` — essentially §1–§3 of this proposal, linked from all four repos' READMEs | to create |
+| Umbrella (both layers + alerting) | `ww-website/documentation/resources/AI-ARCHITECTURE.md` — essentially §1–§3 of this proposal, linked from all four repos' READMEs | ✅ created (this branch) |
 | Edge map | `embedded-model-lifecycle.md` (stages 1–8) | exists, current |
 | Cloud map | `04-AI-PIPELINE.md` | exists, current |
 | Stage detail | per-repo (`ai-model-pipeline.md`, firmware `_Documentation/`, mobile `AI-Model-Integration.md`, backend `DATABASE_REFERENCE.md`) | exists |
 | Alerting spec | **NEW:** `ww-hardware` + backend doc pair once §3 is adopted (Nordic owns device behaviour; backend owns rules schema + decoder) | to create |
-| User-facing | **NEW guide** via the website `guide-author` skill, category `Analysis`: *"How Wildlife Watcher's two AIs work together"* — Camera AI / Cloud AI / Species Brain glossary, one diagram, no vendor names. Respect the canon rule: LoRaWAN = "in development" until §3 ships | to create |
+| User-facing | **NEW guide** via the website `guide-author` skill, category `Analysis`: *"How Wildlife Watcher's two AIs work together"* — Camera AI / Cloud AI / Species Brain glossary, one diagram, no vendor names. Respect the canon rule: LoRaWAN = "in development" until §3 ships | ✅ created (this branch) |
 
 Conventions for all AI docs: state **which layer** in the first sentence; name the owning repo per stage; every claim of device behaviour links to firmware code or `_Documentation/`; known gaps get a ⚠ block (the lifecycle doc's pattern — keep it).
 
@@ -308,7 +315,7 @@ The class-index chain that must never break:
 
 ## 4.1 Roadmap phases
 
-**V0 — Close the loop (bench, ~now):** fix `USE_PERCENTAGE` + add LM-9 guard; implement LM-1/2/5 in the upload job; build the golden-set folder + parity script (LM-3/4/7); ship stage 8 (edge observations with `ai_origin='edge'`).
+**V0 — Close the loop (bench, ~now):** ✅ **built on `feat/dual-ai-v0`** — LM-1/2 (`domain/model.py`) and stage 8 edge reflection (`domain/edge_reflection.py`, `ai_origin='edge'`, gated on `FF_EDGE_REFLECT_ENABLED`). Still open: fix `USE_PERCENTAGE` + add LM-9 guard (firmware); land the ww-backend `ai_origin` schema (`feat/dual-ai-v0-schema`); LM-5; the golden-set folder + parity script (LM-3/4/7); and seed/test data (a project model with a real `label_map` + media carrying UserComment NN scores).
 **V1 — Deploy paths:** manifest + BLE deploy verified against LM-8; label-mapping made a hard gate before project assignment; model adoption telemetry.
 **V2 — E2E dual-AI:** SD upload → EXIF ingest + auto Cloud AI on the same media; annotation panel shows both; agreement report per edge model version (P2).
 **V3 — Alerting:** `alert_rules` schema + manifest compilation; Nordic strategies (instant → digest → backoff, in that order); payload v2 + decoder + notifications; conformance rig that replays scripted detection streams into the Nordic over I2C and asserts uplink timing/content.
