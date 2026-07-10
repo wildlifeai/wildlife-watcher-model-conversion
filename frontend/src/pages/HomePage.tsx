@@ -267,7 +267,7 @@ function MarketingHero() {
             {[
               { icon: '📷', title: 'The hardware', body: 'Compact, weatherproof AI cameras built for small wildlife, auto-tagging images with deployment metadata.', anchor: '#watchers' },
               { icon: '📱', title: 'The app',      body: 'Configure devices and manage projects from the field on iOS or Android.',               anchor: '#app' },
-              { icon: '🌐', title: 'The web',      body: 'Upload images, review AI detections, and export publication-ready reports.',            anchor: '#web' },
+              { icon: '🌐', title: 'The web',      body: 'Upload images, review AI detections, group look-alikes, and export publication-ready reports.', anchor: '#web' },
             ].map(item => (
               <a key={item.anchor} href={item.anchor} style={{ textDecoration: 'none', color: 'inherit' }}>
                 <div style={{
@@ -304,7 +304,7 @@ function MarketingHero() {
             and when each photo was taken without any manual matching.
           </p>
           <ul style={{ paddingLeft: '1.25rem', opacity: 0.8, lineHeight: 1.85, marginBottom: '1.5rem' }}>
-            <li>A lightweight on-device AI model flags your target species in real time; the more powerful SpeciesNet model assists with full identification when you upload to the web platform.</li>
+            <li>A lightweight on-device AI model (Camera AI) flags your target species in real time; the more powerful SpeciesNet model (Cloud AI) assists with full identification when you upload, and the Wildlife Brain groups look-alike animals so large datasets are quick to review.</li>
             <li>LoRaWAN telemetry (in development) will send battery and SD-card status back to the dashboard.</li>
             <li>Fully open hardware — schematics and firmware published on GitHub.</li>
           </ul>
