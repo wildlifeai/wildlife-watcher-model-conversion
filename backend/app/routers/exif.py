@@ -78,6 +78,7 @@ async def parse_exif(
     deployment_id: Optional[str] = Form(None),
     assigned_deployment_id: Optional[str] = Form(None),
     upload_to_drive: Optional[bool] = Form(False),
+    run_ai: Optional[bool] = Form(True),
     authorization: Optional[str] = Header(None),
 ):
     """Parse EXIF metadata from one or more uploaded JPEG files.
@@ -98,6 +99,9 @@ async def parse_exif(
         User-selected deployment ID for Drive subfolder organisation.
     upload_to_drive : bool, optional
         Whether to enqueue a Drive upload job (default ``False``).
+    run_ai : bool, optional
+        Whether to run the AI pipeline + Wildlife Brain after upload (default ``True``).
+        ``False`` uploads/archives only — no SpeciesNet/embedding.
     """
     results = []
     file_contents: List[bytes] = []
@@ -239,6 +243,7 @@ async def parse_exif(
                 folder_prefixes=list(folder_prefixes),
                 user_id=user.id if user else None,
                 assigned_deployment_id=assigned_deployment_id,
+                run_ai=run_ai if run_ai is not None else True,
             )
         except Exception as exc:
             logger.error("drive_enqueue_failed", error=str(exc))
@@ -267,6 +272,7 @@ async def _enqueue_drive_upload(
     folder_prefixes: Optional[List[str]] = None,
     user_id: Optional[str] = None,
     assigned_deployment_id: Optional[str] = None,
+    run_ai: bool = True,
 ) -> dict:
     """Upload images to Supabase Storage and enqueue the Drive upload job.
 
@@ -498,6 +504,8 @@ async def _enqueue_drive_upload(
     payload = {
         "files": storage_entries,
         "user_id": user_id,
+        # Gate the post-upload AI/Brain phase (upload_drive_images_job reads this).
+        "run_ai": run_ai if run_ai is not None else True,
     }
 
     try:

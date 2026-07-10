@@ -485,7 +485,7 @@ def build_pipeline_steps() -> list:
     return steps
 
 
-async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | None = None, job_id: str | None = None) -> None:
+async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | None = None, job_id: str | None = None, force: bool = False) -> None:
     """Run the AI annotation pipeline on freshly-uploaded deployments (best-effort).
 
     Enqueued (fire-and-forget) by the upload job after media is registered, so species
@@ -528,7 +528,7 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
 
         try:
             logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
-            await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id, on_step=_on_step if job_id else None)
+            await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id, on_step=_on_step if job_id else None, force=force)
             await emit_detection_notifications(dep_id)
             # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
             # without a manual per-deployment trigger. Needs the animal crops the
@@ -566,7 +566,7 @@ async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) 
         logger.warning("auto_embed_failed", deployment_id=deployment_id, error=str(exc))
 
 
-async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_id: str | None = None) -> None:
+async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_id: str | None = None, force: bool = False) -> None:
     """Registered (ARQ-routable) AI job: annotate + embed a set of deployments.
 
     This is the offload target for the upload flow's AI phase. When ``REDIS_URL`` is
@@ -580,7 +580,7 @@ async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_
     """
     await update_job(job_id, status=JobStatus.PROCESSING, current_phase=ProgressPhase.AI_PIPELINE)
     try:
-        await auto_annotate_deployments(deployment_ids, user_id=user_id, job_id=job_id)
+        await auto_annotate_deployments(deployment_ids, user_id=user_id, job_id=job_id, force=force)
         await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message="AI analysis complete")
     except Exception as exc:
         logger.warning("annotate_deployments_job_failed", job_id=job_id, error=str(exc))
@@ -1048,11 +1048,16 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         # Step set from the enabled flags (same source as auto_annotate_deployments),
         # so this single inline run includes SpeciesNet/BioCLIP/etc. when enabled.
         _steps = build_pipeline_steps()
+        # User opt-out from the upload UI (run_ai=false) → skip AI/Brain; the upload +
+        # Drive archival still complete. Default true preserves the auto-annotate behaviour.
+        _run_ai = payload.get("run_ai", True)
+        if _dep_ids and _steps and not _run_ai:
+            logger.info("ai_pipeline_skipped_by_request", job_id=job_id, deployments=len(_dep_ids))
         pipeline_errors = 0
         # Run the AI inline only on a single-container / dev image (no Redis worker).
         # When REDIS_URL is set, the heavy AI is offloaded to the GPU worker (the
         # `elif` branch below) so this CPU process never imports torch/SpeciesNet.
-        if _dep_ids and _steps and not settings.REDIS_URL:
+        if _dep_ids and _steps and _run_ai and not settings.REDIS_URL:
             await start_phase(job_id, ProgressPhase.AI_PIPELINE)
             # Record the resolved deployments so the Annotations grid can show a
             # "being processed" banner for them while this inline AI phase runs.
@@ -1132,7 +1137,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         # process. The upload itself is complete; AI is tracked as its own
         # Processing-history job. enqueue_job falls back to in-process if Redis is
         # unreachable, so this never silently drops the analysis. ──
-        elif _dep_ids and _steps and settings.REDIS_URL:
+        elif _dep_ids and _steps and _run_ai and settings.REDIS_URL:
             from datetime import timedelta  # noqa: PLC0415
 
             from app.jobs.dispatch import enqueue_job  # noqa: PLC0415
