@@ -39,6 +39,7 @@ Current hand-offs; kept up to date until the work ships, then moved to `_archive
 | Spec | For | Covers |
 |------|-----|--------|
 | [dual-layer-ai-architecture-proposal](development%20reports/dual-layer-ai-architecture-proposal.md) | all repos | Camera AI / Cloud AI / Wildlife Brain naming, edge↔cloud integration framework, LoRaWAN alert-logic spec (instant/digest/back-off), validation roadmap + user stories |
+| [lorawan-alert-execution-spec](development%20reports/lorawan-alert-execution-spec.md) | website + backend + both firmwares | Build breakdown for `device_alert_rules` execution: manifest compile → Nordic strategy execution → Himax I2C score forward → backend uplink decode. Implements the proposal's §3 alert logic |
 | [bmp-ingestion-analysis](development%20reports/bmp-ingestion-analysis.md) | website + firmware | Raw-BMP ingest + in-pipeline JPEG re-compress; device capture behaviour; #1 same-frame dual-write |
 | [dual-camera-rpi-analysis](development%20reports/dual-camera-rpi-analysis.md) | firmware/hardware | HM0360 (night/IR) ↔ Raspberry Pi (day/colour) camera swap + dual-write interaction |
 | [exif-telemetry-firmware-spec](development%20reports/exif-telemetry-firmware-spec.md) | firmware | Add temperature/battery to EXIF via UserComment (smallest change) |
