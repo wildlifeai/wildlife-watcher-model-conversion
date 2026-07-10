@@ -164,6 +164,25 @@ def _parse_ifd(
 # ── Public API ───────────────────────────────────────────────────────
 
 
+def _strip_nul(obj: Any) -> Any:
+    """Recursively drop NUL (``\\x00``) bytes from strings in a parsed-EXIF value.
+
+    EXIF ``UserComment`` carries an 8-byte NUL-padded charset code
+    (``"ASCII\\x00\\x00\\x00…"``), and other tags can hold stray NULs. Postgres
+    ``jsonb``/``text`` reject ``\\u0000`` (SQLSTATE 22P05), so an unsanitised
+    ``exif_metadata`` fails media registration for every such image — including
+    real WW500 frames once the firmware emits UserComment. Sanitise here so every
+    consumer of the parsed dict is safe.
+    """
+    if isinstance(obj, str):
+        return obj.replace("\x00", "")
+    if isinstance(obj, dict):
+        return {(k.replace("\x00", "") if isinstance(k, str) else k): _strip_nul(v) for k, v in obj.items()}
+    if isinstance(obj, list):
+        return [_strip_nul(v) for v in obj]
+    return obj
+
+
 def parse_exif_from_bytes(jpeg_bytes: bytes) -> Dict[str, Any]:
     """Parse EXIF metadata from raw JPEG bytes.
 
@@ -258,7 +277,9 @@ def parse_exif_from_bytes(jpeg_bytes: bytes) -> Dict[str, Any]:
     deployment_id = _extract_deployment_id(parsed_data)
     parsed_data["deployment_id"] = deployment_id
 
-    return parsed_data
+    # Sanitise NUL bytes (from the UserComment charset prefix, etc.) so the dict
+    # is safe to store as jsonb — otherwise media registration fails with 22P05.
+    return _strip_nul(parsed_data)
 
 
 def parse_maker_note_fields(maker_note: Any) -> Dict[str, Any]:

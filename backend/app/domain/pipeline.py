@@ -261,6 +261,10 @@ def build_speciesnet_observations(
         "media_id": media["id"],
         "observation_level": "media",
         "source_type": "ai",
+        # Cloud-pipeline provenance (mirrors edge_reflection's ai_origin='edge').
+        # Makes ai_origin authoritative rather than relying on the NULL=cloud
+        # display fallback; applies to animal and blank rows alike.
+        "ai_origin": "cloud",
         "source_model_version": model_version,
         "review_status": "ai_reviewed",
         "classification_method": "machine",
@@ -499,6 +503,7 @@ def build_bioclip_observations(
             "observation_level": "media",
             "observation_type": "animal",
             "source_type": "ai",
+            "ai_origin": "cloud",  # cloud-pipeline provenance (see build_speciesnet_observations)
             "source_model_version": model_version,
             "review_status": "ai_reviewed",
             "classification_method": "machine",
