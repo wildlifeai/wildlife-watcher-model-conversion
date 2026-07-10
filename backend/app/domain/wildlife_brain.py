@@ -290,7 +290,11 @@ def prepare_cluster_input(embeddings: list[list[float]]) -> list[tuple[float, ..
     if n == 0:
         # _l2_normalize would index axis=1 of a 1-D empty array and raise.
         return []
-    if n >= MIN_UMAP_POINTS:
+    # Reduce to 50-D only with comfortably more points than target dims. UMAP's
+    # spectral init computes ~n_components eigenvectors and raises "k >= N" once
+    # n_components (50) + 1 >= n — so a small/medium set (e.g. a 10-crop CamtrapDP
+    # import) must cluster on the raw (L2-normalized) embeddings instead.
+    if n > 60:
         return reduce_umap(embeddings, 50, UMAP_CLUSTER_PARAMS)
     normalized = _l2_normalize(np.asarray(embeddings, dtype=np.float32))
     return [tuple(float(v) for v in row) for row in normalized]
@@ -326,9 +330,10 @@ def cluster_hdbscan(embeddings: list[list[float]], preset: str = DEFAULT_HDBSCAN
 def reduce_umap(embeddings: list[list[float]], n_components: int, params: dict) -> list[tuple[float, ...]]:
     """UMAP-reduce embeddings to ``n_components``. No-op-ish for tiny inputs."""
     n = len(embeddings)
-    # Floor at MIN_UMAP_POINTS: below it a UMAP projection is meaningless AND its spectral
-    # init can raise "k >= N" (scipy eigh) — e.g. N=4 slipped past the old max(4, …) guard.
-    if n < max(MIN_UMAP_POINTS, params.get("n_neighbors", 15) // 3):
+    # UMAP's spectral init raises "k >= N" (scipy eigh) unless n comfortably exceeds both
+    # n_components and n_neighbors. Floor accordingly (n_components + 2 guards the target
+    # dim; MIN_UMAP_POINTS keeps tiny projections meaningless-but-safe).
+    if n < max(MIN_UMAP_POINTS, n_components + 2, params.get("n_neighbors", 15) // 3):
         # Too few points for a meaningful projection.
         return [tuple([0.0] * n_components) for _ in range(n)]
 
