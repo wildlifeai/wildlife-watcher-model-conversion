@@ -1,5 +1,5 @@
 import { useState, useRef, useEffect } from 'react'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 import { useMutation } from '@tanstack/react-query'
 import { apiClient } from '../../lib/apiClient'
 import { supabase } from '../../config/supabase'
@@ -105,11 +105,17 @@ export function AnalyseImages() {
 
   // ── Deployment assignment for uploads with no valid deployment ID ──
   const [assignedDeploymentId, setAssignedDeploymentId] = useState<string | null>(null)
-  const [assignMode, setAssignMode] = useState<'existing' | 'create'>('existing')
+  const [assignMode, setAssignMode] = useState<'existing' | 'create' | 'sdcard'>('existing')
   const [projects, setProjects] = useState<{ id: string; name: string }[]>([])
   const [newDep, setNewDep] = useState({ projectId: '', name: '', lat: '', lon: '' })
   const [creatingDep, setCreatingDep] = useState(false)
   const [createDepError, setCreateDepError] = useState<string | null>(null)
+  // SD-card auto-create: create the stamped deployment(s) reusing their UUID in this project.
+  const [autoCreateProjectId, setAutoCreateProjectId] = useState('')
+  // Deployment the just-finished upload bound to → drives the redirect + banner.
+  const [boundDeploymentId, setBoundDeploymentId] = useState<string | null>(null)
+  const autoCreatedRef = useRef<string[]>([])
+  const navigate = useNavigate()
 
   const CAMTRAP_STAGES = [
     { label: 'Uploading package…',         pct: 10, after: 500   },
@@ -287,6 +293,8 @@ export function AnalyseImages() {
       const chunkSize = 10
       const totalBatches = Math.ceil(imageFiles.length / chunkSize)
       lastSeenSeqRef.current = {}
+      autoCreatedRef.current = []
+      setBoundDeploymentId(null)
 
       setPipelineState({
           totalFiles: imageFiles.length,
@@ -325,10 +333,19 @@ export function AnalyseImages() {
         formData.append('run_ai', String(runAi))
         // Bind these images to a chosen/created deployment when they carry no valid one.
         if (assignedDeploymentId) formData.append('assigned_deployment_id', assignedDeploymentId)
+        // SD-card auto-create: create the stamped deployment(s) reusing their UUID
+        // in the chosen project, so this and every future upload from the device binds.
+        if (assignMode === 'sdcard' && autoCreateProjectId) {
+          formData.append('auto_create_deployment', 'true')
+          formData.append('project_id', autoCreateProjectId)
+        }
 
         try {
           const response = await apiClient.upload('/api/exif/parse', formData)
           const data = response.data ?? {}
+          if (Array.isArray(data.auto_created_deployments) && data.auto_created_deployments.length) {
+            autoCreatedRef.current.push(...data.auto_created_deployments)
+          }
           const raw: any[] = data.images ?? data ?? []
           
           const mapped: ExifResult[] = raw.map((item: any) => {
@@ -428,8 +445,28 @@ export function AnalyseImages() {
       }
 
       return allResults
-    }
+    },
+    onSuccess: (allResults: ExifResult[]) => {
+      // Work out which deployment these images bound to, for the redirect + banner:
+      // an explicit assignment wins, then an auto-created stamped UUID, then the
+      // first full-UUID deployment ID the backend resolved from EXIF/folder.
+      const isUuid = (id: string | null): id is string => !!id && /^[0-9a-f-]{36}$/i.test(id)
+      const target =
+        assignedDeploymentId ||
+        autoCreatedRef.current[0] ||
+        allResults.map(r => r.deployment_id).find(isUuid) ||
+        null
+      if (target) setBoundDeploymentId(target)
+    },
   })
+
+  // After a successful folder upload that bound to a deployment, drop the user
+  // into that deployment's insights (the banner also links to its Annotations).
+  useEffect(() => {
+    if (!boundDeploymentId) return
+    const t = setTimeout(() => navigate(`/insights?deployment=${boundDeploymentId}`), 5000)
+    return () => clearTimeout(t)
+  }, [boundDeploymentId, navigate])
 
   const processFiles = async (incoming: File[]) => {
     // Check for ZIP files first — route to CamtrapDP
@@ -469,6 +506,8 @@ export function AnalyseImages() {
     lastSeenSeqRef.current = {}
     setInvalidDeployments({})
     setAssignedDeploymentId(null)
+    setAutoCreateProjectId('')
+    setBoundDeploymentId(null)
     setCreateDepError(null)
 
     // Detect unique deployment prefixes from paths
@@ -566,6 +605,8 @@ export function AnalyseImages() {
     setPipelineState({ totalFiles: 0, uploadedFiles: 0, jobs: [], logs: [], lastUpdateTs: Date.now() })
     lastSeenSeqRef.current = {}
     setAssignedDeploymentId(null)
+    setAutoCreateProjectId('')
+    setBoundDeploymentId(null)
     setCreateDepError(null)
   }
 
@@ -603,6 +644,18 @@ export function AnalyseImages() {
   // Offer the assign/create-deployment panel when there's no confirmed valid binding:
   // no MEDIA/<hex> folder deployment at all, or a folder deployment that doesn't exist.
   const needsDeployment = files.length > 0 && results.length === 0 && (folderDepCount === 0 || notFoundDeployments.length > 0)
+
+  // Has the user resolved the missing binding (assigned, or opted into SD-card auto-create)?
+  const bindingResolved = !!assignedDeploymentId || (assignMode === 'sdcard' && !!autoCreateProjectId)
+  // Gate the upload: don't let it proceed (and silently persist nothing) while a
+  // deployment is missing/inaccessible and unresolved. no_access can't be
+  // auto-created — the user must assign an accessible deployment instead.
+  const uploadBlocked = files.length > 0 && results.length === 0 &&
+    (needsDeployment || noAccessDeployments.length > 0) && !bindingResolved
+
+  // Assign-panel modes; SD-card auto-create only offered when a folder deployment is missing.
+  const assignModes: Array<'existing' | 'create' | 'sdcard'> =
+    notFoundDeployments.length > 0 ? ['sdcard', 'existing', 'create'] : ['existing', 'create']
 
   return (
     <div>
@@ -901,7 +954,7 @@ export function AnalyseImages() {
           </p>
 
           <div style={{ display: 'flex', gap: '0.5rem', marginBottom: '0.75rem' }}>
-            {(['existing', 'create'] as const).map(m => (
+            {assignModes.map(m => (
               <button
                 key={m}
                 onClick={() => setAssignMode(m)}
@@ -912,12 +965,29 @@ export function AnalyseImages() {
                   color: 'var(--text-color)', fontWeight: assignMode === m ? 600 : 400,
                 }}
               >
-                {m === 'existing' ? 'Use existing' : '+ Create new'}
+                {m === 'sdcard' ? '📇 Use SD-card ID' : m === 'existing' ? 'Use existing' : '+ Create new'}
               </button>
             ))}
           </div>
 
-          {assignMode === 'existing' ? (
+          {assignMode === 'sdcard' ? (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              <p style={{ fontSize: '0.8125rem', opacity: 0.75, margin: 0 }}>
+                Create the SD-card deployment{notFoundDeployments.length > 1 ? 's' : ''}{' '}
+                <strong style={{ fontFamily: 'monospace' }}>{notFoundDeployments.join(', ')}</strong>{' '}
+                in a project, <strong>reusing the ID from the card</strong> so every future upload from this device binds automatically.
+              </p>
+              <select value={autoCreateProjectId} onChange={e => setAutoCreateProjectId(e.target.value)} style={FIELD}>
+                <option value="">— Select a project —</option>
+                {projects.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
+              </select>
+              {autoCreateProjectId && (
+                <span style={{ fontSize: '0.8125rem', color: 'var(--success)' }}>
+                  ✓ Will create + bind these on upload
+                </span>
+              )}
+            </div>
+          ) : assignMode === 'existing' ? (
             <select value={assignedDeploymentId ?? ''} onChange={e => setAssignedDeploymentId(e.target.value || null)} style={FIELD}>
               <option value="">— Select a deployment —</option>
               {deployments.map(d => (
@@ -963,11 +1033,12 @@ export function AnalyseImages() {
         <div style={{ marginTop: '1.5rem', textAlign: 'center' }}>
           <button
             className="btn"
-            disabled={analyseMutation.isPending}
+            disabled={analyseMutation.isPending || uploadBlocked}
             onClick={() => analyseMutation.mutate(files)}
-            style={{ 
-              padding: '0.75rem 2rem', 
-              opacity: analyseMutation.isPending ? 0.7 : 1,
+            style={{
+              padding: '0.75rem 2rem',
+              opacity: (analyseMutation.isPending || uploadBlocked) ? 0.5 : 1,
+              cursor: uploadBlocked ? 'not-allowed' : 'pointer',
               transition: 'opacity 0.2s',
               width: analyseMutation.isPending ? '100%' : 'auto',
               maxWidth: '300px'
@@ -975,6 +1046,13 @@ export function AnalyseImages() {
           >
             {analyseMutation.isPending ? `Starting Pipeline...` : `Analyse ${files.length} Image${files.length > 1 ? 's' : ''}`}
           </button>
+          {uploadBlocked && (
+            <p style={{ color: '#e65100', fontSize: '0.8125rem', marginTop: '0.5rem' }}>
+              {noAccessDeployments.length > 0
+                ? 'Assign these photos to a deployment you have access to before uploading.'
+                : 'Assign or create a deployment above before uploading — otherwise the images can’t bind and won’t appear in Annotations.'}
+            </p>
+          )}
         </div>
       )}
 
@@ -987,6 +1065,22 @@ export function AnalyseImages() {
       {/* ── Pipeline status ─────────────────────────────────────── */}
       {pipelineState.totalFiles > 0 && (
           <PipelineStatusBox state={pipelineState} phase={derivePhase(pipelineState)} />
+      )}
+
+      {/* ── Success banner: redirect to insights + link to annotations ── */}
+      {boundDeploymentId && (
+        <div className="card" style={{ marginTop: '1.5rem', padding: '1.25rem', borderLeft: '3px solid var(--success)', background: 'rgba(76,175,80,0.06)' }}>
+          <div style={{ fontWeight: 600, color: 'var(--primary)', marginBottom: '0.35rem' }}>
+            ✓ Uploaded — your images are binding to the deployment
+          </div>
+          <p style={{ fontSize: '0.8125rem', opacity: 0.8, margin: '0 0 0.75rem' }}>
+            Taking you to Insights… or jump straight to the Annotations of these images.
+          </p>
+          <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
+            <Link className="btn" to={`/insights?deployment=${boundDeploymentId}`} style={{ padding: '0.4rem 1rem', textDecoration: 'none' }}>📊 View Insights</Link>
+            <Link className="btn" to={`/annotations?deployment=${boundDeploymentId}`} style={{ padding: '0.4rem 1rem', textDecoration: 'none' }}>🏷️ View Annotations</Link>
+          </div>
+        </div>
       )}
 
       {/* ── Results table ───────────────────────────────────────── */}
