@@ -22,10 +22,10 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import structlog
-from fastapi import APIRouter, File, Form, Header, Request, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
-from app.authz import classify_deployment_access, deployment_id_prefix_bounds
+from app.authz import assert_access, classify_deployment_access, deployment_id_prefix_bounds
 from app.config import settings
 from app.dependencies import get_optional_user, is_email_confirmed
 from app.domain.exif import parse_exif_from_bytes
@@ -68,6 +68,65 @@ def _hex_filename_to_timestamp(filename: str) -> Optional[str]:
         return None
 
 
+async def _auto_create_deployments(
+    deployment_ids: List[str], project_id: str, user_id: str
+) -> List[str]:
+    """Create any of ``deployment_ids`` that don't exist yet, REUSING the stamped
+    UUID, inside ``project_id``. Returns the ids actually created.
+
+    This backs the frontend "create the SD-card deployment" action: the device
+    stamps a Deployment_ID that has no matching row, so binding silently drops the
+    frames. Reusing the same UUID means every future upload from that device binds
+    automatically. Access-guarded (raises 404 if the caller has no role on the
+    project — mirrors POST /api/deployments). A placeholder device is created
+    because deployments need a non-null device_id + a unique (start, device_id).
+    """
+    from app.domain.photo_preprocessing import resolve_timezone  # noqa: F401 (parity w/ create_deployment)
+
+    await assert_access(user_id, project_id=project_id)  # 404 unless caller has access
+
+    def _work() -> List[str]:
+        svc = create_service_client()
+        existing = svc.table("deployments").select("id").in_("id", deployment_ids).execute()
+        have = {r["id"] for r in (existing.data or [])}
+        to_create = [d for d in deployment_ids if d not in have]
+        if not to_create:
+            return []
+
+        proj = svc.table("projects").select("id, organisation_id").eq("id", project_id).limit(1).execute()
+        if not proj.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        org_id = proj.data[0].get("organisation_id")
+
+        created: List[str] = []
+        for dep_id in to_create:
+            device_id = str(uuid.uuid4())
+            svc.table("devices").insert(
+                {
+                    "id": device_id,
+                    "bluetooth_id": str(uuid.uuid4()),
+                    "name": f"[SD card] {dep_id[:8]}",
+                    "organisation_id": org_id,
+                    "modified_by": user_id,
+                }
+            ).execute()
+            svc.table("deployments").insert(
+                {
+                    "id": dep_id,
+                    "project_id": project_id,
+                    "device_id": device_id,
+                    "setup_by": user_id,
+                    "name": f"SD card {dep_id[:8]}",
+                    "location_name": f"SD card {dep_id[:8]}",
+                    "deployment_start": datetime.now(timezone.utc).isoformat(),
+                }
+            ).execute()
+            created.append(dep_id)
+        return created
+
+    return await asyncio.to_thread(_work)
+
+
 @router.post("/parse")
 @limiter.limit("30/minute")
 async def parse_exif(
@@ -79,6 +138,7 @@ async def parse_exif(
     assigned_deployment_id: Optional[str] = Form(None),
     upload_to_drive: Optional[bool] = Form(False),
     run_ai: bool = Form(True),
+    auto_create_deployment: bool = Form(False),
     authorization: Optional[str] = Header(None),
 ):
     """Parse EXIF metadata from one or more uploaded JPEG files.
@@ -216,6 +276,25 @@ async def parse_exif(
             else:
                 deployment_ids.add(dep_id)
 
+    # ── 2b. Auto-create missing deployments (reuse the stamped UUID) ──
+    # The device stamps a Deployment_ID that has no row yet, so binding drops the
+    # frames. When the user opts in (+ picks a project), create those deployments
+    # reusing the same UUID so this and every future upload binds.
+    auto_created: list[str] = []
+    if auto_create_deployment and project_id and user and deployment_ids:
+        try:
+            auto_created = await _auto_create_deployments(list(deployment_ids), project_id, user.id)
+            if auto_created:
+                logger.info("auto_created_deployments", ids=auto_created, project_id=project_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("auto_create_deployments_failed", error=str(exc))
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "AUTO_CREATE_FAILED", "message": str(exc)}},
+            )
+
     # ── 3. Drive upload pipeline ─────────────────────────────────
     # user is already resolved from step 0 (image limit check)
 
@@ -257,6 +336,7 @@ async def parse_exif(
         data={
             "images": results,
             "drive_upload": drive_upload_info,
+            "auto_created_deployments": auto_created,
         },
         meta=ApiMeta(request_id=getattr(request.state, "request_id", None) if request else None),
     )
