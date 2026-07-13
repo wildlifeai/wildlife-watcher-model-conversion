@@ -126,6 +126,22 @@ export function FieldPage() {
     return () => { cancelled = true }
   }, [user, selectedProjectIds])
 
+  // Live updates: any new LoRaWAN message re-runs the telemetry/detections
+  // fetch below. Requires lorawan_messages in the supabase_realtime
+  // publication (migration 20260711043000 in ww-backend); until that is
+  // applied the page just behaves as before (fetch on load).
+  const [telemetryRefresh, setTelemetryRefresh] = useState(0)
+  useEffect(() => {
+    if (!user) return
+    const channel = supabase
+      .channel('field-lorawan-live')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'lorawan_messages' },
+        () => setTelemetryRefresh(n => n + 1))
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [user])
+
   // Latest LoRaWAN telemetry per deployment + recent detections.
   useEffect(() => {
     if (deps.length === 0) { setTelemetry({}); setDetections({}); return }
@@ -173,7 +189,7 @@ export function FieldPage() {
         setDetections(d)
       })
     return () => { cancelled = true }
-  }, [deps])
+  }, [deps, telemetryRefresh])
 
   const cameras = useMemo<Camera[]>(() => deps.map(d => {
     const t = telemetry[d.id] ?? { battery: null, sdUsed: null, lastSeen: null }
