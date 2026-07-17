@@ -1,5 +1,16 @@
 # LoRaWAN Webhook Setup Guide
 
+> **Status: legacy prototype.** This documents the FastAPI webhook
+> (`backend/app/routers/lorawan.py`) whose payload parser predates the final
+> firmware format — the WW500 actually uplinks on **FPort 2** with a
+> `0x50`-framed TLV payload (battery, firmware version, ping interval,
+> trigger counts; owned by `ww-hardware app_ww.c`). The **canonical
+> production ingest** is the `lorawan-ingest` Supabase edge function — see
+> `documentation/resources/LORAWAN_INGEST.md` in the **ww-backend** repo for
+> endpoint, token provisioning and wiring. The test payloads below
+> (`f_port: 1`, battery/SD bytes) match this legacy parser only and will not
+> decode on the production pipeline.
+
 How to connect your LoRaWAN network server (TTN or Chirpstack) to the Wildlife Watcher API for real-time device monitoring.
 
 ## Table of Contents
