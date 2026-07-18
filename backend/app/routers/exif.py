@@ -68,9 +68,7 @@ def _hex_filename_to_timestamp(filename: str) -> Optional[str]:
         return None
 
 
-async def _auto_create_deployments(
-    deployment_ids: List[str], project_id: str, user_id: str
-) -> List[str]:
+async def _auto_create_deployments(deployment_ids: List[str], project_id: str, user_id: str) -> List[str]:
     """Create any of ``deployment_ids`` that don't exist yet, REUSING the stamped
     UUID, inside ``project_id``. Returns the ids actually created.
 

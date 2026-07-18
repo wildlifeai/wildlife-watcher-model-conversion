@@ -19,7 +19,9 @@ jobs:
           python-version: '3.11'
 
       - name: Install ruff
-        run: pip install ruff
+        # Pinned: an unpinned latest ruff makes this job break on ruff releases,
+        # not on code changes. Bump deliberately together with a format pass.
+        run: pip install ruff==0.15.12
 
       - name: Ruff check
         run: ruff check backend/app/ backend/tests/
