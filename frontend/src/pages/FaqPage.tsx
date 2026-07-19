@@ -184,8 +184,11 @@ export function FaqPage() {
       </FaqItem>
 
       <FaqItem q="Does the camera support LoRaWAN?">
-        LoRaWAN connectivity is currently a work in progress. At the moment, images are stored on the SD card
-        and retrieved when you visit the camera in the field. We will announce LoRaWAN support when it is ready.
+        LoRaWAN support is rolling out in early access. Cameras send tiny status heartbeats (battery,
+        trigger counts) and instant detection alerts over LoRaWAN — never photos, which stay on the SD card
+        until you collect them or sync with the mobile app. See the{' '}
+        <Link to="/guides/lorawan-in-new-zealand" style={{ color: 'var(--primary)' }}>LoRaWAN in New Zealand guide</Link>{' '}
+        for the three ways to get connected.
       </FaqItem>
 
       <FaqItem q="How do I update the AI model on my camera?">
