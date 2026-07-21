@@ -31,11 +31,16 @@ logger = structlog.get_logger()
 GPU_PENDING_KEY = "ww:gpu:pending"
 
 
-async def enqueue_job(name: str, *args) -> str:
+async def enqueue_job(name: str, *args, **kwargs) -> str:
     """Dispatch a job by its definition function name.
 
     ``name`` must match a function in ``app.jobs.definitions`` (and, for the ARQ
     path, be registered in ``app.jobs.worker.WorkerSettings.functions``).
+
+    ``**kwargs`` are forwarded to ARQ's ``enqueue_job`` — e.g. ``_defer_by`` (delay
+    execution) and ``_job_id`` (dedup). These let callers debounce a burst of enqueues.
+    The ARQ control kwargs (_defer_by, _job_id) only apply on the Redis path; the in-process
+    fallback runs immediately, ignoring those but forwarding any real job kwargs to the function.
 
     Returns the routing mode actually used ("arq" or "local") for logging/telemetry.
     """
@@ -46,7 +51,7 @@ async def enqueue_job(name: str, *args) -> str:
 
             pool = await create_pool(RedisSettings.from_dsn(settings.REDIS_URL))
             try:
-                job = await pool.enqueue_job(name, *args)
+                job = await pool.enqueue_job(name, *args, **kwargs)
                 # Mirror a pending marker onto the KEDA-readable list (best-effort:
                 # a missing marker only affects autoscaling, never correctness).
                 if job is not None:
@@ -70,6 +75,9 @@ async def enqueue_job(name: str, *args) -> str:
     func = getattr(definitions, name, None)
     if func is None:
         raise ValueError(f"Unknown job: {name}")
-    enqueue_local_job(func(*args))
+    # Forward real job kwargs; drop ARQ control kwargs (_defer_by/_job_id, etc.),
+    # which only apply to the Redis/ARQ path.
+    func_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+    enqueue_local_job(func(*args, **func_kwargs))
     logger.info("job_enqueued_local", job=name)
     return "local"

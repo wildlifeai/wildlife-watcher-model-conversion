@@ -61,22 +61,38 @@ export function FaqPage() {
       </FaqItem>
 
       <FaqItem q="How does the AI component work?">
-        The Wildlife Watcher uses a two-tiered AI system to help you process images efficiently
-        without draining your camera's battery:
+        Wildlife Watcher uses AI in three complementary places, so you can process images
+        efficiently without draining your camera's battery:
         <ul style={{ paddingLeft: '1.25rem', margin: '0.75rem 0' }}>
           <li style={{ marginBottom: '0.5rem' }}>
-            <strong>On-device AI (Edge AI):</strong> the camera runs a lightweight, highly
-            specialised AI model. It focuses specifically on your target species of interest
-            with medium accuracy, filtering and flagging relevant motion detections right in
-            the field.
+            <strong>Camera AI (on the device):</strong> the camera runs a lightweight, highly
+            specialised model — your project's <em>Species Brain</em> — that flags your target
+            species right in the field, with no internet. Its result is saved inside each photo
+            and shows on the website as a <strong>📟 Camera AI</strong> label.
+          </li>
+          <li style={{ marginBottom: '0.5rem' }}>
+            <strong>Cloud AI (on the website):</strong> when you upload your media folder, a much
+            more powerful model identifies a wide variety of animals and marks empty photos as
+            blank. It acts as an assistant — human confirmation is still required during review to
+            ensure data accuracy.
           </li>
           <li>
-            <strong>Website AI (Cloud AI):</strong> when you upload your media folder to the web
-            toolkit, a much more powerful AI model takes over. It is highly capable of
-            identifying a wide variety of animals, though it acts as an assistant — human
-            confirmation is still required during the review process to ensure data accuracy.
+            <strong>Wildlife Brain (on the website):</strong> groups visually similar animals so
+            you can review large datasets quickly — clusters, "find similar", and a map. It
+            organises your data rather than naming species. See the{' '}
+            <Link to="/guides/wildlife-brain" style={{ color: 'var(--primary)' }}>Wildlife Brain guide</Link>.
           </li>
         </ul>
+      </FaqItem>
+
+      <FaqItem q="What do the 📟 Camera AI, ☁ Cloud AI and 👤 labels on a photo mean?">
+        Each result on a photo carries a small label showing where it came from:{' '}
+        <strong>📟 Camera AI</strong> — your camera decided it in the field;{' '}
+        <strong>☁ Cloud AI</strong> — the website's model decided it on upload;{' '}
+        <strong>👤 Reviewed</strong> — a person has checked it. A single photo can show more than
+        one. When they disagree, a person decides: human review always wins, then Cloud AI, then
+        Camera AI. See{' '}
+        <Link to="/guides/camera-ai-and-cloud-ai" style={{ color: 'var(--primary)' }}>How the AIs work together</Link>.
       </FaqItem>
 
       <FaqItem q="What is the camera's focal length, and can I change it?">
@@ -154,6 +170,12 @@ export function FaqPage() {
 
       <h3 style={{ marginTop: '2rem', marginBottom: '0.75rem', color: 'var(--primary)' }}>Camera & Hardware</h3>
 
+      <FaqItem q="What does the button on the camera do?">
+        A short press of the button at the bottom of the device turns on Bluetooth so the mobile
+        app can connect — the blue light flashes while the camera is discoverable. Holding the
+        button for 10 seconds or more puts the camera into firmware-update (recovery) mode.
+      </FaqItem>
+
       <FaqItem q="Can I use Wildlife Watcher photos with other software?">
         Yes. The Wildlife Watcher is built for an end-to-end approach — all information collected in the field
         (GPS coordinates, timestamps, AI detections) is embedded with the images to save time during data analysis
@@ -162,8 +184,11 @@ export function FaqPage() {
       </FaqItem>
 
       <FaqItem q="Does the camera support LoRaWAN?">
-        LoRaWAN connectivity is currently a work in progress. At the moment, images are stored on the SD card
-        and retrieved when you visit the camera in the field. We will announce LoRaWAN support when it is ready.
+        LoRaWAN support is rolling out in early access. Cameras send tiny status heartbeats (battery,
+        trigger counts) and instant detection alerts over LoRaWAN — never photos, which stay on the SD card
+        until you collect them or sync with the mobile app. See the{' '}
+        <Link to="/guides/lorawan-in-new-zealand" style={{ color: 'var(--primary)' }}>LoRaWAN in New Zealand guide</Link>{' '}
+        for the three ways to get connected.
       </FaqItem>
 
       <FaqItem q="How do I update the AI model on my camera?">

@@ -126,6 +126,32 @@ export function FieldPage() {
     return () => { cancelled = true }
   }, [user, selectedProjectIds])
 
+  // Live updates: any new LoRaWAN message re-runs the telemetry/detections
+  // fetch below. Requires lorawan_messages in the supabase_realtime
+  // publication (migration 20260711043000 in ww-backend); until that is
+  // applied the page just behaves as before (fetch on load).
+  const [telemetryRefresh, setTelemetryRefresh] = useState(0)
+  useEffect(() => {
+    if (!user || deps.length === 0) return
+    // Realtime already enforces RLS (only rows this user can read are
+    // delivered); the deployment filter narrows further to the deployments
+    // this page is showing, so messages for other projects — or bench
+    // messages with no deployment yet — don't trigger a refetch.
+    const depIds = new Set(deps.map(d => d.id))
+    const channel = supabase
+      .channel('field-lorawan-live')
+      .on('postgres_changes',
+        { event: 'INSERT', schema: 'public', table: 'lorawan_messages' },
+        (payload) => {
+          const row = payload.new as { deployment_id: string | null }
+          if (row.deployment_id && depIds.has(row.deployment_id)) {
+            setTelemetryRefresh(n => n + 1)
+          }
+        })
+      .subscribe()
+    return () => { supabase.removeChannel(channel) }
+  }, [user, deps])
+
   // Latest LoRaWAN telemetry per deployment + recent detections.
   useEffect(() => {
     if (deps.length === 0) { setTelemetry({}); setDetections({}); return }
@@ -173,7 +199,7 @@ export function FieldPage() {
         setDetections(d)
       })
     return () => { cancelled = true }
-  }, [deps])
+  }, [deps, telemetryRefresh])
 
   const cameras = useMemo<Camera[]>(() => deps.map(d => {
     const t = telemetry[d.id] ?? { battery: null, sdUsed: null, lastSeen: null }

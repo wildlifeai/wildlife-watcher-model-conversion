@@ -32,10 +32,12 @@ jobs:
         run: |
           if [[ "${{ (github.event.inputs.target == 'dev' || (github.event.inputs.target != 'staging' && github.ref_name == 'dev')) && 'dev' || 'staging' }}" == "dev" ]]; then
             echo "app_name=ww-backend-dev" >> $GITHUB_OUTPUT
+            echo "worker_name=ww-embedding-worker-dev" >> $GITHUB_OUTPUT
             echo "image_tag=dev-${{ github.event.inputs.tag || 'latest' }}" >> $GITHUB_OUTPUT
             echo "env=dev" >> $GITHUB_OUTPUT
           else
             echo "app_name=ww-backend" >> $GITHUB_OUTPUT
+            echo "worker_name=ww-embedding-worker" >> $GITHUB_OUTPUT
             echo "image_tag=${{ github.event.inputs.tag || 'latest' }}" >> $GITHUB_OUTPUT
             echo "env=staging" >> $GITHUB_OUTPUT
           fi
@@ -80,14 +82,65 @@ jobs:
           # for higher sensitivity switch to container-app secrets + secretref.
           # --min-replicas 1 keeps one instance warm so the public "Try the demo"
           # button doesn't hit a ~1-min cold start on the first click.
+          # Deploy by the IMMUTABLE ${{ github.sha }} tag, NOT the mutable dev-latest:
+          # ACA compares the image *reference string* and won't roll a new revision when
+          # only the code changed (same dev-latest tag + unchanged env) — so the API silently
+          # kept running stale code. The SHA tag forces a fresh revision every deploy, exactly
+          # as the worker's `revision copy --image :${SHA}` already does below.
           az containerapp update \
             --name ${{ steps.target.outputs.app_name }} \
             --resource-group WW-AE \
-            --image ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ steps.target.outputs.image_tag }} \
+            --image ${{ secrets.ACR_LOGIN_SERVER }}/ww-backend:${{ github.sha }} \
             --min-replicas 1 \
             --set-env-vars \
               "DEMO_EMAIL=${{ secrets.DEMO_EMAIL }}" \
               "DEMO_PASSWORD=${{ secrets.DEMO_PASSWORD }}"
+
+      - name: Build and deploy the ML worker
+        run: |
+          # The AI pipeline (SpeciesNet/BioCLIP/DINOv3) runs on the SEPARATE `worker` image,
+          # not the lean API above — so it must be rebuilt + rolled here too, or backend code
+          # changes never reach the running worker (they didn't, until this step existed).
+          REG=$(echo "${{ secrets.ACR_LOGIN_SERVER }}" | cut -d. -f1)   # wwregistry
+          WORKER=${{ steps.target.outputs.worker_name }}
+          SHA=${{ github.sha }}
+
+          # Build the heavy ARQ `worker` stage in-cloud (ACR) — faster than the runner and no
+          # local Docker disk limits. Tag with the env tag (mutable) + the commit SHA (immutable).
+          az acr build -r "$REG" --target worker \
+            -t "ww-backend-worker:${{ steps.target.outputs.image_tag }}" \
+            -t "ww-backend-worker:${SHA}" \
+            backend/
+
+          if az containerapp show -n "$WORKER" -g WW-AE -o none 2>/dev/null; then
+            # Keep the gated-model HF token synced from the org secret BEFORE the revision
+            # copy (the new revision reads the current secret). The worker's HF_TOKEN env is a
+            # secretRef to `hf-token`; without it, DINOv3 (gated on HF) 401s and no embeddings
+            # are produced. Skip cleanly if the secret isn't configured for this environment.
+            if [ -n "${{ secrets.HF_TOKEN }}" ]; then
+              az containerapp secret set -n "$WORKER" -g WW-AE --secrets hf-token="${{ secrets.HF_TOKEN }}"
+            else
+              echo "::warning::HF_TOKEN secret not set — the worker can't download the gated DINOv3 model (Wildlife Brain embeddings will fail)."
+            fi
+
+            # `revision copy` clones the CURRENT revision changing only the image — so it PRESERVES
+            # the GPU workload profile + the KEDA scale rule (a plain --image / --set-env-vars
+            # update has silently blanked the scaler query before) + the HF_TOKEN env (secretRef).
+            # The SHA tag forces a fresh pull.
+            az containerapp revision copy -n "$WORKER" -g WW-AE \
+              --image "${{ secrets.ACR_LOGIN_SERVER }}/ww-backend-worker:${SHA}"
+
+            # Guard: with min-replicas 0 an empty KEDA query means the worker never wakes → no AI.
+            Q=$(az containerapp show -n "$WORKER" -g WW-AE \
+                  --query "properties.template.scale.rules[0].custom.metadata.query" -o tsv 2>/dev/null || echo "")
+            if [ -z "$Q" ]; then
+              echo "::error::KEDA scale query is EMPTY on $WORKER — the worker will not wake for jobs. Re-set it in the Portal (Scale → pg-pending) or via a --yaml manifest."
+              exit 1
+            fi
+            echo "Worker $WORKER rolled to ${SHA}; scaler query intact."
+          else
+            echo "::notice::Worker $WORKER does not exist yet — skipping (see documentation/resources/prod-worker-provisioning-runbook.md)."
+          fi
 
       - name: Verify deployment
         run: |

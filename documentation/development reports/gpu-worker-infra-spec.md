@@ -1,6 +1,9 @@
 # Spec — ARQ GPU Worker infrastructure (Wildlife Watcher AI pipeline)
 
-> **Status:** 🔧 Active spec — infra hand-off; ww-website (CI/CD + Azure). Pure infra/config — **no application code changes**: the dispatch seam, `worker` image target, and ARQ/KEDA wiring already exist.
+> **Status:** ✅ **SHIPPED (dev, 2026-07-03).** The dev worker `ww-embedding-worker-dev` now runs on a
+> **serverless T4 GPU** (`gpu-t4` = `Consumption-GPU-NC8as-T4` profile on `ww-env`, `cuda`, scale-to-zero).
+> Live operational details + gotchas: [cloud-infrastructure.md](../resources/cloud-infrastructure.md).
+> This doc is retained as the original design spec/history.
 
 **Goal:** stand up the **ARQ GPU worker** that runs the heavy ML pipeline (SpeciesNet detect, BioCLIP
 classify, DINOv3 embeddings) off the lean API. This is the **infrastructure prerequisite** for (a)
@@ -98,6 +101,10 @@ Supabase `api_jobs` table, so the API's `/api/jobs/{id}` polling works regardles
 the job.
 
 ## 4. Vector store — pgvector vs Qdrant (decision)
+
+> **Decided: `pgvector` in Supabase. Qdrant will NOT be adopted** (not even as a scale-up path) and is
+> being removed from the code. The comparison below is retained as the rationale; treat any "Qdrant
+> option / scale-up" wording as historical. Canonical: [deployment-guide → Vector Store](../resources/deployment-guide.md#vector-store--pgvector-supabase).
 
 DINOv3 embeddings need a vector store. Today `QDRANT_URL` defaults to `http://qdrant:6333` (a
 Docker-network address that doesn't resolve in Azure) and the store is **"NOT yet in cloud"**

@@ -19,6 +19,7 @@ from app.jobs.store import (
     create_job,
     emit_event,
     get_job,
+    job_heartbeat,
     set_job_deployments,
     start_phase,
     update_job,
@@ -28,6 +29,11 @@ from app.schemas.job import EventType, JobStatus, ProgressEvent, ProgressPhase
 from app.services.notifications_service import emit_detection_notifications
 
 logger = structlog.get_logger()
+
+# Delay before an offloaded AI job runs, so the many per-chunk uploads of one upload collapse
+# into a single run (the job stays 'queued' during this window, letting later chunks coalesce
+# onto it, and every image is registered before it starts). See upload_drive_images_job.
+ANNOTATE_DEBOUNCE_SECONDS = 60
 
 # Human-readable labels for AI pipeline steps, surfaced in the upload progress log.
 _STEP_LABEL = {
@@ -480,16 +486,20 @@ def build_pipeline_steps() -> list:
     return steps
 
 
-async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | None = None) -> None:
+async def auto_annotate_deployments(
+    deployment_ids: list[str], user_id: str | None = None, job_id: str | None = None, force: bool = False, media_ids: list[str] | None = None
+) -> None:
     """Run the AI annotation pipeline on freshly-uploaded deployments (best-effort).
 
     Enqueued (fire-and-forget) by the upload job after media is registered, so species
     observations populate the Annotations grid without a manual trigger. Step set is
     built from the enabled feature flags; failures are logged, never raised.
 
-    Caveat: ``run_pipeline`` processes ALL media in a deployment, so re-uploading to an
-    already-annotated deployment re-runs it (duplicate AI observations). Fine for fresh
-    deployments; scope-to-new-media is a future enhancement.
+    ``run_pipeline`` scopes itself to unannotated media (idempotency guard), so re-runs
+    on an already-annotated deployment are cheap no-ops. When ``job_id`` is given, progress is
+    reported **per pipeline step** (media-prep → detect → crop → identify) *within* each
+    deployment, so the dock/banner climb smoothly instead of sitting at 0% until a whole
+    deployment finishes (and the stale-job reaper sees a heartbeat).
     """
     from app.domain.pipeline import run_pipeline
 
@@ -500,18 +510,58 @@ async def auto_annotate_deployments(deployment_ids: list[str], user_id: str | No
     # Drop unresolved folder prefixes (e.g. "00000000") — they're not real deployments.
     deployment_ids = [d for d in deployment_ids if _is_uuid(d)]
 
-    for dep_id in deployment_ids:
-        try:
-            logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
-            await run_pipeline(deployment_id=dep_id, steps=steps, user_id=user_id)
-            await emit_detection_notifications(dep_id)
-            # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
-            # without a manual per-deployment trigger. Needs the animal crops the
-            # pipeline just wrote (ANIMAL_CROP step). Best-effort + gated.
-            await auto_embed_deployment(dep_id, user_id=user_id)
-            logger.info("auto_annotate_complete", deployment_id=dep_id)
-        except Exception as exc:
-            logger.warning("auto_annotate_failed", deployment_id=dep_id, error=str(exc))
+    total = len(deployment_ids)
+    # Friendlier labels for the per-step progress messages the dock surfaces.
+    step_labels = {
+        "media_prep": "Preparing thumbnails",
+        "speciesnet": "Detecting animals",
+        "animal_crop": "Cropping detections",
+        "bioclip": "Identifying species",
+    }
+
+    # Heartbeat api_jobs.updated_at across the whole run: a single long step (e.g.
+    # SpeciesNet over thousands of images) writes no progress between on_step calls,
+    # so without this the KEDA window could elapse mid-inference and scale the GPU
+    # worker to 0, killing the job (and the 60-min reaper could fail it). No-op when
+    # job_id is None. See app.jobs.store.job_heartbeat.
+    async with job_heartbeat(job_id):
+        for i, dep_id in enumerate(deployment_ids):
+            # Fine-grained progress: overall = (deployments_done + step_fraction) / total. on_step
+            # fires at the START of each step, so this advances the bar several times per deployment.
+            async def _on_step(step_name: str, step_idx: int, step_total: int, _i: int = i) -> None:
+                if not job_id or not step_total or not total:
+                    return
+                frac = (_i + step_idx / step_total) / total
+                label = step_labels.get(step_name, step_name)
+                await update_job(job_id, progress=min(0.99, frac), message=f"🔬 {label} — deployment {_i + 1}/{total}")
+
+            try:
+                logger.info("auto_annotate_start", deployment_id=dep_id, steps=[s.value for s in steps])
+                await run_pipeline(
+                    deployment_id=dep_id,
+                    steps=steps,
+                    user_id=user_id,
+                    on_step=_on_step if job_id else None,
+                    force=force,
+                    media_ids=media_ids,
+                )
+                # Reflect the camera's own EXIF scores as edge observations so the
+                # Camera AI result sits beside the Cloud AI result (and feeds the
+                # detection notifications below). Self-gated on FF_EDGE_REFLECT_ENABLED;
+                # best-effort (never raises).
+                from app.domain.edge_reflection import reflect_edge_deployment
+
+                await reflect_edge_deployment(dep_id)
+                await emit_detection_notifications(dep_id)
+                # Chain DINOv3 embedding + clustering so "Group by Cluster" has data
+                # without a manual per-deployment trigger. Needs the animal crops the
+                # pipeline just wrote (ANIMAL_CROP step). Best-effort + gated.
+                await auto_embed_deployment(dep_id, user_id=user_id)
+                logger.info("auto_annotate_complete", deployment_id=dep_id)
+            except Exception as exc:
+                logger.warning("auto_annotate_failed", deployment_id=dep_id, error=str(exc))
+            if job_id:
+                await update_job(job_id, progress=(i + 1) / total if total else 1.0)
 
 
 async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) -> None:
@@ -519,7 +569,7 @@ async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) 
 
     Gated on ``FF_WILDLIFE_BRAIN_ENABLED``; no-op when the Brain is disabled or
     the deployment has no animal crops yet. Failures are logged, never raised, so
-    a missing GPU / Qdrant never breaks the upload flow.
+    a missing GPU / vector store never breaks the upload flow.
     """
     from app.config import settings
 
@@ -539,7 +589,9 @@ async def auto_embed_deployment(deployment_id: str, user_id: str | None = None) 
         logger.warning("auto_embed_failed", deployment_id=deployment_id, error=str(exc))
 
 
-async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_id: str | None = None) -> None:
+async def annotate_deployments_job(
+    job_id: str, deployment_ids: list[str], user_id: str | None = None, force: bool = False, media_ids: list[str] | None = None
+) -> None:
     """Registered (ARQ-routable) AI job: annotate + embed a set of deployments.
 
     This is the offload target for the upload flow's AI phase. When ``REDIS_URL`` is
@@ -553,7 +605,7 @@ async def annotate_deployments_job(job_id: str, deployment_ids: list[str], user_
     """
     await update_job(job_id, status=JobStatus.PROCESSING, current_phase=ProgressPhase.AI_PIPELINE)
     try:
-        await auto_annotate_deployments(deployment_ids, user_id=user_id)
+        await auto_annotate_deployments(deployment_ids, user_id=user_id, job_id=job_id, force=force, media_ids=media_ids)
         await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message="AI analysis complete")
     except Exception as exc:
         logger.warning("annotate_deployments_job_failed", job_id=job_id, error=str(exc))
@@ -717,6 +769,9 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                         "timestamp": entry.get("timestamp"),
                         "project": entry.get("project"),
                         "deployment": entry.get("deployment"),
+                        # Parsed EXIF from the upload request — must be forwarded
+                        # through this hop or media.exif_metadata ends up None.
+                        "exif": entry.get("exif"),
                     }
                 )
 
@@ -920,6 +975,9 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                 "timestamp": _normalize_exif_timestamp(uf.get("timestamp")),
                 "file_public": False,
                 "file_hash": uf.get("file_hash"),
+                # Full parsed EXIF from upload time (camera variant, capture
+                # settings, NN scores) — None is dropped by the chunk filter below.
+                "exif_metadata": uf.get("exif"),
             }
             for uf in candidates
             if ("hash", uf.get("file_hash")) not in existing_keys and ("path", f"gdrive://{uf['file_id']}") not in existing_keys
@@ -1015,11 +1073,16 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         # Step set from the enabled flags (same source as auto_annotate_deployments),
         # so this single inline run includes SpeciesNet/BioCLIP/etc. when enabled.
         _steps = build_pipeline_steps()
+        # User opt-out from the upload UI (run_ai=false) → skip AI/Brain; the upload +
+        # Drive archival still complete. Default true preserves the auto-annotate behaviour.
+        _run_ai = payload.get("run_ai", True)
+        if _dep_ids and _steps and not _run_ai:
+            logger.info("ai_pipeline_skipped_by_request", job_id=job_id, deployments=len(_dep_ids))
         pipeline_errors = 0
         # Run the AI inline only on a single-container / dev image (no Redis worker).
         # When REDIS_URL is set, the heavy AI is offloaded to the GPU worker (the
         # `elif` branch below) so this CPU process never imports torch/SpeciesNet.
-        if _dep_ids and _steps and not settings.REDIS_URL:
+        if _dep_ids and _steps and _run_ai and not settings.REDIS_URL:
             await start_phase(job_id, ProgressPhase.AI_PIPELINE)
             # Record the resolved deployments so the Annotations grid can show a
             # "being processed" banner for them while this inline AI phase runs.
@@ -1065,7 +1128,7 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                     # Wildlife Brain: embed + cluster the new animal crops so the
                     # Group → Cluster (embeddings) view populates. No-op unless
                     # FF_WILDLIFE_BRAIN_ENABLED; best-effort (never raises) so a
-                    # missing GPU / Qdrant can't break the upload.
+                    # missing GPU / vector store can't break the upload.
                     if settings.FF_WILDLIFE_BRAIN_ENABLED:
                         await emit_event(
                             job_id,
@@ -1099,29 +1162,73 @@ async def upload_drive_images_job(job_id: str, payload: dict):
         # process. The upload itself is complete; AI is tracked as its own
         # Processing-history job. enqueue_job falls back to in-process if Redis is
         # unreachable, so this never silently drops the analysis. ──
-        elif _dep_ids and _steps and settings.REDIS_URL:
+        elif _dep_ids and _steps and _run_ai and settings.REDIS_URL:
+            from datetime import timedelta  # noqa: PLC0415
+
             from app.jobs.dispatch import enqueue_job  # noqa: PLC0415
+            from app.jobs.store import find_queued_ai_jobs  # noqa: PLC0415
 
             await start_phase(job_id, ProgressPhase.AI_PIPELINE)
-            ai_job_id = await create_job(
-                user_id=_user_id,
-                kind="ai_pipeline",
-                label=f"AI analysis — {len(_dep_ids)} deployment(s)",
-                deployment_ids=_dep_ids,
-            )
-            await enqueue_job("annotate_deployments_job", ai_job_id, _dep_ids, _user_id)
-            await emit_event(
-                job_id,
-                ProgressEvent(
-                    type=EventType.FILE_SUCCESS,
-                    phase=ProgressPhase.AI_PIPELINE,
-                    child_job_id=ai_job_id,
-                    message=(
-                        f"🛰️ Queued AI analysis for {len(_dep_ids)} deployment(s) on the GPU worker "
-                        f"— track it in Processing history (job {ai_job_id[:8]})"
+
+            # Debounced coalescing. A chunked upload sends ~18 requests (10 images each), each
+            # firing its own AI job → a queue full of redundant runs. The fix is two parts:
+            #   1) Enqueue the AI job **deferred** by ANNOTATE_DEBOUNCE_SECONDS. During that window
+            #      the api_jobs row stays 'queued' AND the worker hasn't fetched media yet — so all
+            #      later chunks (2) find it and reuse it, and when it finally runs every image is
+            #      already registered. (Previously the job completed in ~1s, before the next chunk
+            #      could coalesce, so nothing deduped.)
+            #   2) Reuse any still-queued AI job covering the deployment instead of enqueuing again.
+            # Net: one AI run per deployment per upload instead of ~18. run_pipeline's unannotated
+            # scoping keeps even a stray extra run a cheap no-op.
+            active_ai = await find_queued_ai_jobs()
+            covered: dict[str, str] = {}
+            for j in active_ai:
+                for d in j["deployment_ids"]:
+                    covered.setdefault(d, j["job_id"])
+            new_dep_ids = [d for d in _dep_ids if d not in covered]
+
+            if new_dep_ids:
+                ai_job_id = await create_job(
+                    user_id=_user_id,
+                    kind="ai_pipeline",
+                    label=f"AI analysis — {len(new_dep_ids)} deployment(s)",
+                    deployment_ids=new_dep_ids,
+                )
+                await enqueue_job(
+                    "annotate_deployments_job",
+                    ai_job_id,
+                    new_dep_ids,
+                    _user_id,
+                    _defer_by=timedelta(seconds=ANNOTATE_DEBOUNCE_SECONDS),
+                )
+                await emit_event(
+                    job_id,
+                    ProgressEvent(
+                        type=EventType.FILE_SUCCESS,
+                        phase=ProgressPhase.AI_PIPELINE,
+                        child_job_id=ai_job_id,
+                        message=(
+                            f"🛰️ Queued AI analysis for {len(new_dep_ids)} deployment(s) on the AI worker "
+                            f"— track it in Processing history (job {ai_job_id[:8]})"
+                        ),
                     ),
-                ),
-            )
+                )
+            else:
+                # Everything is already covered — chain the dock onto the existing job so it
+                # still tracks the analysis to completion instead of enqueuing a duplicate.
+                existing_id = covered[_dep_ids[0]]
+                await emit_event(
+                    job_id,
+                    ProgressEvent(
+                        type=EventType.FILE_SUCCESS,
+                        phase=ProgressPhase.AI_PIPELINE,
+                        child_job_id=existing_id,
+                        message=(
+                            f"🛰️ AI analysis already queued for {len(_dep_ids)} deployment(s) "
+                            f"(job {existing_id[:8]}) — new images will be included in that run"
+                        ),
+                    ),
+                )
             await complete_phase(job_id, ProgressPhase.AI_PIPELINE)
 
         # ── Final status (Drive sync + AI pipeline done) ──────────────────
@@ -1283,20 +1390,24 @@ async def recompute_al_job(job_id: str, deployment_id: str):
         await update_job(job_id, status=JobStatus.FAILED, error=str(e))
 
 
-async def qdrant_backup_job(job_id: str):
-    """Snapshot Qdrant and store it in the private backup bucket (Phase 5.5 DR)."""
-    logger.info("job_start", job_type="qdrant_backup", job_id=job_id)
-    await update_job(job_id, status=JobStatus.PROCESSING, progress=0.1, message="Creating Qdrant snapshot…")
+async def embeddings_backup_job(job_id: str):
+    """Vector-store DR. No-op now that vectors live in Postgres (pgvector) under
+    Supabase PITR — there's no separate snapshot to take. Kept so the endpoint +
+    job name stay valid; completes immediately.
+    """
+    logger.info("job_start", job_type="embeddings_backup", job_id=job_id)
     try:
-        from app.domain.embedding_lifecycle import backup_qdrant_snapshot
+        from app.domain.embedding_lifecycle import backup_embeddings_snapshot
 
-        path = await backup_qdrant_snapshot()
-        if path:
-            await update_job(job_id, status=JobStatus.COMPLETED, progress=1.0, message=f"Backed up to {path}")
-        else:
-            await update_job(job_id, status=JobStatus.FAILED, error="Snapshot unavailable (Qdrant/Storage not configured)")
+        await backup_embeddings_snapshot()  # no-op (returns None)
+        await update_job(
+            job_id,
+            status=JobStatus.COMPLETED,
+            progress=1.0,
+            message="No snapshot needed — embeddings live in Postgres (covered by Supabase PITR).",
+        )
     except Exception as e:
-        logger.error("job_failed", job_type="qdrant_backup", job_id=job_id, error=str(e))
+        logger.error("job_failed", job_type="embeddings_backup", job_id=job_id, error=str(e))
         await update_job(job_id, status=JobStatus.FAILED, error=str(e))
 
 
@@ -1314,5 +1425,5 @@ JOBS = [
     reprocess_project_job,
     reprocess_all_job,
     recompute_al_job,
-    qdrant_backup_job,
+    embeddings_backup_job,
 ]

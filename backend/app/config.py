@@ -71,6 +71,13 @@ class Settings(BaseSettings):
     )
     FF_BIOCLIP_ENABLED: bool = Field(False, description="Enable the BioCLIP secondary/zero-shot classifier pipeline step")
     FF_PER_CROP_CLASSIFY_ENABLED: bool = Field(False, description="One AI observation per detection (not collapsed per image)")
+    FF_EDGE_REFLECT_ENABLED: bool = Field(
+        False,
+        description=(
+            "Reflect on-device (edge) model EXIF scores as ai_origin='edge' observations beside the "
+            "cloud pipeline's — requires the ww-backend observations.ai_origin column (dual_ai_v0)"
+        ),
+    )
     FF_WILDLIFE_BRAIN_ENABLED: bool = Field(False, description="Enable DINOv3 embedding / clustering / similarity endpoints")
     FF_MEDIA_REGISTRY_ENABLED: bool = Field(False, description="Enable Media Registry thumbnails/crops + resolve endpoints")
     FF_ACTIVE_LEARNING_ENABLED: bool = Field(False, description="Enable active-learning review queue scoring")
@@ -92,10 +99,8 @@ class Settings(BaseSettings):
         description="Max seconds between consecutive frames to treat them as one motion burst for ROI cropping",
     )
 
-    # ── Qdrant (vector store) ─────────────────────────────────────────
-    QDRANT_URL: str = Field("http://qdrant:6333", description="Qdrant service URL (Docker network)")
-    QDRANT_API_KEY: str = Field("", description="Qdrant API key (empty for local/self-hosted)")
-    QDRANT_COLLECTION: str = Field("media_embeddings", description="Qdrant collection name for DINOv3 vectors")
+    # Vector store is pgvector in Supabase (media_embeddings.embedding) — no separate
+    # service or config; it reuses the SUPABASE_* connection above.
 
     # ── DINOv3 embedding compute ──────────────────────────────────────
     HF_TOKEN: str = Field("", description="HuggingFace token for gated DINOv3 model access")
@@ -106,7 +111,7 @@ class Settings(BaseSettings):
     BIOCLIP_DEVICE: str = Field("cpu", description="Torch device for BioCLIP ('cpu' or 'cuda')")
     BIOCLIP_RANK: str = Field("species", description="Default taxonomic rank for Tree-of-Life predictions")
     EMBEDDING_BATCH_SIZE: int = Field(32, description="Batch size for GPU/CPU embedding extraction")
-    EMBEDDING_CHECKPOINT_EVERY: int = Field(1000, description="Write Qdrant + Supabase every N images for restartable jobs")
+    EMBEDDING_CHECKPOINT_EVERY: int = Field(1000, description="Write embeddings + Supabase every N images for restartable jobs")
 
     # ── General ──────────────────────────────────────────────────────
     GENERAL_ORG_ID: str = Field(
@@ -143,10 +148,6 @@ class Settings(BaseSettings):
     SUPABASE_MEDIA_BUCKET: str = Field(
         "media-renditions",
         description="Public Supabase Storage bucket for thumbnails/previews/animal crops",
-    )
-    SUPABASE_QDRANT_BACKUP_BUCKET: str = Field(
-        "qdrant-backups",
-        description="Private Supabase Storage bucket for Qdrant DR snapshots (Phase 5.5)",
     )
 
     # ── iNaturalist (Phase 6) ────────────────────────────────────────

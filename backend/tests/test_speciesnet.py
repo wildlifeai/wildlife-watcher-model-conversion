@@ -65,6 +65,17 @@ def test_parse_prediction_string_empty():
     assert parse_prediction_string(None) == (None, None)
 
 
+def test_parse_prediction_string_drops_no_cv_result_sentinel():
+    """SpeciesNet's 'no cv result' (unclassifiable detection) must not surface as a species
+    name (was showing 'No cv result no cv result')."""
+    uuid = "12345678-1234-1234-1234-123456789abc"
+    assert parse_prediction_string(f"{uuid};no cv result") == (None, None)
+    assert parse_prediction_string(f"{uuid};no cv result;no cv result") == (None, None)
+    # A real classification alongside is unaffected.
+    sci, common = parse_prediction_string(f"{uuid};aves;;;apteryx;mantelli;north island brown kiwi")
+    assert sci == "Apteryx mantelli"
+
+
 def test_parse_speciesnet_output_shapes():
     preds = parse_speciesnet_output(_RAW)
     assert len(preds) == 2
@@ -90,6 +101,7 @@ def test_build_observations_filters_by_threshold_and_sets_bbox():
     assert r["observation_level"] == "media"
     assert r["observation_type"] == "animal"
     assert r["source_type"] == "ai"
+    assert r["ai_origin"] == "cloud"
     assert r["review_status"] == "ai_reviewed"
     assert r["confidence"] == 0.93
     assert r["scientific_name"] == "Apteryx mantelli"
@@ -103,6 +115,7 @@ def test_build_observations_blank_when_all_below_threshold():
     rows = build_speciesnet_observations({"id": "media-1"}, "dep-1", preds[0], "speciesnet-vX", "2026-06-06T00:00:00Z", confidence_threshold=0.99)
     assert len(rows) == 1
     assert rows[0]["observation_type"] == "blank"
+    assert rows[0]["ai_origin"] == "cloud"  # cloud provenance on blanks too
     assert "bbox_x" not in rows[0]  # blank rows carry no bbox (chk_bbox_complete)
 
 

@@ -132,8 +132,7 @@ Props: `status: AnnotationStatus`, `size: 'sm' | 'md'` (default `sm`), `label?` 
 ## `<VegaChart>`
 
 Thin wrapper around `vega-embed` with the shared `VEGA_CONFIG` theme. Pass a Vega-Lite spec; the
-chart sizes to its container. Used by `ObservationReports`, `ChartBuilder`, `AnalysisPage`,
-`ReportingPage`.
+chart sizes to its container. Used by `ObservationReports`, `ChartBuilder`, `ReportingPage`.
 
 ---
 

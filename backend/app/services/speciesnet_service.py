@@ -96,7 +96,11 @@ def parse_prediction_string(prediction: Optional[str]) -> tuple[Optional[str], O
     # Drop a leading UUID field if present (SpeciesNet prefixes one).
     if parts and ("-" in parts[0] and " " not in parts[0]):
         parts = parts[1:]
-    parts = [p for p in parts if p]
+    # Drop empties AND SpeciesNet's "no cv result" sentinel (an unclassifiable detection):
+    # it fills the genus/species/common fields and otherwise surfaces as the species label
+    # "No cv result no cv result". Removing it → the row stays an animal with no species,
+    # which the UI shows as "Animal".
+    parts = [p for p in parts if p and p.lower() != "no cv result"]
     if not parts:
         return None, None
     common_name = parts[-1] or None

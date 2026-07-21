@@ -32,6 +32,8 @@ export interface ObservationStatusFields {
   review_status?: string | null
   source_type?: string | null
   classification_method?: string | null
+  /** Which AI layer produced an ai-sourced row: 'edge' (Camera AI) | 'cloud'. */
+  ai_origin?: string | null
 }
 
 /**
@@ -52,6 +54,32 @@ export function isAiLabel(o: ObservationStatusFields): boolean {
     o.classification_method === 'machine' ||
     o.review_status === 'ai_reviewed'
   )
+}
+
+/** True when the label came from the camera's on-device (edge) model. */
+export function isEdgeAi(o: ObservationStatusFields): boolean {
+  return isAiLabel(o) && o.ai_origin === 'edge'
+}
+
+export interface AiOriginMeta {
+  icon: string
+  label: string
+  title: string
+}
+
+/**
+ * Badge descriptor for an AI observation's producing layer, or null for
+ * non-AI rows. Edge → 📟 Camera AI; anything else AI (incl. legacy rows with
+ * no ai_origin) → ☁ Cloud AI, since the website pipeline is the only other
+ * producer. Lets a surface show "📟 Camera AI: rat 87%" beside
+ * "☁ Cloud AI: Rattus rattus 64%".
+ */
+export function aiOriginMeta(o: ObservationStatusFields): AiOriginMeta | null {
+  if (!isAiLabel(o)) return null
+  if (o.ai_origin === 'edge') {
+    return { icon: '📟', label: 'Camera AI', title: "On-device (edge) camera model prediction, ingested from the photo's EXIF" }
+  }
+  return { icon: '☁', label: 'Cloud AI', title: 'Cloud pipeline prediction (SpeciesNet / Wildlife Brain)' }
 }
 
 // ── Provenance builders ──────────────────────────────────────────────────────

@@ -54,10 +54,6 @@ class ExecutionProvider(str, Enum):
 
 # Default (server / ViT-H) geometry. Per-variant values live on the specs below.
 EMBEDDING_DIM = 1280
-QDRANT_COLLECTION = "media_embeddings"
-QDRANT_DISTANCE = "Cosine"
-QDRANT_HNSW_M = 16
-QDRANT_HNSW_EF_CONSTRUCT = 200
 
 
 @dataclass(frozen=True)

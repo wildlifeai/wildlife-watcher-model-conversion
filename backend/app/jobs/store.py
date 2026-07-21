@@ -15,6 +15,7 @@ in-memory dicts so endpoints don't crash.
 """
 
 import asyncio
+import contextlib
 import json
 import uuid
 from datetime import datetime, timezone
@@ -40,23 +41,116 @@ _memory_events: Dict[str, List[str]] = {}
 # Per-job locks to serialise summary updates
 _summary_locks: Dict[str, asyncio.Lock] = {}
 
+# Strong references to in-flight detached Supabase syncs, keyed by job_id. asyncio
+# holds only a WEAK reference to a bare create_task(), so a fire-and-forget sync
+# could be garbage-collected before it ran — which is how the ARQ worker left
+# completed jobs stuck at 'processing' (and pinned the GPU awake). Keep a reference
+# until the task finishes. Keying by job_id lets a terminal write drain only ITS
+# own syncs (flush_pending_syncs(job_id)) so a slow sync on another job can't block
+# it; the worker teardown drains all (flush_pending_syncs()).
+_pending_sync_tasks: dict[str, set[asyncio.Task]] = {}
+
+# Statuses after which no further work happens — their sync must be durable.
+_TERMINAL_STATUSES = frozenset({JobStatus.COMPLETED.value, JobStatus.COMPLETED_WITH_ERRORS.value, JobStatus.FAILED.value})
+
+# How often job_heartbeat() refreshes api_jobs.updated_at during a long pipeline step.
+# Must stay well under the shortest consumer window: the KEDA scaler's query
+# (updated_at > now() - interval '15 minutes' on dev) and the 60-min stale-job reaper.
+_HEARTBEAT_INTERVAL_SECONDS = 60
+
 MAX_EVENTS_RETURNED = 50
 
 
-async def _sync_to_supabase(job_id: str) -> None:
-    """Synchronize local memory state to Supabase in the background."""
-    raw_data = _memory_store.get(f"job:{job_id}")
-    if not raw_data:
+def _hydrate_from_supabase(job_id: str) -> Optional[str]:
+    """Load a job from Supabase into this process's memory store; returns the raw JSON.
+
+    The memory store is **per-process**: jobs are created on the API process, but ARQ jobs
+    (e.g. the offloaded AI pipeline) run on the worker process. Without hydration, the
+    worker's ``update_job``/``emit_event`` calls found nothing in memory and silently
+    no-opped — so AI jobs stayed 'queued' in ``api_jobs`` forever and the frontend's
+    "Processing" banner never cleared. Mirrors the lazy load in :func:`get_job`.
+    """
+    try:
+        client = create_service_client()
+        resp = client.table("api_jobs").select("job_data").eq("id", job_id).execute()
+        if resp.data:
+            db_data = resp.data[0]["job_data"] or {}
+            events = db_data.pop("events", [])
+            _memory_events[f"job:{job_id}:events"] = [json.dumps(e) for e in events]
+            raw = json.dumps(db_data)
+            _memory_store[f"job:{job_id}"] = raw
+            return raw
+    except Exception as e:
+        logger.debug("job_hydrate_failed", job_id=job_id, error=str(e))
+    return None
+
+
+async def _get_raw(job_id: str) -> Optional[str]:
+    """Raw job JSON from memory, hydrating from Supabase on a cross-process miss."""
+    raw = _memory_store.get(f"job:{job_id}")
+    if raw:
+        return raw
+    return await asyncio.to_thread(_hydrate_from_supabase, job_id)
+
+
+def _refresh_if_newer(job_id: str, local_updated_at: Optional[str]) -> Optional[str]:
+    """Re-hydrate a job from Supabase only if the DB copy is newer than memory.
+
+    The complement of :func:`_hydrate_from_supabase` for polling: a job created on the API
+    but *executed on the worker* leaves the API's memory copy frozen at 'queued' — polls
+    (``get_job``) must pick up the worker's Supabase writes or the upload dock never sees the
+    AI job finish. Jobs running in *this* process always have memory >= DB (memory is written
+    first, then synced), so the strict ISO-timestamp comparison never clobbers in-flight state.
+    """
+    try:
+        client = create_service_client()
+        resp = client.table("api_jobs").select("job_data").eq("id", job_id).execute()
+        if not resp.data:
+            return None
+        db_data = resp.data[0]["job_data"] or {}
+        db_updated = db_data.get("updated_at") or ""
+        if local_updated_at and db_updated <= local_updated_at:
+            return None  # memory is current (or newer — this process owns the job)
+        events = db_data.pop("events", [])
+        _memory_events[f"job:{job_id}:events"] = [json.dumps(e) for e in events]
+        raw = json.dumps(db_data)
+        _memory_store[f"job:{job_id}"] = raw
+        return raw
+    except Exception as e:
+        logger.debug("job_refresh_failed", job_id=job_id, error=str(e))
+        return None
+
+
+async def _sync_to_supabase(job_id: str, *, flush: bool = False) -> None:
+    """Synchronize local memory state to Supabase.
+
+    ``flush=True`` **awaits** the write so it's durable before returning — used for
+    terminal status writes: a detached task can be dropped when the coroutine
+    returns and the event loop settles (exactly what stranded ARQ-worker jobs at
+    'processing'). Otherwise the write is detached for speed, but tracked in
+    ``_pending_sync_tasks`` so it isn't garbage-collected mid-flight.
+    """
+    key = f"job:{job_id}"
+    if key not in _memory_store:
         return
 
-    mem_events = _memory_events.get(f"job:{job_id}:events", [])
-    events_json = [json.loads(e) for e in mem_events]
-    data_json = json.loads(raw_data)
-
-    # Bundle events inside the data for storage
-    data_json["events"] = events_json
-
     def _run_sync():
+        # Snapshot the LATEST memory state at *write* time, not when this sync was
+        # scheduled. A detached sync queued mid-run (status 'processing') would
+        # otherwise carry that stale snapshot and, if it lands after the awaited
+        # terminal write, clobber 'completed' back to 'processing' — exactly what
+        # stranded ARQ jobs and kept the GPU billing. Reading here means every sync
+        # (however late) writes the current state.
+        raw = _memory_store.get(key)
+        if not raw:
+            return
+        data_json = json.loads(raw)
+        # Snapshot the events list before iterating: emit_event may append to the
+        # live list from the event-loop thread while this runs in the thread pool.
+        # ``list(...)`` is a single GIL-held copy (atomic); the Python-level
+        # comprehension then iterates our private copy.
+        events_raw = list(_memory_events.get(f"{key}:events", []))
+        data_json["events"] = [json.loads(e) for e in events_raw]
         try:
             client = create_service_client()
             status_val = data_json.get("status", "queued")
@@ -64,29 +158,83 @@ async def _sync_to_supabase(job_id: str) -> None:
         except Exception as e:
             logger.debug("supabase_sync_skipped", error=str(e))
 
-    asyncio.create_task(asyncio.to_thread(_run_sync))
+    if flush:
+        await asyncio.to_thread(_run_sync)
+        return
+
+    task = asyncio.create_task(asyncio.to_thread(_run_sync))
+    _pending_sync_tasks.setdefault(job_id, set()).add(task)
+
+    def _discard(t: asyncio.Task) -> None:
+        tasks = _pending_sync_tasks.get(job_id)
+        if tasks is not None:
+            tasks.discard(t)
+            if not tasks:
+                _pending_sync_tasks.pop(job_id, None)
+
+    task.add_done_callback(_discard)
 
 
-async def recover_stuck_jobs() -> None:
-    """Load jobs from Supabase on startup and mark interrupted ones as failed."""
-    try:
+async def flush_pending_syncs(job_id: Optional[str] = None) -> None:
+    """Await in-flight detached Supabase syncs.
+
+    With ``job_id``, drains only that job's syncs — used before a terminal write so
+    a slow/hung sync on a DIFFERENT job can't block it. Without it, drains every
+    job's syncs: the ARQ adapter's ``finally`` teardown net, so a job's last writes
+    reach ``api_jobs`` before the worker goes idle / scales to zero.
+    """
+    if job_id is not None:
+        pending = [t for t in _pending_sync_tasks.get(job_id, set()) if not t.done()]
+    else:
+        pending = [t for tasks in _pending_sync_tasks.values() for t in tasks if not t.done()]
+    if pending:
+        await asyncio.gather(*pending, return_exceptions=True)
+
+
+async def reap_stale_jobs(max_age_minutes: int = 60) -> int:
+    """Fail queued/processing jobs whose last update is older than ``max_age_minutes``.
+
+    Replaces the old ``recover_stuck_jobs`` (which failed EVERY 'processing' job at API
+    startup — wrong now that AI jobs legitimately run on the separate worker process across
+    API restarts). A job orphaned by a lost enqueue, a worker crash, or a pre-hydration-fix
+    silent no-op otherwise sits 'queued'/'processing' in ``api_jobs`` forever — keeping the
+    Annotations "Processing" banner up for days. Runs periodically from the API lifespan.
+
+    The threshold is deliberately generous: active jobs refresh ``updated_at`` on every
+    progress/status write (at minimum once per deployment for AI jobs), so anything silent
+    for an hour is genuinely dead. Returns the number of jobs reaped.
+    """
+    from datetime import timedelta  # noqa: PLC0415
+
+    cutoff = (datetime.now(timezone.utc) - timedelta(minutes=max_age_minutes)).isoformat()
+
+    def _run() -> int:
         client = create_service_client()
-        resp = client.table("api_jobs").select("id, job_data, status").eq("status", "processing").execute()
+        resp = (
+            client.table("api_jobs").select("id, job_data, updated_at").in_("status", [JobStatus.QUEUED.value, JobStatus.PROCESSING.value]).execute()
+        )
+        reaped = 0
+        for row in resp.data or []:
+            jd = row.get("job_data") or {}
+            last = jd.get("updated_at") or row.get("updated_at") or ""
+            if not last or last >= cutoff:
+                continue
+            jd["status"] = JobStatus.FAILED.value
+            jd["error"] = f"Stalled: no progress for over {max_age_minutes} minutes."
+            jd["message"] = "❌ Failed: the job stalled and was cleaned up automatically."
+            jd["updated_at"] = datetime.now(timezone.utc).isoformat()
+            client.table("api_jobs").update({"status": jd["status"], "job_data": jd}).eq("id", row["id"]).execute()
+            # Keep this process's memory copy consistent so polls don't resurrect it.
+            _memory_store[f"job:{row['id']}"] = json.dumps(jd)
+            reaped += 1
+            logger.warning("stale_job_reaped", job_id=row["id"], last_update=last, kind=jd.get("kind"))
+        return reaped
 
-        for row in resp.data:
-            job_id = row["id"]
-            data = row.get("job_data", {})
-            data["status"] = JobStatus.FAILED.value
-            data["error"] = "Job interrupted by server restart."
-            data["message"] = "❌ Failed: Server crashed or restarted mid-job."
-
-            # Sync back failure to DB and load to memory
-            client.table("api_jobs").update({"status": data["status"], "job_data": data}).eq("id", job_id).execute()
-            _memory_store[f"job:{job_id}"] = json.dumps(data)
-            logger.warning("stuck_job_recovered_and_failed", job_id=job_id)
-
+    try:
+        return await asyncio.to_thread(_run)
     except Exception as e:
-        logger.debug("job_recovery_skipped", error=str(e))
+        logger.warning("reap_stale_jobs_failed", error=str(e))
+        return 0
 
 
 async def create_job(
@@ -136,7 +284,7 @@ async def set_job_deployments(job_id: str, deployment_ids: List[str]) -> None:
     Uploads resolve their deployments mid-run (EXIF / folder binding after the file
     buffer), so they call this from the AI phase rather than at :func:`create_job`.
     """
-    raw = _memory_store.get(f"job:{job_id}")
+    raw = await _get_raw(job_id)
     if not raw:
         return
     data = json.loads(raw)
@@ -191,29 +339,46 @@ async def list_jobs(user_id: str, limit: int = 50) -> List[dict]:
         return []
 
 
+async def find_queued_ai_jobs() -> List[dict]:
+    """**Queued** ``ai_pipeline`` jobs → ``[{job_id, deployment_ids}]`` (from Supabase).
+
+    Used to coalesce the upload flow's AI fan-out: a chunked upload (N batches) previously
+    enqueued N annotate jobs for the *same* deployment, each paying the model's fixed
+    per-run cost. Deployments covered by a still-queued AI job are skipped — that job
+    fetches its media when it *starts*, so it will include the images just registered.
+    (``processing`` jobs are deliberately excluded: they may have already fetched their
+    media list and would miss later registrations.)
+    """
+
+    def _run() -> List[dict]:
+        client = create_service_client()
+        resp = client.table("api_jobs").select("id, job_data").eq("status", JobStatus.QUEUED.value).eq("job_data->>kind", "ai_pipeline").execute()
+        out = []
+        for row in resp.data or []:
+            jd = row.get("job_data") or {}
+            out.append({"job_id": row["id"], "deployment_ids": jd.get("deployment_ids") or []})
+        return out
+
+    try:
+        return await asyncio.to_thread(_run)
+    except Exception as e:
+        logger.warning("find_queued_ai_jobs_failed", error=str(e))
+        return []
+
+
 async def get_job(job_id: str) -> Optional[JobInfo]:
-    """Read current job state from memory."""
-    raw = _memory_store.get(f"job:{job_id}")
-    if not raw:
-        # Try loading from Supabase if not in memory
-        try:
-            client = create_service_client()
-            resp = client.table("api_jobs").select("job_data").eq("id", job_id).execute()
-            if resp.data:
-                db_data = resp.data[0]["job_data"]
-                events = db_data.pop("events", [])
-
-                # Restore to memory
-                _memory_events[f"job:{job_id}:events"] = [json.dumps(e) for e in events]
-                _memory_store[f"job:{job_id}"] = json.dumps(db_data)
-                raw = _memory_store[f"job:{job_id}"]
-        except Exception:
-            pass
-
+    """Read current job state (memory-first, Supabase for cross-process freshness)."""
+    raw = await _get_raw(job_id)
     if not raw:
         return None
 
     data = json.loads(raw)
+    # A non-terminal job may be executing on another process (the ARQ worker) — pick up
+    # its Supabase writes when they're newer than our memory copy.
+    if data.get("status") in (JobStatus.QUEUED.value, JobStatus.PROCESSING.value):
+        fresh = await asyncio.to_thread(_refresh_if_newer, job_id, data.get("updated_at"))
+        if fresh:
+            data = json.loads(fresh)
 
     event_key = f"job:{job_id}:events"
     mem_events = _memory_events.get(event_key, [])
@@ -236,8 +401,9 @@ async def update_job(
     message: Optional[str] = None,
     current_phase: Optional[ProgressPhase] = None,
 ) -> None:
-    raw = _memory_store.get(f"job:{job_id}")
+    raw = await _get_raw(job_id)
     if not raw:
+        logger.warning("update_job_not_found", job_id=job_id)
         return
 
     data = json.loads(raw)
@@ -257,13 +423,65 @@ async def update_job(
     data["updated_at"] = datetime.now(timezone.utc).isoformat()
     _memory_store[f"job:{job_id}"] = json.dumps(data)
 
-    # Background sync
-    await _sync_to_supabase(job_id)
+    if data.get("status") in _TERMINAL_STATUSES:
+        # Terminal write: drain any in-flight detached syncs FIRST (let their writes
+        # land), then write the terminal state LAST and durably (awaited) so nothing
+        # overwrites it back to a running state. Combined with the write-time snapshot
+        # in _sync_to_supabase, this makes 'completed'/'failed' the final word. Scope
+        # the drain to THIS job so another job's slow sync can't stall completion.
+        await flush_pending_syncs(job_id)
+        await _sync_to_supabase(job_id, flush=True)
+    else:
+        await _sync_to_supabase(job_id)
+
+
+@contextlib.asynccontextmanager
+async def job_heartbeat(job_id: str | None, interval: float = _HEARTBEAT_INTERVAL_SECONDS):
+    """Keep ``api_jobs.updated_at`` fresh while a single long pipeline step runs.
+
+    Progress is normally written only *between* steps (the ``on_step`` callback), so
+    one long step — e.g. SpeciesNet over thousands of images at ~1–2 s/image — writes
+    nothing for many minutes. Two consumers watch ``updated_at`` and would act on that
+    silence:
+      * the **KEDA** Postgres scaler holds the GPU worker on
+        ``updated_at > now() - <window>`` (15 min on dev). Past the window it scales the
+        worker to 0 **mid-inference, killing the job**.
+      * the **stale-job reaper** fails jobs idle for 60 min.
+
+    This runs a background task that bumps ``updated_at`` every ``interval`` seconds
+    (``update_job`` with no field changes still refreshes it and syncs, and the
+    ``BEFORE UPDATE`` trigger on ``api_jobs`` advances the top-level column KEDA reads).
+    The task is cancelled on exit — before the caller returns and any terminal write
+    lands — so it can never resurrect a finished job.
+
+    A no-op when ``job_id`` is falsy (in-process runs with no cloud job to heartbeat).
+    Relies on the heavy step running via ``asyncio.to_thread`` (SpeciesNet/BioCLIP do),
+    which keeps the event loop free to fire this timer.
+    """
+    if not job_id:
+        yield
+        return
+
+    async def _beat() -> None:
+        while True:
+            await asyncio.sleep(interval)
+            try:
+                await update_job(job_id)  # no fields → refresh updated_at + sync only
+            except Exception as exc:  # noqa: BLE001 — a heartbeat must never break the pipeline
+                logger.debug("job_heartbeat_failed", job_id=job_id, error=str(exc))
+
+    task = asyncio.create_task(_beat())
+    try:
+        yield
+    finally:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
 
 
 async def emit_event(job_id: str, event: ProgressEvent) -> None:
     event.job_id = job_id
-    raw = _memory_store.get(f"job:{job_id}")
+    raw = await _get_raw(job_id)
 
     if raw:
         data = json.loads(raw)
@@ -294,7 +512,7 @@ async def update_summary(
     lock = _summary_locks.setdefault(job_id, asyncio.Lock())
 
     async with lock:
-        raw = _memory_store.get(f"job:{job_id}")
+        raw = await _get_raw(job_id)
         if not raw:
             return
 

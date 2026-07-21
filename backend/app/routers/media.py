@@ -195,9 +195,37 @@ async def batch_delete_media(
 
     deleted = await asyncio.to_thread(_delete)
     return ApiResponse(
-        data={"deleted": deleted, "requested": len(body.media_ids)},
+        # deleted_at lets the client offer an Undo (POST /batch/restore).
+        data={"deleted": deleted, "requested": len(body.media_ids), "deleted_at": now},
         meta=ApiMeta(request_id=req_id),
     )
+
+
+class RestoreMediaRequest(BaseModel):
+    """Undo a media soft-delete."""
+
+    media_ids: list[str] = Field(..., max_length=500)
+    deleted_at: str
+
+
+@router.post("/batch/restore", dependencies=[Depends(require_not_demo)])
+async def batch_restore_media(
+    request: Request,
+    body: RestoreMediaRequest,
+    user=Depends(get_current_user),
+    user_client=Depends(get_user_client),
+):
+    """Undo a media delete — clears ``deleted_at`` where it equals the given timestamp. Runs as the
+    user so RLS keeps it to their own projects; scoping by the exact timestamp restores only the
+    photos removed in that delete."""
+    req_id = getattr(request.state, "request_id", None)
+
+    def _restore():
+        result = user_client.table("media").update({"deleted_at": None}).in_("id", body.media_ids).eq("deleted_at", body.deleted_at).execute()
+        return len(result.data or [])
+
+    restored = await asyncio.to_thread(_restore)
+    return ApiResponse(data={"restored": restored}, meta=ApiMeta(request_id=req_id))
 
 
 class RunSelectedRequest(BaseModel):

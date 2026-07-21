@@ -3,7 +3,7 @@
 > **Status:** 🟢 Living — the authoritative map of every cloud resource the platform uses, what it's
 > for, and how to keep it from drifting into sprawl. Pairs with [deployment-guide](deployment-guide.md)
 > (*how to deploy*); this doc is *what exists and how to maintain it*. **Re-audit quarterly** (see the
-> [review checklist](#periodic-review-checklist)). Last updated: **2026-06-30**.
+> [review checklist](#periodic-review-checklist)). Last updated: **2026-07-09**.
 
 > ### ✅ Single-RG AU East (migration complete — 2026-06-30)
 > The org runs **only the `WW-AE` resource group** (`australiaeast`). The old `WW-Website` RG and the three
@@ -27,9 +27,14 @@ or orphaned, and both are bugs.
 ## Azure
 
 **Subscription:** `Microsoft Azure Sponsorship` (`f14bd966-e052-4c53-b26c-459dc764c33c`).
-⚠️ **Sponsorship subs have no GPU quota** (no NCasT4_v3 SKUs in any region) — GPU work needs a separate
-PAYG sub (see [gpu-worker-infra-spec](../development%20reports/gpu-worker-infra-spec.md)). The env is
-created **workload-profiles-enabled** so a GPU profile can be added later without recreating it.
+✅ **GPU is live (2026-07-03).** The ML worker runs on a **serverless T4 GPU** — a
+`Consumption-GPU-NC8as-T4` workload profile named **`gpu-t4`** on `ww-env`, with the worker on `cuda`
+and **scale-to-zero** (idle cost ≈ $0). This works on the sponsorship sub: ACA *serverless* GPU did not
+require the `NCasv3_T4` VM-family quota we'd assumed was blocking it. See the worker row + scaling note.
+✅ **Wildlife Brain is live end-to-end on dev (2026-07-09).** The full DINOv3 → **pgvector** →
+HDBSCAN clustering → similarity-search path runs on the GPU worker (gated DINOv3 weights load via the
+`HF_TOKEN` secret). The former Qdrant container is **removed** — vectors now live in the Supabase
+`media_embeddings.embedding` column.
 
 **Convention:** **everything** lives in **one resource group, `WW-AE`**, in **Australia East**. There is
 no other RG. Do not let tooling auto-create resource groups (`DefaultResourceGroup-*`), other regions, or
@@ -39,12 +44,12 @@ extra Log Analytics workspaces — that is the main source of sprawl and cost co
 
 | Resource | Type | Purpose | Status | Maintenance |
 |----------|------|---------|--------|-------------|
-| `ww-env` | Container Apps **environment** | Hosts all container apps; workload-profiles (Consumption profile); KEDA. | ✅ | Region-locked — recreating it means recreating its apps. |
+| `ww-env` | Container Apps **environment** | Hosts all container apps; workload profiles **`Consumption`** (CPU apps) + **`gpu-t4`** (`Consumption-GPU-NC8as-T4`, serverless T4 for the worker); KEDA. | ✅ | Region-locked — recreating it means recreating its apps. GPU profile: `az containerapp env workload-profile list -g WW-AE -n ww-env`. |
 | `wwregistry` | Container Registry (ACR) | Image repos `ww-backend` (api, `--target api`) + `ww-backend-worker` (worker). | ✅ | Standard SKU, admin-enabled; `az acr build` builds in-cloud (no local Docker). Login server `wwregistry.azurecr.io`. |
 | `wwuploadsae` | Storage account | **Azure Blob** temporary upload buffer (deleted after Drive archival). | ✅ | Connection string is an ACA secret on the apps. |
 | `ww-redis-dev` | Container App | **ARQ broker** (internal `redis:7-alpine`, TCP, `exposedPort=6379`). | ✅ | Reach app-to-app via the **short name** `redis://ww-redis-dev:6379` (the `.internal.*` FQDN times out for TCP). **Not KEDA-reachable** — see the worker row. |
 | `ww-backend-dev` | Container App | **Dev API** (`--target api`), min-1, external ingress. `REDIS_URL` → offloads jobs to the worker. FQDN `ww-backend-dev.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. | ✅ | Dev Supabase project; secrets as **ACA secrets**. |
-| `ww-embedding-worker-dev` | Container App | **Dev ML worker** (`--target worker`, CPU). SpeciesNet detect + per-crop BioCLIP. | ✅ | Scales 0↔1 via **KEDA Postgres scaler on `api_jobs`** (see below). Secrets as ACA secrets. |
+| `ww-embedding-worker-dev` | Container App | **Dev ML worker** (`--target worker`) on the **`gpu-t4` serverless T4 GPU** profile. SpeciesNet detect + per-crop BioCLIP + DINOv3 (Wildlife Brain, live). ~1–2 s/image vs ~30–50 s on CPU. | ✅ | `EMBEDDING_DEVICE=cuda` / `BIOCLIP_DEVICE=cuda` (SpeciesNet auto-detects CUDA). Gated DINOv3 weights need the **`HF_TOKEN`** ACA secret (else `image_count=0`). Scales **0↔1** via **KEDA Postgres scaler on `api_jobs`** (see below). Secrets as ACA secrets. |
 | `ww-backend` | Container App | **Prod API** (`--target api`). FQDN `ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. Currently unused. | ✅ | Prod Supabase project. |
 | Log Analytics workspace | Log Analytics | Container Apps logs (auto-created with the env). | ✅ | Keep exactly one. |
 
@@ -55,20 +60,51 @@ PostgreSQL scaler** queries the dev Supabase `api_jobs` table (reachable over IP
 
 ```
 SELECT count(*) FROM api_jobs WHERE status IN ('queued','processing')
-  AND updated_at > now() - interval '1 hour'      -- targetQueryValue=1
+  AND updated_at > now() - interval '15 minutes'  -- targetQueryValue=1 (dev; see window caveat)
 ```
 
-A pending job → `count ≥ 1` → KEDA scales the worker **0→1**; queue drains → back to **0**. The pooler
-connection string lives in the ACA secret **`pg-conn`** (must point at the **dev** project's *shared
-Transaction pooler* — `postgres.<ref>@aws-…pooler.supabase.com:6543`, using the **database password**,
-not the service-role key). **Verified 2026-06-30: scales to 0 when idle.** If `pg-conn` is ever wrong/unset
-the scaler errors and KEDA holds the worker at its current replica count (functional, just not scaling down).
+A pending job → `count ≥ 1` → KEDA scales the worker **0→1** (on the GPU node); queue drains → back to
+**0**. The pooler connection string lives in the ACA secret **`pg-conn`** (must point at the **dev**
+project's *shared Session pooler* — `postgres.<ref>@aws-…pooler.supabase.com:5432`, using the
+**database password**, not the service-role key). Use **Session mode (:5432)**, not Transaction (:6543):
+the KEDA Postgres scaler reuses prepared statements, which Transaction pooling rejects with `42P05`
+(*prepared statement already exists*) — that broke the scaler until we moved to :5432. Both ports are on
+the same shared pooler host (IPv4). **Verified: scales to 0 when idle** (GPU T4, so idle cost ≈ $0). If
+`pg-conn` is wrong/unset the scaler errors and KEDA holds the worker at its current replica count
+(functional, just not scaling down).
+
+> ⏱ **Window caveat (`15 minutes` on dev).** The annotate job only refreshes `updated_at` at the *start
+> of each pipeline step* (`_on_step`), not within a step, so a single long step (SpeciesNet over thousands
+> of images) could exceed the window with no heartbeat and let KEDA scale the worker to **0 mid-inference,
+> killing the job**. Dev's small test deployments stay well under 15 min. **Prod must keep a generous
+> window (≥ the reaper's 60 min) or add an intra-step heartbeat first** — see
+> [prod-worker-provisioning-runbook](prod-worker-provisioning-runbook.md).
+
+> 🚨 **Stuck-GPU guard (added 2026-07-09).** An Azure Monitor alert **`ww-gpu-worker-stuck-dev`** fires
+> when the worker sits at **≥ 1 replica > 30 min** (action group **`ww-gpu-alerts`** → email). This is the
+> primary defence against an idle T4 burning money if the scaler or a job status ever wedges — it never
+> risks killing live work, so it's the guard to add *first* in any new environment.
+
+> ⚠️ **Gotcha — never set the scale rule via `az containerapp update --scale-rule-metadata`.** The CLI
+> silently drops metadata values containing spaces/quotes (i.e. the SQL), leaving `query`/`targetQueryValue`
+> **empty**. With `min=0` an empty query means KEDA never wakes the worker → **uploads queue but AI never
+> runs.** Edit the rule in the **Portal** (Container App → *Scale and replicas* → `pg-pending` rule) or via a
+> full `--yaml` manifest. Confirm with:
+> `az containerapp show -n ww-embedding-worker-dev -g WW-AE --query "properties.template.scale.rules[0].custom.metadata"`.
+
+**GPU verification / readiness.** Confirm the worker actually has the GPU with
+`az containerapp exec -n ww-embedding-worker-dev -g WW-AE --command "python -c \"import torch;print(torch.cuda.is_available())\""`
+(→ `True`). Pipeline code is GPU-ready: BioCLIP/DINOv3 read `BIOCLIP_DEVICE`/`EMBEDDING_DEVICE`
+(`services/bioclip_service.py`, `services/dinov3.py`); SpeciesNet passes no device and auto-detects CUDA.
+The `ww-backend-worker:dev-latest` image already ships CUDA-enabled torch.
 
 ### How to keep Azure clean
 - **Audit:** `az resource list -o table` — every resource should be in `WW-AE` and map to a row above.
   Anything in another RG/region is sprawl.
-- **Cost:** check **Cost Management → Cost analysis** monthly. The worker is the main variable cost — keep
-  it near $0 by confirming KEDA returns it to **0 replicas when idle**.
+- **Cost:** check **Cost Management → Cost analysis** monthly. The **GPU worker** is now the main variable
+  cost — a T4 billed per-second **while running**. Keep it near $0 by confirming KEDA returns it to
+  **0 replicas when idle** (`az containerapp replica list -n ww-embedding-worker-dev -g WW-AE -o table`
+  → empty). A worker stuck at ≥1 replica is an idle T4 burning money — investigate the scaler.
 - **Don't** create resources outside `WW-AE` / AU East without adding them here.
 
 ---
@@ -89,9 +125,11 @@ bucket). Schema is owned by [`ww-backend`](https://github.com/wildlifeai/wildlif
 store is **pgvector in these projects** (see deployment-guide → Vector Store).
 
 **Connection strings:** for tools that connect directly to Postgres (e.g. the KEDA scaler), use the
-**shared Transaction pooler** (`...pooler.supabase.com:6543`) — it accepts **IPv4 by default, no Pro
-add-on needed**. The direct `db.*:5432` host and the *dedicated* pooler are IPv6-only (KEDA on Azure
-can't reach them). Treat the DB password as a secret (ACA secret / vault, never in chat).
+**shared Session pooler** (`...pooler.supabase.com:5432`) — the shared pooler host accepts **IPv4 by
+default, no Pro add-on needed**. Use **Session mode (:5432)**, not Transaction (:6543): the scaler reuses
+prepared statements and Transaction pooling rejects them with `42P05`. The *direct* `db.<ref>.supabase.co`
+host and the *dedicated* pooler are IPv6-only (KEDA on Azure can't reach them). Treat the DB password as a
+secret (ACA secret / vault, never in chat).
 
 ---
 

@@ -10,7 +10,7 @@ Cross-deployment / cross-time analytics on top of the Wildlife Brain:
 
 The math helpers are pure (stdlib only) and unit-tested; orchestration reads from
 Supabase lazily. Shift detection uses **cluster-id histograms** (available in
-``media_embeddings``) rather than raw vectors, so it runs without loading Qdrant.
+``media_embeddings``) rather than raw vectors, so it runs without loading the vector store.
 """
 
 from __future__ import annotations

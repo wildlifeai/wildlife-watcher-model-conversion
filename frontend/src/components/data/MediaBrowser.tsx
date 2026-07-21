@@ -14,6 +14,8 @@ import type { AnnotationStatus } from '../ui/StatusBadge'
 import { Modal } from '../ui/Modal'
 import { isHumanReviewed, isAiLabel, humanCreateFields } from '../../lib/observations'
 import { getLocalPreview } from '../../lib/localPreviewStore'
+import { apiClient } from '../../lib/apiClient'
+import { showUndoToast } from '../common/undoToastBus'
 import { BulkLabelModal } from './BulkLabelModal'
 import { type SpeciesSelection } from './SpeciesPicker'
 import { getTimeOfDay, formatCaptureTime } from '../../lib/time'
@@ -95,7 +97,7 @@ const MEDIA_SELECT =
   'observations(id, deployment_id, media_id, observation_type, scientific_name, vernacular_name, taxon_id, ' +
   'count, life_stage, sex, behavior, ' +
   'classification_method, classified_by, classification_probability, observation_comments, crop_url, ' +
-  'review_status, source_type, source_model_version, reviewer_id, annotator_id, bbox_x, bbox_y, bbox_w, bbox_h)'
+  'review_status, source_type, ai_origin, source_model_version, reviewer_id, annotator_id, bbox_x, bbox_y, bbox_w, bbox_h)'
 
 // ── Types ────────────────────────────────────────────────────────────────────
 
@@ -120,6 +122,8 @@ export interface MediaRecord {
   // but tolerate an array too in case the relationship is ever re-detected.
   media_assets: MediaAssetRecord | MediaAssetRecord[] | null
   observations: ObservationRecord[]
+  /** Optimistic placeholder for a still-uploading file (not a real DB row). Display-only. */
+  _pending?: boolean
 }
 
 /** Normalise the media_assets embed (PostgREST returns a single object for to-one). */
@@ -147,6 +151,8 @@ export interface ObservationRecord {
   // AN-1/AN-2: validation provenance + lifecycle (authoritative for status)
   review_status?: string | null
   source_type?: string | null
+  /** For source_type='ai': which AI layer produced the row — 'edge' (Camera AI) or 'cloud'. */
+  ai_origin?: string | null
   source_model_version?: string | null
   reviewer_id?: string | null
   annotator_id?: string | null
@@ -234,23 +240,37 @@ function ProcessingBanner({ deployments }: { deployments: Props['deployments'] }
   const depNames = depIds.map(id => names.get(id) || id.slice(0, 8))
   const shown = depNames.length <= 3 ? depNames.join(', ') : `${depNames.slice(0, 3).join(', ')} +${depNames.length - 3} more`
   const isOne = depIds.length === 1
+  // Progress from the active AI job(s) (now reported per-deployment); the analysing job carries it.
+  const pct = Math.round(Math.max(0, ...active.map(j => j.progress ?? 0)) * 100)
+  const insightsLink = `/insights?tab=reports${isOne ? `&deployment=${depIds[0]}` : ''}`
 
   return (
     <div
       role="status"
       style={{
-        display: 'flex', alignItems: 'center', gap: '0.6rem',
+        display: 'flex', flexDirection: 'column', gap: '0.4rem',
         padding: '0.6rem 0.9rem', marginBottom: '0.75rem',
         border: '1px solid rgba(59,130,246,0.4)', borderRadius: 'var(--radius)',
         backgroundColor: 'rgba(59,130,246,0.08)', fontSize: '0.8125rem',
       }}
     >
-      <span style={{ fontSize: '1rem', animation: 'spin 1.4s linear infinite' }}>⟳</span>
-      <span>
-        <strong>Processing</strong> — AI analysis is running for {isOne ? 'deployment ' : 'deployments '}
-        <strong>{shown}</strong>. Thumbnails and labels for {isOne ? 'it' : 'these'} will appear as they complete.
-        See <em>Processing history</em> (avatar menu) for live progress.
-      </span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+        <span style={{ fontSize: '1rem', animation: 'spin 1.4s linear infinite' }}>⟳</span>
+        <span style={{ flex: 1 }}>
+          <strong>Analysing {pct}%</strong> — AI is processing {isOne ? 'deployment ' : 'deployments '}
+          <strong>{shown}</strong>. Thumbnails and labels appear as they complete.
+        </span>
+        <Link
+          to={insightsLink}
+          style={{ whiteSpace: 'nowrap', color: 'var(--primary)', fontWeight: 600, textDecoration: 'none' }}
+          title="See species/detection stats for these images as they're analysed"
+        >
+          📊 See stats so far →
+        </Link>
+      </div>
+      <div style={{ height: 4, borderRadius: 2, background: 'rgba(59,130,246,0.2)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: `${pct}%`, background: 'var(--primary, #3b82f6)', borderRadius: 2, transition: 'width 0.4s ease' }} />
+      </div>
       <style>{`@keyframes spin { from { transform: rotate(0) } to { transform: rotate(360deg) } }`}</style>
     </div>
   )
@@ -266,7 +286,7 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     [deployments],
   )
   const qc = useQueryClient()
-  const { isActive: uploadActive } = useUploadStore()
+  const { isActive: uploadActive, pendingUploads } = useUploadStore()
   const [reloadKey, setReloadKey] = useState(0)
   // Media whose thumbnail failed to load — shown as "processing" (the rendition
   // is likely still generating). Reset on every (re)load so they re-attempt.
@@ -432,16 +452,25 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   }, [inat.connected, connectInat, selectedIds])
 
   const handleBatchDelete = useCallback(async (ids: string[]) => {
-    const resp = await fetch('/api/media/batch', {
-      method: 'DELETE',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ media_ids: ids }),
-    })
-    if (!resp.ok) throw new Error('Delete failed')
-    // Remove deleted media from local state
+    // Capture the rows so Undo can re-insert them without a full refetch.
+    const removed = media.filter(m => ids.includes(m.id))
+    const res = await apiClient.del('/api/media/batch', { media_ids: ids }) as { data?: { deleted_at?: string } }
+    const deletedAt = res?.data?.deleted_at
     setMedia(prev => prev.filter(m => !ids.includes(m.id)))
     setSelectedIds(new Set())
-  }, [])
+    if (deletedAt) {
+      showUndoToast({
+        message: `Deleted ${ids.length} photo${ids.length !== 1 ? 's' : ''}`,
+        onUndo: async () => {
+          await apiClient.post('/api/media/batch/restore', { media_ids: ids, deleted_at: deletedAt })
+          setMedia(prev => {
+            const have = new Set(prev.map(m => m.id))
+            return [...removed.filter(m => !have.has(m.id)), ...prev]
+          })
+        },
+      })
+    }
+  }, [media])
 
   const handleRunAi = useCallback(async (models: string[]) => {
     const ids = Array.from(selectedIds)
@@ -624,8 +653,32 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   }, [media])
 
   // ── Client-side filter chain ──────────────────────────────────────────────
+  // Optimistic cards for files still uploading (no DB row yet), shown instantly via the local
+  // preview so the grid isn't empty right after an upload redirect. Deduped against real rows by
+  // file_name and scoped to the deployment(s) in view; they vanish as the real rows load in.
+  const pendingCards = useMemo<MediaRecord[]>(() => {
+    if (pendingUploads.length === 0) return []
+    const viewIds = new Set(filterDeployments.length ? filterDeployments : deployments.map(d => d.id))
+    const haveNames = new Set(media.map(m => (m.file_name || '').toLowerCase()))
+    const seen = new Set<string>()
+    const cards: MediaRecord[] = []
+    for (const p of pendingUploads) {
+      const key = p.fileName.toLowerCase()
+      if (!viewIds.has(p.deploymentId) || haveNames.has(key) || seen.has(key)) continue
+      seen.add(key)
+      cards.push({
+        id: `pending:${key}`, deployment_id: p.deploymentId, file_path: '', file_name: p.fileName,
+        file_mediatype: 'image/jpeg', timestamp: null, file_public: false, media_comments: null,
+        exif_metadata: null, media_assets: null, observations: [], _pending: true,
+      })
+    }
+    return cards
+  }, [pendingUploads, media, filterDeployments, deployments])
+
   const filtered = useMemo(() => {
-    let result = media
+    // Real (viewable) media first; still-uploading placeholders appended last so the user
+    // interacts with available photos rather than "Uploading" cards.
+    let result: MediaRecord[] = pendingCards.length ? [...media, ...pendingCards] : media
 
     if (filterSpecies.length) {
       result = result.filter(m => m.observations.some(o => !!o.scientific_name && filterSpecies.includes(o.scientific_name)))
@@ -673,7 +726,7 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     }
 
     return result
-  }, [media, filterSpecies, filterAnnotator, filterModel, filterAnnotationType, filterSex, filterLifeStage, filterStatus, filterDateFrom, filterDateTo, filterTime, tzByDeployment])
+  }, [media, pendingCards, filterSpecies, filterAnnotator, filterModel, filterAnnotationType, filterSex, filterLifeStage, filterStatus, filterDateFrom, filterDateTo, filterTime, tzByDeployment])
 
   // ── Keyboard shortcuts ──────────────────────────────────────────────────────
   useEffect(() => {
@@ -891,6 +944,26 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   // ── Thumbnail card renderer (shared by flat + grouped grids) ──────────────
   const renderThumbCard = (m: MediaRecord) => {
     const imgUrl = resolveImageUrl(m)
+
+    // Optimistic (still-uploading) card — display-only, no selection/detail/actions.
+    if (m._pending) {
+      return (
+        <div key={m.id} title="Uploading…" style={{
+          border: '1px solid var(--border)', borderRadius: 'var(--radius)', overflow: 'hidden',
+          backgroundColor: 'var(--surface)', opacity: 0.9,
+        }}>
+          <div style={{ position: 'relative', aspectRatio: '4 / 3', backgroundColor: 'var(--surface)' }}>
+            {imgUrl ? (
+              <img src={imgUrl} alt={m.file_name ?? ''} style={{ width: '100%', height: '100%', objectFit: 'cover' }} />
+            ) : (
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100%', fontSize: '0.7rem', opacity: 0.5 }}>Uploading…</div>
+            )}
+            <span style={{ position: 'absolute', top: 6, left: 6, background: 'rgba(0,0,0,0.6)', color: '#fff', fontSize: '0.62rem', padding: '2px 6px', borderRadius: 4 }}>⬆ Uploading</span>
+          </div>
+          <div style={{ padding: '0.4rem 0.5rem', fontSize: '0.68rem', opacity: 0.65, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{m.file_name}</div>
+        </div>
+      )
+    }
 
     // WS5-T4 / AN-2: derive status badge from the review_status contract
     const annotStatus = deriveAnnotationStatus({

@@ -178,7 +178,7 @@ A **fresh container only has the env you explicitly set** — feature flags and 
 | `FF_PIPELINE_ENABLED=true` | Inference endpoints. |
 | `FF_SPECIESNET_ENABLED=true` (+ `SPECIESNET_RUN_MODE`) | SpeciesNet detector+classifier. **Runs in the ARQ worker, not the API image (`--target api`)** — confirm the worker container is deployed with the same flags + `REDIS_URL` + GPU. |
 | `FF_MEDIA_REGISTRY_ENABLED=true` | Thumbnails / animal crops (the **Labels** view is empty without crops). |
-| `FF_BIOCLIP_ENABLED`, `FF_WILDLIFE_BRAIN_ENABLED` (+ the vector store — **pgvector** in Supabase; `QDRANT_*` only if Qdrant — `HF_TOKEN`, `EMBEDDING_*`) | BioCLIP + DINOv3 embeddings / clustering. See [Vector Store](#vector-store--pgvector-chosen-for-cloud--qdrant-future-scale-up). |
+| `FF_BIOCLIP_ENABLED`, `FF_WILDLIFE_BRAIN_ENABLED` (+ `HF_TOKEN` for the gated DINOv3 weights, `EMBEDDING_*`; the vector store is **pgvector** in Supabase — no `QDRANT_*` vars, Qdrant is removed) | BioCLIP + DINOv3 embeddings / clustering. See [Vector Store](#vector-store--pgvector-supabase). |
 | `FF_PER_CROP_CLASSIFY_ENABLED` | Per-detection (per-crop) species — one observation per animal, BioCLIP refines each crop. **Requires the GPU worker**; default off (collapses per image when off). |
 
 **Demo account** — *missing → "Try the demo" self-disables (`DEMO_DISABLED`):*
@@ -249,50 +249,35 @@ Enable Realtime on `lorawan_parsed_messages` so the mobile app receives live upd
 
 ---
 
-## Vector Store — pgvector (chosen for cloud) → Qdrant (future scale-up)
+## Vector Store — pgvector (Supabase)
 
-The **Wildlife Brain** (DINOv3 embeddings → clustering → similarity search) needs a vector store. The
-**chosen cloud target is `pgvector`** — vectors live as a `vector(1280)` column in the Supabase
-Postgres you already run, so they sit beside the relational data, inherit RLS + PITR backup, and add
-**no new vendor**. At this project's scale (one DINOv3 vector per crop → hundreds of thousands, low
-millions) pgvector's HNSW is comfortably sufficient, and embedding/cluster queries are
-`deployment_id`/`project_id`-scoped (small candidate sets), so its post-filter cost barely applies.
-Full comparison + benchmark numbers:
-[gpu-worker-infra-spec.md §4](../development%20reports/gpu-worker-infra-spec.md#4-vector-store--pgvector-vs-qdrant-decision).
+The **Wildlife Brain** (DINOv3 embeddings → clustering → similarity search) needs a vector store, and
+the **vector store is `pgvector` in the Supabase Postgres** we already run. Vectors live in an unbounded
+`vector` column (`media_embeddings.embedding`; dim per model — 384 vits / 1280 vith) beside the relational
+data, so they inherit RLS + PITR backup and add **no new vendor or ops surface**. At this project's scale (one DINOv3 vector per crop → hundreds of thousands,
+low millions) pgvector's HNSW is comfortably sufficient, and embedding/cluster queries are
+`deployment_id`/`project_id`-scoped (small candidate sets). If scale ever demands more, **pgvectorscale**
+(StreamingDiskANN) lifts the ceiling *without leaving Postgres* — there is no plan to adopt a separate
+vector database.
 
-**Current code uses Qdrant.** The store is implemented today against **Qdrant**
-(`backend/app/services/qdrant_client.py`, gated by `FF_WILDLIFE_BRAIN_ENABLED`) and runs as a container
-in the local compose stack:
+> ✅ **Migration complete (2026-07-09) — pgvector is live; Qdrant is removed.** The Brain runs
+> end-to-end on dev (embed → cluster → similarity). Qdrant (`qdrant_client.py`, the compose container,
+> `QDRANT_*` config, `qdrant-client`) has been deleted from the code.
 
-```yaml
-# docker-compose.yml
-qdrant:
-  image: qdrant/qdrant:latest
-  ports: ["6333:6333"]
-  volumes: [qdrant_storage:/qdrant/storage]
-```
-
-It is **not provisioned in any cloud environment** — the Container App passes the default
-`QDRANT_URL=http://qdrant:6333` (a Docker address that doesn't resolve in Azure). The client's
-`health()` degrades gracefully (never raises), so the API is unaffected, but **Group-by-Cluster,
-similarity, and the review queue produce no cloud data until a vector store is hosted** (and the GPU
-worker exists to compute embeddings).
-
-**To finish cloud support — implement the pgvector path (chosen):** enable the `vector` extension in
-Supabase, add an `embeddings` table (`vector(1280)` + HNSW index), and add a pgvector sibling behind
-the existing `get_qdrant_service()` seam (`embedding_runs` is store-agnostic — keep `qdrant_collection`
-as the logical space id). Stamp each row with `embedding_model` and **filter on it at read time**
-(`WHERE embedding_model = $1`) so a model/weights change can't mix incompatible vectors (infra spec
-§9). DR is automatic — the vectors are a Postgres table under Supabase PITR.
-
-**Future scale-up — Qdrant.** Keep the Qdrant implementation as the escape hatch for when the project
-crosses ~5–10M vectors, *or* high-selectivity filtered search becomes a hot path, *or* managed
-quantization at scale is needed. The in-Postgres step *before* that jump is **pgvectorscale**
-(StreamingDiskANN), which lifts the ceiling without leaving the database. If/when Qdrant is adopted:
-Qdrant Cloud (`QDRANT_URL=https://<cluster>.qdrant.io` + `QDRANT_API_KEY`) or self-host `qdrant/qdrant`
-as a second Container App with a persistent `/qdrant/storage` volume — and build the snapshot DR job
-(`QdrantService.create_snapshot()` + the reserved `SUPABASE_QDRANT_BACKUP_BUCKET`), which the pgvector
-path doesn't need.
+**As built** (schema owned by [`ww-backend`](https://github.com/wildlifeai/wildlife-watcher-backend)):
+1. **`ww-backend`:** the `vector` extension is enabled (in the `extensions` schema) and the vector lives
+   on **`media_embeddings.embedding`** — declared **unbounded** `extensions.vector` (not `vector(1280)`)
+   so one column holds both DINOv3 variants (384-d `dinov3-vits` / 1280-d `dinov3-vith`). Search is the
+   **`match_media_embeddings`** RPC (cosine `<=>`). **No ANN index yet** — candidate sets are
+   `deployment_id`/run-scoped and small, so an exact scan is fine; an **HNSW index is the scale lever**
+   if that changes (see [Scaling](#scaling)).
+2. **`ww-website`:** `PgVectorService` sits behind the store-agnostic `get_vector_service()` seam
+   (`embedding_runs` is store-agnostic); the Qdrant service, `QDRANT_*` config, compose container, and
+   `qdrant-client` dependency are gone.
+3. Each row is stamped with **`embedding_model`** and the RPC **filters on it at read time**
+   (`WHERE embedding_model = $1`, plus a `CASE` guard on `<=>`) so a model/weights change can't mix
+   incompatible vector dims. DR is automatic — the vectors are a Postgres table under Supabase PITR, so
+   the `/api/brain/backup` job is now a **no-op**.
 
 > The heavy ML inference (DINOv3/SpeciesNet on GPU) is a separate concern — see the `gpu` profile +
 > `embedding-worker` in `docker-compose.yml`, which also needs Redis + ARQ before it can run as a
@@ -426,7 +411,7 @@ The two-container split — **always-on CPU API + on-demand GPU worker** — is 
 | API | Container App, CPU, **`base`** image | min 1 | ~$15–40/mo |
 | Queue + status mirror | Azure Cache for Redis (Basic C0) | — | ~$16/mo |
 | GPU worker | Container App on a **GPU workload profile**, **`worker`** image | **min 0** | GPU only while processing (per-second) |
-| Vectors | **pgvector** in Supabase (chosen) — or Qdrant Cloud free tier | — | $0 |
+| Vectors | **pgvector** in Supabase (live) — reuses the existing DB, no separate vector service | — | $0 |
 
 **1 — Redis.** ARQ needs a broker; Azure Redis requires TLS on 6380, so use a `rediss://` DSN.
 
@@ -473,9 +458,8 @@ az containerapp create \
              SUPABASE_URL=<url> SUPABASE_ANON_KEY=<anon> SUPABASE_SERVICE_ROLE_KEY=<service>
 ```
 
-> **Vector-store env:** the chosen **pgvector** path needs none — it reuses the Supabase connection
-> above. Only add `QDRANT_URL` / `QDRANT_API_KEY` here if you run the Qdrant scale-up path
-> ([Vector Store](#vector-store--pgvector-chosen-for-cloud--qdrant-future-scale-up)).
+> **Vector-store env:** the **pgvector** store needs none — it reuses the Supabase connection above.
+> There are no `QDRANT_*` vars — Qdrant has been removed ([Vector Store](#vector-store--pgvector-supabase)).
 
 **6 — Scale rule (the one real gotcha).** ARQ enqueues to a Redis **sorted set** (`arq:queue`), but KEDA's stock `redis` scaler reads **list length (`LLEN`)** — it cannot watch a sorted set directly. Pick one:
 

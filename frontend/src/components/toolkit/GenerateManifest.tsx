@@ -24,7 +24,7 @@ export function GenerateManifest() {
     queryFn: async () => {
       const { data, error } = await supabase
         .from('firmware')
-        .select('id, name, version, is_active, created_at')
+        .select('id, name, version, is_active, created_at, camera_variant')
         .eq('type', 'himax')
         .is('deleted_at', null)
         .order('created_at', { ascending: false })
@@ -226,19 +226,21 @@ export function GenerateManifest() {
                       >
                         {(firmwares || []).map((f: any) => (
                           <option key={f.id} value={f.id}>
-                            {f.name} {f.is_active ? ' (Active)' : ''}
+                            {f.camera_variant ? `[${f.camera_variant}] ` : ''}{f.name} {f.is_active ? ' (Active)' : ''}
                           </option>
                         ))}
                       </select>
                     )}
                     <p style={{ fontSize: '0.75rem', opacity: 0.6, marginTop: '0.25rem' }}>
-                      Select the Himax firmware version to deploy to the camera.
+                      Select the Himax firmware version to deploy to the camera. The MANIFEST
+                      includes BOTH camera variants (RP3 colour + HM0360 night/IR) when available:
+                      the selected image plus the latest active image of the other variant.
                     </p>
                   </div>
 
                   {/* Project selector */}
                   <div>
-                    <label style={labelStyle}>Project & Species AI</label>
+                    <label style={labelStyle}>Project & Species Brain</label>
                     {isLoadingProjects ? (
                       <div style={{ padding: '0.5rem', opacity: 0.6 }}>Loading projects…</div>
                     ) : projects && projects.length > 0 ? (
@@ -260,7 +262,7 @@ export function GenerateManifest() {
                       </div>
                     )}
                     <p style={{ fontSize: '0.75rem', opacity: 0.6, marginTop: '0.25rem' }}>
-                      Choose which project this camera belongs to. This includes the specific AI "brain" for identifying animals.
+                      Choose which project this camera belongs to. This includes the project's Species Brain — the Camera AI model that identifies animals on the device.
                     </p>
                   </div>
 

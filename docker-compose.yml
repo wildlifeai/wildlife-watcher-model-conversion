@@ -49,9 +49,7 @@ services:
       - LOG_LEVEL=${LOG_LEVEL:-info}
       # Redis (future)
       - REDIS_URL=${REDIS_URL:-}
-      # Wildlife Brain / Qdrant / Media Registry
-      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
+      # Wildlife Brain (vectors → Supabase pgvector) / Media Registry
       - FF_WILDLIFE_BRAIN_ENABLED=${FF_WILDLIFE_BRAIN_ENABLED:-false}
       - FF_SPECIESNET_ENABLED=${FF_SPECIESNET_ENABLED:-false}
       - FF_BIOCLIP_ENABLED=${FF_BIOCLIP_ENABLED:-false}
@@ -67,17 +65,6 @@ services:
       interval: 30s
       timeout: 5s
       retries: 3
-    restart: unless-stopped
-    depends_on:
-      - qdrant
-
-  # --- Qdrant vector store (DINOv3 embeddings) ---
-  qdrant:
-    image: qdrant/qdrant:latest
-    ports:
-      - "6333:6333"
-    volumes:
-      - qdrant_storage:/qdrant/storage
     restart: unless-stopped
 
   # --- Redis (queue for GPU offload; only the 'gpu' profile uses it) ---
@@ -100,8 +87,6 @@ services:
       - SUPABASE_ANON_KEY=${SUPABASE_ANON_KEY}
       - SUPABASE_SERVICE_ROLE_KEY=${SUPABASE_SERVICE_ROLE_KEY}
       - REDIS_URL=${REDIS_URL:-redis://redis:6379}
-      - QDRANT_URL=${QDRANT_URL:-http://qdrant:6333}
-      - QDRANT_API_KEY=${QDRANT_API_KEY:-}
       - SUPABASE_MEDIA_BUCKET=${SUPABASE_MEDIA_BUCKET:-media-renditions}
       - HF_TOKEN=${HF_TOKEN:-}
       - EMBEDDING_DEFAULT_MODEL=${EMBEDDING_DEFAULT_MODEL:-dinov3-vith}
@@ -109,7 +94,6 @@ services:
       - EMBEDDING_BATCH_SIZE=${EMBEDDING_BATCH_SIZE:-32}
       - LOG_LEVEL=${LOG_LEVEL:-info}
     depends_on:
-      - qdrant
       - redis
     deploy:
       resources:
@@ -120,5 +104,3 @@ services:
               capabilities: [gpu]
     restart: unless-stopped
 
-volumes:
-  qdrant_storage:

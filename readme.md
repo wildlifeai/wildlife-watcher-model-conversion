@@ -33,7 +33,7 @@ CamtrapDP / Darwin Core datasets.
 - **AI**: SpeciesNet ensemble (detector + species classifier); DINOv3 "Wildlife Brain" embeddings → HDBSCAN clustering → active-learning review
 - **Charts / Maps**: Vega-Lite (`vega-embed`), Leaflet (`react-leaflet`)
 - **Hosting**: Cloudflare Pages (frontend) + Azure Container Apps (backend)
-- **External services**: Google Drive (image archive), Azure Blob (temp buffer), Qdrant (embedding vectors), iNaturalist, Sentry
+- **External services**: Google Drive (image archive), Azure Blob (temp buffer), iNaturalist, Sentry (DINOv3 embedding vectors live in Supabase via **pgvector**)
 - **Schema owner**: the database schema is owned by the [`ww-backend`](https://github.com/wildlifeai/wildlife-watcher-backend) repo (see [Database Migrations](#database-migrations))
 
 > For the complete dependency reference with versions and rationale, see the
@@ -65,12 +65,12 @@ and production — only the instances and scale differ (see the
    └────────────────────┘            │        │          │
                                      ▼        ▼          ▼
                           ┌─────────────┐ ┌──────────┐ ┌────────────────┐
-                          │ Azure Blob  │ │ Google   │ │ Qdrant         │
+                          │ Azure Blob  │ │ Google   │ │ pgvector       │
                           │ (TEMP buffer│ │ Drive    │ │ (DINOv3 vectors│
-                          │  during     │ │ (PERMANENT│ │  similarity /  │
-                          │  upload;    │ │  original │ │  clustering)   │
-                          │  deleted    │ │  archive) │ │  ⚠ local only  │
-                          │  after)     │ │           │ │  today         │
+                          │  during     │ │ (PERMANENT│ │  in Supabase)  │
+                          │  upload;    │ │  original │ │  ⚠ code still  │
+                          │  deleted    │ │  archive) │ │  on local      │
+                          │  after)     │ │           │ │  Qdrant        │
                           └─────────────┘ └──────────┘ └────────────────┘
 
    iNaturalist ──▶ taxa autocomplete + lineage, observation publish + community-ID sync
@@ -84,15 +84,15 @@ and production — only the instances and scale differ (see the
 2. Backend parses EXIF, matches the deployment, **buffers bytes to Azure Blob** (temporary), enqueues a job.
 3. Job downloads from the buffer → **uploads originals to Google Drive** (content-hash dedup) → **inserts `media` rows in Supabase** (`file_path = gdrive://…`).
 4. Thumbnails/previews are generated and stored in the **public Supabase `media-renditions` bucket** — that's what the grid displays (Drive is never on the hot path).
-5. The **AI pipeline** auto-runs (SpeciesNet → crop → classify), writing `observations` to Supabase; embeddings optionally go to **Qdrant**.
+5. The **AI pipeline** auto-runs (SpeciesNet → crop → classify), writing `observations` to Supabase; DINOv3 embeddings go to **Supabase pgvector** (the code still writes them to a local Qdrant container, being migrated out).
 6. **Azure blobs are deleted** — they're purely transient; Drive is the archive, Supabase holds the rows + renditions.
 
 The browser reads observations **directly from Supabase** (RLS-scoped by the user's JWT) and only calls the **Azure backend** for privileged/heavy work. **iNaturalist** is contacted when reviewers publish observations or look up taxa.
 
-> **Cloud gap:** Qdrant runs in the local `docker-compose` stack but is **not yet provisioned**
-> in the dev-cloud or staging environments. Until it is, the Wildlife Brain
-> (embeddings → clustering → similarity) is local-only — see the
-> [Deployment Guide](./documentation/resources/deployment-guide.md#qdrant-vector-store-not-yet-in-cloud).
+> **Cloud gap:** the vector store is **pgvector in Supabase**, but the code still writes vectors to a
+> local `docker-compose` **Qdrant** container that isn't provisioned in cloud — so the Wildlife Brain
+> (embeddings → clustering → similarity) is local-only until the pgvector migration lands. See the
+> [Deployment Guide → Vector Store](./documentation/resources/deployment-guide.md#vector-store--pgvector-supabase).
 
 ## Prerequisites
 
@@ -121,6 +121,8 @@ it from `../`, and the backend reads `../.env` first).
    SUPABASE_ANON_KEY=eyJ...
    SUPABASE_SERVICE_ROLE_KEY=eyJ...   # bypasses RLS — keep secret
    ```
+   > **Wildlife.ai team:** skip the manual fill — pull the ready dev `.env` from Key Vault
+   > with `bash scripts/fetch-env.sh` (see [Secrets & Access](#secrets--access)).
 
 2. **Backend (FastAPI)**
    ```bash
@@ -141,6 +143,40 @@ it from `../`, and the backend reads `../.env` first).
 
 > Full step-by-step setup, the env-var reference, and a verification checklist are in
 > [00-GETTING-STARTED.md](./documentation/onboarding/00-GETTING-STARTED.md).
+
+## Secrets & Access
+
+`.env` is never committed (this is a public repo). The **shared dev `.env` lives in Azure Key
+Vault**: vault `ww-kv-dev-ae` (resource group `WW-AE`), secret `ww-website-dotenv`. Once a
+maintainer has granted you access, setup is:
+
+```bash
+az login                      # your wildlife.ai Entra ID account
+bash scripts/fetch-env.sh     # PowerShell: .\scripts\fetch-env.ps1
+```
+
+- **Maintainers** push updates after changing `.env`:
+  `az keyvault secret set --vault-name ww-kv-dev-ae -n ww-website-dotenv --file .env`
+- **Granting a developer access** (maintainers):
+  `az keyvault set-policy -n ww-kv-dev-ae --upn <dev>@wildlife.ai --secret-permissions get list`
+
+If you need to rebuild `.env` from first principles, or rotate a single credential, each value
+has a canonical source — request the underlying access from a maintainer (Victor / Tobyn), then
+self-serve:
+
+| Credential | Where it comes from | Access needed |
+|------------|--------------------|---------------|
+| `SUPABASE_URL` / `SUPABASE_ANON_KEY` / `SUPABASE_SERVICE_ROLE_KEY` | Supabase dashboard → dev project → *Settings → API* | Invite to the Wildlife.ai Supabase org |
+| `AZURE_STORAGE_CONNECTION_STRING` | `az storage account show-connection-string -n wwuploadsae -g WW-AE` | Azure subscription (Entra ID invite) |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | `service-account.json` at the repo root — obtain from a maintainer via a secure channel (never commit it) | Drive folder shared with the service account |
+| `SEED_USER_PASSWORD` (seed-user login) | GitHub Actions secret in `ww-backend` / `ww-website`; see [Testing with Seed Users](./documentation/resources/testing-with-seed-users.md) | Ask a maintainer |
+| `HF_TOKEN` | Your own HuggingFace token (DINOv3 is a gated model) | Self-serve at huggingface.co |
+| `LORAWAN_*`, `INAT_*`, `SENTRY_DSN` | Optional for local dev — from a maintainer if you work on those integrations | — |
+
+The full env-var reference lives in [`backend/app/config.py`](./backend/app/config.py) (validated
+at boot) and [00-GETTING-STARTED.md](./documentation/onboarding/00-GETTING-STARTED.md). Cloud
+resource inventory (which Azure/Supabase/Drive resources exist and why):
+[cloud-infrastructure.md](./documentation/resources/cloud-infrastructure.md).
 
 ## Building & Deployment
 
@@ -198,6 +234,8 @@ HF model — put a token in `HF_TOKEN` (SpeciesNet/BioCLIP need none). Architect
 | `No module named 'speciesnet'` / `torch` in a job | The container is on the lean base image. Rebuild + start with **both** compose files — see [Running the AI/ML pipeline locally](#running-the-aiml-pipeline-locally). |
 | `libxcb.so.1: cannot open shared object file` during inference | OpenCV system libs missing — rebuild the **dev** image (the Dockerfile installs `libgl1`, `libxcb1`, …). |
 | Uploaded images don't appear in Annotations | The Drive credential file is mounted only by the dev compose — start with both files, or the upload job can't authenticate. |
+| Upload ends "✅ Pipeline Complete" but no images appear anywhere | The Azure buffer failed before any job was enqueued — check `drive_upload.status`/`error` in the `POST /api/exif/parse` response. Usually a stale `AZURE_STORAGE_CONNECTION_STRING` (the dev storage account is `wwuploadsae` since Jul 2026). Compose reads `.env` at container start — recreate the API container (both compose files) after editing it. |
+| A venv `uvicorn` on :8000 never receives requests | The Docker stack already publishes port 8000 — browsers resolve `localhost` to `::1` first and reach the container, silently shadowing a venv server bound to `127.0.0.1`. Use the container, or stop it before running `uvicorn`. |
 | Vite env vars undefined | Root `.env` only; `vite.config.ts` maps `SUPABASE_URL`→`VITE_SUPABASE_URL`, etc. No `frontend/.env` needed. |
 
 ## Database Migrations
@@ -246,32 +284,15 @@ All documentation lives under [`documentation/`](./documentation) — see the
 | [04-AI-PIPELINE.md](./documentation/onboarding/04-AI-PIPELINE.md) | SpeciesNet pipeline, blank handling, the DINOv3 Wildlife Brain & active learning |
 | [05-ANNOTATION-WORKFLOW.md](./documentation/onboarding/05-ANNOTATION-WORKFLOW.md) | Annotations tab, ribbon, full-screen labeling modal, review provenance |
 
-### Reference Guides (`documentation/resources/`)
+### Reference Guides & Development Reports
 
-| Guide | What It Covers |
-|-------|----------------|
-| [API Reference](./documentation/resources/api-reference.md) | Backend endpoint reference |
-| [Demo Account](./documentation/resources/demo-account.md) | The read-only "Try the demo" account — access, the 3-layer read-only model, API usage, and per-environment seeding |
-| [Deployment Guide](./documentation/resources/deployment-guide.md) | Cloudflare Pages + Azure Container Apps deployment + security checklist |
-| [LoRaWAN Webhook Setup](./documentation/resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server configuration |
-| [CamtrapDP Import](./documentation/resources/camtrapdp-import.md) | Importing CamtrapDP packages |
-| [AI Model Pipeline](./documentation/resources/ai-model-pipeline.md) | Edge Impulse → Vela model conversion |
-| [Embedded Model Lifecycle](./documentation/resources/embedded-model-lifecycle.md) | End-to-end on-device model flow across website / backend / mobile / firmware |
-| [UI Components](./documentation/resources/ui-components.md) | Shared frontend design-system primitives |
-| [Testing with Seed Users](./documentation/resources/testing-with-seed-users.md) | Role-based test users and validation |
-
-### Development Reports (`documentation/development reports/`)
-
-**Active engineering specs** (current hand-offs, kept up to date until shipped) — e.g.
-[bmp-ingestion-analysis.md](./documentation/development%20reports/bmp-ingestion-analysis.md),
-[dual-camera-rpi-analysis.md](./documentation/development%20reports/dual-camera-rpi-analysis.md),
-[exif-telemetry-firmware-spec.md](./documentation/development%20reports/exif-telemetry-firmware-spec.md),
-[access-test-seed-spec.md](./documentation/development%20reports/access-test-seed-spec.md).
-
-**Archive** ([`development reports/_archive/`](./documentation/development%20reports/_archive)) — frozen
-point-in-time plans, roadmaps and research spikes (v2/v4 plans, the UI-redesign roadmaps, the charting
-spike). They capture *why* decisions were made and are **not** kept current with the code. Each report
-carries a `> **Status:**` banner. Full list in the [documentation index](./documentation/README.md).
+Reference guides — the API reference, deployment + cloud-infrastructure guides, demo account, seed
+users, LoRaWAN setup, CamtrapDP import, the model pipelines, UI components, and the prod GPU-worker
+runbook — live in [`documentation/resources/`](./documentation/resources). Active engineering specs
+and the frozen point-in-time archive live in
+[`documentation/development reports/`](./documentation/development%20reports). The
+**[documentation index](./documentation/README.md)** is the single status-tagged list of all of
+them — register new docs there, not here.
 
 ## Contributing
 

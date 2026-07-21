@@ -35,6 +35,12 @@ export type UploadPhase =
 
 export type DockState = 'hidden' | 'minimised' | 'medium'
 
+/** One just-uploaded file bound to its deployment, used to render optimistic grid cards. */
+export interface PendingUpload {
+  fileName: string
+  deploymentId: string
+}
+
 /** Minimal deployment shape needed for coordinate fallback and stats. */
 export interface UploadDeployment {
   id: string
@@ -64,12 +70,21 @@ interface UploadContextValue {
     paths: string[],
     uploadToDrive: boolean,
     deployments: UploadDeployment[],
+    /** Deployment the user manually assigned unresolved/no-id photos to (see UploadModal). */
+    assignedDeploymentId?: string,
+    /** Precise deployment ids the images belong to (for the annotations filter/redirect). */
+    resolvedDeploymentIds?: string[],
+    /** Per-file → deployment mapping, for the optimistic Annotations grid before DB rows exist. */
+    pending?: PendingUpload[],
   ) => Promise<void>
   clearUpload: () => void
 
   // ── Dock ───────────────────────────────────────────────────────────────────
   dockState: DockState
   setDockState: (s: DockState) => void
+
+  /** Files still uploading, keyed to their deployment — powers the optimistic Annotations grid. */
+  pendingUploads: PendingUpload[]
 
   // ── WS5-T6: deployment IDs from the most recent upload ────────────────────
   /** IDs of deployments included in the last upload batch. */
@@ -133,6 +148,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [pipelineState, setPipelineState] = useState<PipelineState>(EMPTY_PIPELINE)
   const [dockState, setDockState] = useState<DockState>('hidden')
   const [uploadedDeploymentIds, setUploadedDeploymentIds] = useState<string[]>([])
+  const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
 
   // Guards and tracking refs (don't need re-render)
   const busyRef = useRef(false)
@@ -152,8 +168,15 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     setPipelineState(EMPTY_PIPELINE)
     setDockState('hidden')
     setUploadedDeploymentIds([])
+    setPendingUploads([])
     lastSeenSeqRef.current = {}
   }, [])
+
+  // Once the pipeline is terminal every batch has registered its media rows, so the optimistic
+  // grid cards are redundant (the real rows dedup them out) — drop them.
+  useEffect(() => {
+    if (phase === 'completed' || phase === 'failed') setPendingUploads([])
+  }, [phase])
 
   // ── Job polling ────────────────────────────────────────────────────────────
   useEffect(() => {
@@ -315,12 +338,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       paths: string[],
       uploadToDrive: boolean,
       deployments: UploadDeployment[],
+      assignedDeploymentId?: string,
+      resolvedDeploymentIds?: string[],
+      pending?: PendingUpload[],
     ): Promise<void> => {
       if (busyRef.current) return
       busyRef.current = true
 
-      // Store deployment IDs for the post-upload "View Annotations" smart link
-      setUploadedDeploymentIds(deployments.map(d => d.id))
+      // Deployment IDs for the post-upload annotations filter/redirect: prefer the precise set
+      // the modal resolved (folder-prefix matches ∪ manual assignment); fall back to all.
+      setUploadedDeploymentIds(
+        resolvedDeploymentIds && resolvedDeploymentIds.length ? resolvedDeploymentIds : deployments.map(d => d.id),
+      )
+      setPendingUploads(pending ?? [])
 
       // Instant thumbnails: mint object URLs from the user's own files now, so the
       // Annotations grid can show them within ~1s (before any server rendition).
@@ -370,6 +400,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           for (const f of chunk) formData.append('files', f)
           for (const p of chunkPaths) formData.append('paths', p)
           if (uploadToDrive) formData.append('upload_to_drive', 'true')
+          if (assignedDeploymentId) formData.append('assigned_deployment_id', assignedDeploymentId)
 
           try {
             const response = await apiClient.upload('/api/exif/parse', formData)
@@ -382,6 +413,15 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               const jobs = [...prev.jobs]
 
               if (driveInfo) {
+                // Server blocked images whose deployment the user can't access (enforced
+                // regardless of the client-side warning).
+                if (driveInfo.blocked_deployments?.length) {
+                  logs.push({
+                    ts: Date.now(),
+                    level: 'warning',
+                    message: `🚫 ${driveInfo.blocked_deployments.length} deployment${driveInfo.blocked_deployments.length !== 1 ? 's' : ''} skipped — you don't have access to them.`,
+                  })
+                }
                 if (driveInfo.status === 'skipped') {
                   const reason =
                     driveInfo.reason === 'no_files_stored'
@@ -474,6 +514,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         dockState,
         setDockState,
         uploadedDeploymentIds,
+        pendingUploads,
       }}
     >
       {children}

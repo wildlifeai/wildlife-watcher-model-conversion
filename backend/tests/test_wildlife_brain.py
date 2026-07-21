@@ -56,7 +56,7 @@ def test_build_media_embedding_rows_shape():
     )
     assert rows[0]["cluster_purity"] == "high"  # 0.92 → high bucket
     assert rows[0]["is_outlier"] is False
-    assert rows[0]["qdrant_point_id"] == "m1"
+    assert rows[0]["media_id"] == "m1"
     assert rows[1]["is_outlier"] is True
     assert rows[1]["cluster_purity"] is None  # outlier label has no purity
     assert (rows[0]["umap_x"], rows[0]["umap_y"]) == (1.0, 2.0)

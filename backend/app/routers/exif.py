@@ -22,9 +22,10 @@ from datetime import datetime, timezone
 from typing import List, Optional
 
 import structlog
-from fastapi import APIRouter, File, Form, Header, Request, UploadFile
+from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
 
+from app.authz import assert_access, classify_deployment_access, deployment_id_prefix_bounds
 from app.config import settings
 from app.dependencies import get_optional_user, is_email_confirmed
 from app.domain.exif import parse_exif_from_bytes
@@ -67,6 +68,63 @@ def _hex_filename_to_timestamp(filename: str) -> Optional[str]:
         return None
 
 
+async def _auto_create_deployments(deployment_ids: List[str], project_id: str, user_id: str) -> List[str]:
+    """Create any of ``deployment_ids`` that don't exist yet, REUSING the stamped
+    UUID, inside ``project_id``. Returns the ids actually created.
+
+    This backs the frontend "create the SD-card deployment" action: the device
+    stamps a Deployment_ID that has no matching row, so binding silently drops the
+    frames. Reusing the same UUID means every future upload from that device binds
+    automatically. Access-guarded (raises 404 if the caller has no role on the
+    project — mirrors POST /api/deployments). A placeholder device is created
+    because deployments need a non-null device_id + a unique (start, device_id).
+    """
+    from app.domain.photo_preprocessing import resolve_timezone  # noqa: F401 (parity w/ create_deployment)
+
+    await assert_access(user_id, project_id=project_id)  # 404 unless caller has access
+
+    def _work() -> List[str]:
+        svc = create_service_client()
+        existing = svc.table("deployments").select("id").in_("id", deployment_ids).execute()
+        have = {r["id"] for r in (existing.data or [])}
+        to_create = [d for d in deployment_ids if d not in have]
+        if not to_create:
+            return []
+
+        proj = svc.table("projects").select("id, organisation_id").eq("id", project_id).limit(1).execute()
+        if not proj.data:
+            raise HTTPException(status_code=404, detail="Project not found")
+        org_id = proj.data[0].get("organisation_id")
+
+        created: List[str] = []
+        for dep_id in to_create:
+            device_id = str(uuid.uuid4())
+            svc.table("devices").insert(
+                {
+                    "id": device_id,
+                    "bluetooth_id": str(uuid.uuid4()),
+                    "name": f"[SD card] {dep_id[:8]}",
+                    "organisation_id": org_id,
+                    "modified_by": user_id,
+                }
+            ).execute()
+            svc.table("deployments").insert(
+                {
+                    "id": dep_id,
+                    "project_id": project_id,
+                    "device_id": device_id,
+                    "setup_by": user_id,
+                    "name": f"SD card {dep_id[:8]}",
+                    "location_name": f"SD card {dep_id[:8]}",
+                    "deployment_start": datetime.now(timezone.utc).isoformat(),
+                }
+            ).execute()
+            created.append(dep_id)
+        return created
+
+    return await asyncio.to_thread(_work)
+
+
 @router.post("/parse")
 @limiter.limit("30/minute")
 async def parse_exif(
@@ -75,7 +133,10 @@ async def parse_exif(
     paths: List[str] = Form([]),
     project_id: Optional[str] = Form(None),
     deployment_id: Optional[str] = Form(None),
+    assigned_deployment_id: Optional[str] = Form(None),
     upload_to_drive: Optional[bool] = Form(False),
+    run_ai: bool = Form(True),
+    auto_create_deployment: bool = Form(False),
     authorization: Optional[str] = Header(None),
 ):
     """Parse EXIF metadata from one or more uploaded JPEG files.
@@ -96,6 +157,9 @@ async def parse_exif(
         User-selected deployment ID for Drive subfolder organisation.
     upload_to_drive : bool, optional
         Whether to enqueue a Drive upload job (default ``False``).
+    run_ai : bool, optional
+        Whether to run the AI pipeline + Wildlife Brain after upload (default ``True``).
+        ``False`` uploads/archives only — no SpeciesNet/embedding.
     """
     results = []
     file_contents: List[bytes] = []
@@ -210,6 +274,25 @@ async def parse_exif(
             else:
                 deployment_ids.add(dep_id)
 
+    # ── 2b. Auto-create missing deployments (reuse the stamped UUID) ──
+    # The device stamps a Deployment_ID that has no row yet, so binding drops the
+    # frames. When the user opts in (+ picks a project), create those deployments
+    # reusing the same UUID so this and every future upload binds.
+    auto_created: list[str] = []
+    if auto_create_deployment and project_id and user and deployment_ids:
+        try:
+            auto_created = await _auto_create_deployments(list(deployment_ids), project_id, user.id)
+            if auto_created:
+                logger.info("auto_created_deployments", ids=auto_created, project_id=project_id)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logger.error("auto_create_deployments_failed", error=str(exc))
+            return JSONResponse(
+                status_code=400,
+                content={"error": {"code": "AUTO_CREATE_FAILED", "message": str(exc)}},
+            )
+
     # ── 3. Drive upload pipeline ─────────────────────────────────
     # user is already resolved from step 0 (image limit check)
 
@@ -219,7 +302,7 @@ async def parse_exif(
         drive_upload_info = {"enabled": False, "reason": "not_requested"}
     elif not user:
         drive_upload_info = {"enabled": True, "status": "error", "error": "Authentication required to upload images to Google Drive. Please log in."}
-    elif not deployment_ids and not folder_prefixes:
+    elif not deployment_ids and not folder_prefixes and not assigned_deployment_id:
         drive_upload_info = {"enabled": True, "status": "skipped", "reason": "no_deployment_id"}
     else:
         drive_upload_info = None  # will be set below
@@ -236,6 +319,8 @@ async def parse_exif(
                 deployment_ids=list(deployment_ids),
                 folder_prefixes=list(folder_prefixes),
                 user_id=user.id if user else None,
+                assigned_deployment_id=assigned_deployment_id,
+                run_ai=run_ai,
             )
         except Exception as exc:
             logger.error("drive_enqueue_failed", error=str(exc))
@@ -249,6 +334,7 @@ async def parse_exif(
         data={
             "images": results,
             "drive_upload": drive_upload_info,
+            "auto_created_deployments": auto_created,
         },
         meta=ApiMeta(request_id=getattr(request.state, "request_id", None) if request else None),
     )
@@ -263,6 +349,8 @@ async def _enqueue_drive_upload(
     deployment_ids: List[str],
     folder_prefixes: Optional[List[str]] = None,
     user_id: Optional[str] = None,
+    assigned_deployment_id: Optional[str] = None,
+    run_ai: bool = True,
 ) -> dict:
     """Upload images to Supabase Storage and enqueue the Drive upload job.
 
@@ -308,14 +396,23 @@ async def _enqueue_drive_upload(
         except Exception as exc:
             logger.warning("deployment_batch_lookup_failed", error=str(exc))
 
-    # 2. Prefix lookup for 8-char folder-derived IDs
+    # 2. Prefix lookup for 8-char folder-derived IDs. deployments.id is a uuid
+    # column, so match a uuid range, not `ilike` (which raises 42883 — that error
+    # was swallowed below and silently dropped every BMP frame, which binds by
+    # folder prefix rather than EXIF). See deployment_id_prefix_bounds.
     if folder_prefixes:
         for prefix in folder_prefixes:
+            bounds = deployment_id_prefix_bounds(prefix)
+            if not bounds:
+                logger.warning("folder_prefix_invalid", prefix=prefix)
+                continue
+            lo, hi = bounds
             try:
                 prefix_resp = (
                     client.table("deployments")
                     .select("id, deployment_start, deployment_end, location_name, latitude, longitude, project_id, projects(id, name)")
-                    .ilike("id", f"{prefix}%")
+                    .gte("id", lo)
+                    .lte("id", hi)
                     .limit(1)
                     .execute()
                 )
@@ -348,6 +445,55 @@ async def _enqueue_drive_upload(
             except Exception as exc:
                 logger.warning("folder_prefix_lookup_failed", prefix=prefix, error=str(exc))
 
+    # ── Access enforcement + manual assignment ───────────────────
+    # Resolution above uses the service client (bypasses RLS), so enforce access here: images
+    # must never attach to a deployment the caller can't reach. Classify every resolved
+    # deployment; block the no-access ones, and for unresolved/not-found images fall back to the
+    # user's explicit assignment (a deployment they picked or just created in the upload flow).
+    blocked_ids: set[str] = set()
+    if user_id and context_map:
+        access = await classify_deployment_access(user_id, list(context_map.keys()))
+        blocked_ids = {dep_id for dep_id, status in access.items() if status == "no_access"}
+
+    valid_assigned_id: Optional[str] = None
+    if assigned_deployment_id and user_id:
+        assign_status = await classify_deployment_access(user_id, [assigned_deployment_id])
+        if assign_status.get(assigned_deployment_id) == "valid":
+            valid_assigned_id = assigned_deployment_id
+            if assigned_deployment_id not in context_map:
+                # Load the assigned deployment's context for Drive folder naming.
+                try:
+                    a_resp = (
+                        client.table("deployments")
+                        .select("id, deployment_start, deployment_end, location_name, latitude, longitude, project_id, projects(id, name)")
+                        .eq("id", assigned_deployment_id)
+                        .limit(1)
+                        .execute()
+                    )
+                    if a_resp.data:
+                        dep_row = a_resp.data[0]
+                        dep_start = dep_row.get("deployment_start")
+                        dep_date = dep_start[:10] if dep_start else datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        proj = dep_row.get("projects")
+                        context_map[assigned_deployment_id] = {
+                            "deployment": {
+                                "id": assigned_deployment_id,
+                                "date": dep_date,
+                                "deployment_start": dep_start,
+                                "deployment_end": dep_row.get("deployment_end"),
+                                "location_name": dep_row.get("location_name", ""),
+                                "latitude": dep_row.get("latitude"),
+                                "longitude": dep_row.get("longitude"),
+                            },
+                            "project": {"id": proj["id"], "name": proj["name"]} if proj else None,
+                        }
+                except Exception as exc:
+                    logger.warning("assigned_deployment_lookup_failed", error=str(exc))
+        else:
+            logger.warning("assigned_deployment_not_accessible", deployment_id=assigned_deployment_id)
+
+    blocked_list = sorted(blocked_ids)
+
     # ── Upload files to Supabase Storage ─────────────────────────
     max_size = settings.GOOGLE_DRIVE_MAX_FILE_SIZE_MB * 1024 * 1024
     storage_entries = []
@@ -368,24 +514,27 @@ async def _enqueue_drive_upload(
         out_filename = (results[i].get("filename") if i < len(results) else None) or upload.filename
         file_dep_id = exif_data.get("deployment_id")
 
-        # Resolve 8-char folder prefix to full UUID if available
+        # Resolve 8-char folder prefix to full UUID (None if it matched no real deployment).
         if file_dep_id and len(file_dep_id) == 8:
-            resolved = prefix_to_full_id.get(file_dep_id.upper())
-            if resolved:
-                file_dep_id = resolved
+            file_dep_id = prefix_to_full_id.get(file_dep_id.upper())
 
-        if not file_dep_id:
-            logger.info("file_skipped_no_deployment_id", filename=upload.filename)
+        # Block: the resolved deployment exists but the caller has no access — never attach.
+        if file_dep_id and file_dep_id in blocked_ids:
+            logger.info("file_blocked_no_access", filename=upload.filename, deployment_id=file_dep_id)
             return None
+
+        # Unresolved (no id, unknown prefix, or not in the DB) → use the caller's explicit
+        # assignment when they provided one; otherwise skip (unchanged behaviour).
+        if not file_dep_id or file_dep_id not in context_map:
+            if valid_assigned_id:
+                file_dep_id = valid_assigned_id
+            else:
+                logger.info("file_skipped_no_deployment_id", filename=upload.filename)
+                return None
 
         file_context = context_map.get(file_dep_id)
         if not file_context:
-            exif_date = exif_data.get("date", "")
-            dep_date = exif_date[:10] if exif_date else datetime.now(timezone.utc).strftime("%Y-%m-%d")
-            file_context = {
-                "deployment": {"id": file_dep_id, "date": dep_date},
-                "project": None,
-            }
+            return None
 
         # Buffer to local disk instead of Supabase
 
@@ -402,6 +551,10 @@ async def _enqueue_drive_upload(
             "project": file_context["project"],
             "deployment": file_context["deployment"],
             "newly_uploaded": uploaded,
+            # Full parsed EXIF (already JSON-safe) — threaded through the upload
+            # job onto media.exif_metadata so camera variant, capture settings
+            # and on-device NN scores survive past this request.
+            "exif": exif_data or None,
         }
 
     tasks = [_process_file(i, upload, content) for i, (upload, content) in enumerate(zip(files, file_contents))]
@@ -412,7 +565,12 @@ async def _enqueue_drive_upload(
             storage_entries.append(res)
 
     if not storage_entries:
-        return {"enabled": True, "status": "skipped", "reason": "no_files_stored"}
+        return {
+            "enabled": True,
+            "status": "skipped",
+            "reason": "no_access" if blocked_list else "no_files_stored",
+            "blocked_deployments": blocked_list,
+        }
 
     # ── Enqueue ARQ job ──────────────────────────────────────────
     job_id = await create_job(
@@ -424,6 +582,8 @@ async def _enqueue_drive_upload(
     payload = {
         "files": storage_entries,
         "user_id": user_id,
+        # Gate the post-upload AI/Brain phase (upload_drive_images_job reads this).
+        "run_ai": run_ai,
     }
 
     try:
@@ -444,4 +604,5 @@ async def _enqueue_drive_upload(
         "status": "queued",
         "file_count": len(storage_entries),
         "duplicates_skipped": dup_count,
+        "blocked_deployments": blocked_list,
     }

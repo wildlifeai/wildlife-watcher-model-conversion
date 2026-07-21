@@ -3,13 +3,13 @@
 """Wildlife Brain — DINOv3 zero-shot clustering (pure domain logic).
 
 Pipeline: animal crops → DINOv3 1280-d embeddings → UMAP (2D persisted, 50D for
-clustering) → HDBSCAN clusters → purity scoring → Qdrant upsert + Supabase write
+clustering) → HDBSCAN clusters → purity scoring → vector upsert (pgvector) + Supabase write
 (media_embeddings, cluster_assignments, embedding_runs).
 
 Distinct from ``domain/clustering.py`` (perceptual-hash near-duplicate detection
 for iNaturalist) — this is semantic, embedding-based species grouping.
 
-Layering: orchestration here; DINOv3 / Qdrant / clustering libs live in services
+Layering: orchestration here; DINOv3 / clustering libs live in services
 and are imported lazily. The summary + purity helpers are pure (numpy only) and
 unit-tested without torch/hdbscan/umap.
 """
@@ -156,7 +156,6 @@ def build_media_embedding_rows(
                 "media_id": media_id,
                 "deployment_id": deployment_id,
                 "embedding_run_id": embedding_run_id,
-                "qdrant_point_id": media_id,
                 "cluster_id": label,
                 "cluster_confidence": round(float(cluster_probs[i]), 4),
                 "cluster_purity": purity_bucket(purity) if purity is not None else None,
@@ -218,7 +217,6 @@ def build_media_embedding_rows_scoped(
                 "media_id": media_id,
                 "deployment_id": deployment_ids[i],
                 "embedding_run_id": embedding_run_id,
-                "qdrant_point_id": media_id,
                 "cluster_id": label,
                 "cluster_confidence": round(float(cluster_probs[i]), 4),
                 "cluster_purity": purity_bucket(purity) if purity is not None else None,
@@ -292,7 +290,11 @@ def prepare_cluster_input(embeddings: list[list[float]]) -> list[tuple[float, ..
     if n == 0:
         # _l2_normalize would index axis=1 of a 1-D empty array and raise.
         return []
-    if n >= MIN_UMAP_POINTS:
+    # Reduce to 50-D only with comfortably more points than target dims. UMAP's
+    # spectral init computes ~n_components eigenvectors and raises "k >= N" once
+    # n_components (50) + 1 >= n — so a small/medium set (e.g. a 10-crop CamtrapDP
+    # import) must cluster on the raw (L2-normalized) embeddings instead.
+    if n > 60:
         return reduce_umap(embeddings, 50, UMAP_CLUSTER_PARAMS)
     normalized = _l2_normalize(np.asarray(embeddings, dtype=np.float32))
     return [tuple(float(v) for v in row) for row in normalized]
@@ -328,7 +330,10 @@ def cluster_hdbscan(embeddings: list[list[float]], preset: str = DEFAULT_HDBSCAN
 def reduce_umap(embeddings: list[list[float]], n_components: int, params: dict) -> list[tuple[float, ...]]:
     """UMAP-reduce embeddings to ``n_components``. No-op-ish for tiny inputs."""
     n = len(embeddings)
-    if n < max(4, params.get("n_neighbors", 15) // 3):
+    # UMAP's spectral init raises "k >= N" (scipy eigh) unless n comfortably exceeds both
+    # n_components and n_neighbors. Floor accordingly (n_components + 2 guards the target
+    # dim; MIN_UMAP_POINTS keeps tiny projections meaningless-but-safe).
+    if n < max(MIN_UMAP_POINTS, n_components + 2, params.get("n_neighbors", 15) // 3):
         # Too few points for a meaningful projection.
         return [tuple([0.0] * n_components) for _ in range(n)]
 
@@ -430,8 +435,8 @@ async def embed_and_cluster_deployment(
     Returns a summary dict. ``progress`` is an optional async callable(float, str).
     """
     from app.services.dinov3 import get_dinov3_service
-    from app.services.qdrant_client import build_payload, get_qdrant_service
     from app.services.supabase_client import create_service_client
+    from app.services.vector_store import build_payload, get_vector_service
 
     async def _tick(pct: float, msg: str):
         if progress:
@@ -473,11 +478,10 @@ async def embed_and_cluster_deployment(
         purities = compute_cluster_purities(embeddings, labels)
         summaries = summarize_clusters(labels, probs)
 
-        await _tick(0.8, "Upserting vectors to Qdrant…")
-        qdrant = get_qdrant_service(resolved_model)
-        await qdrant.ensure_collection()
+        await _tick(0.8, "Storing vectors…")
+        store = get_vector_service(resolved_model)
         payloads = [build_payload(deployment_id=deployment_id, embedding_run_id=run_id, cluster_id=int(labels[i])) for i in range(len(media_ids))]
-        await qdrant.upsert(media_ids, embeddings, payloads)
+        await store.upsert(media_ids, embeddings, payloads)
 
         await _tick(0.9, "Writing results…")
         me_rows = build_media_embedding_rows(media_ids, deployment_id, run_id, labels, probs, purities, umap_2d)
@@ -634,8 +638,8 @@ async def embed_and_cluster_scope(
     ``scope_id=None`` and considers every deployment the caller can see.
     """
     from app.services.dinov3 import get_dinov3_service
-    from app.services.qdrant_client import build_payload, get_qdrant_service
     from app.services.supabase_client import create_service_client
+    from app.services.vector_store import build_payload, get_vector_service
 
     async def _tick(pct: float, msg: str):
         if progress:
@@ -693,11 +697,10 @@ async def embed_and_cluster_scope(
         labels, probs = await asyncio.to_thread(cluster_hdbscan, cluster_input)
         purities = compute_cluster_purities(embeddings, labels)
 
-        await _tick(0.8, "Upserting vectors to Qdrant…")
-        qdrant = get_qdrant_service(resolved_model)
-        await qdrant.ensure_collection()
+        await _tick(0.8, "Storing vectors…")
+        store = get_vector_service(resolved_model)
         payloads = [build_payload(deployment_id=kept_deps[i], embedding_run_id=run_id, cluster_id=int(labels[i])) for i in range(len(kept_ids))]
-        await qdrant.upsert(kept_ids, embeddings, payloads)
+        await store.upsert(kept_ids, embeddings, payloads)
 
         await _tick(0.9, "Writing results…")
         me_rows = build_media_embedding_rows_scoped(kept_ids, kept_deps, run_id, labels, probs, purities, umap_2d)

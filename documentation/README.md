@@ -18,11 +18,15 @@ active engineering hand-offs; **archive** is frozen history. Start with onboardi
 
 | Doc | Covers |
 |-----|--------|
+| [AI-ARCHITECTURE](resources/AI-ARCHITECTURE.md) | The three AI layers (Camera AI / Cloud AI / Wildlife Brain): canonical naming, cross-repo contracts, integration map |
 | [api-reference](resources/api-reference.md) | Backend `/api/*` endpoint reference |
 | [demo-account](resources/demo-account.md) | Read-only "Try the demo" account: access, 3-layer read-only enforcement, API usage, per-environment seeding |
-| [deployment-guide](resources/deployment-guide.md) | Dev/prod environments, Azure + Cloudflare, CI/CD, vector store (pgvector → Qdrant), security checklist |
+| [deployment-guide](resources/deployment-guide.md) | Dev/prod environments, Azure + Cloudflare, CI/CD, vector store (pgvector in Supabase), security checklist |
 | [cloud-infrastructure](resources/cloud-infrastructure.md) | **Inventory + maintenance** of every Azure/Supabase/Cloudflare/Drive resource: what exists, what's essential vs sprawl, quarterly review checklist |
+| [prod-worker-provisioning-runbook](resources/prod-worker-provisioning-runbook.md) | Runbook to stand up the **production** GPU ML worker (ARQ + Redis + serverless T4) — ready to run once prod has real traffic |
 | [ai-model-pipeline](resources/ai-model-pipeline.md) | Edge Impulse → Vela on-camera model conversion |
+| [embedded-model-lifecycle](resources/embedded-model-lifecycle.md) | End-to-end on-device model flow across website / backend / mobile / firmware |
+| [dual-ai-production-rollout](resources/dual-ai-production-rollout.md) | Runbook to promote dual-AI (Camera AI + Cloud AI / edge reflection) from dev → staging → production, incl. the firmware gating dependency and rollout checklist |
 | [camtrapdp-import](resources/camtrapdp-import.md) | Importing CamtrapDP packages |
 | [lorawan-webhook-setup](resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server config |
 | [ui-components](resources/ui-components.md) | Shared frontend design-system primitives |
@@ -34,6 +38,8 @@ Current hand-offs; kept up to date until the work ships, then moved to `_archive
 
 | Spec | For | Covers |
 |------|-----|--------|
+| [dual-layer-ai-architecture-proposal](development%20reports/dual-layer-ai-architecture-proposal.md) | all repos | Camera AI / Cloud AI / Wildlife Brain naming, edge↔cloud integration framework, LoRaWAN alert-logic spec (instant/digest/back-off), validation roadmap + user stories |
+| [lorawan-alert-execution-spec](development%20reports/lorawan-alert-execution-spec.md) | website + backend + both firmwares | Build breakdown for `device_alert_rules` execution: manifest compile → Nordic strategy execution → Himax I2C score forward → backend uplink decode. Implements the proposal's §3 alert logic |
 | [bmp-ingestion-analysis](development%20reports/bmp-ingestion-analysis.md) | website + firmware | Raw-BMP ingest + in-pipeline JPEG re-compress; device capture behaviour; #1 same-frame dual-write |
 | [dual-camera-rpi-analysis](development%20reports/dual-camera-rpi-analysis.md) | firmware/hardware | HM0360 (night/IR) ↔ Raspberry Pi (day/colour) camera swap + dual-write interaction |
 | [exif-telemetry-firmware-spec](development%20reports/exif-telemetry-firmware-spec.md) | firmware | Add temperature/battery to EXIF via UserComment (smallest change) |
@@ -41,7 +47,7 @@ Current hand-offs; kept up to date until the work ships, then moved to `_archive
 | [storage-quota-spec](development%20reports/storage-quota-spec.md) | ww-backend + website | Per-org storage quota: `organisation_usage` schema + trigger + enforcement hook |
 | [inaturalist-integration](development%20reports/inaturalist-integration.md) | website | iNaturalist publish + community-ID sync integration |
 | [per-crop-classification-spec](development%20reports/per-crop-classification-spec.md) | website (pipeline) | Per-detection species classification (BioCLIP per crop) for mixed-species frames; blocked on GPU worker |
-| [gpu-worker-infra-spec](development%20reports/gpu-worker-infra-spec.md) | website (infra + CI/CD) | ARQ GPU worker: Redis + ACA GPU + vector store (pgvector→Qdrant) + KEDA; versioning, observability, batching, retries; unblocks cloud AI detection + the per-crop classifier |
+| [gpu-worker-infra-spec](development%20reports/gpu-worker-infra-spec.md) | website (infra + CI/CD) | ARQ GPU worker: Redis + ACA GPU + vector store (pgvector) + KEDA; versioning, observability, batching, retries; unblocks cloud AI detection + the per-crop classifier |
 
 ## Archive — `development reports/_archive/` (frozen history)
 

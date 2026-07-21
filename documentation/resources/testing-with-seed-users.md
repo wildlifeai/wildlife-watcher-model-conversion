@@ -93,7 +93,7 @@ def login_as(email: str):
     client.auth.sign_in_with_password({"email": email, "password": SEED_PASSWORD})
     return client
 
-@pytest.rata.integration
+@pytest.mark.integration
 def test_org_manager_sees_own_projects():
     client = login_as("kowhai@ww.org")
     projects = client.table("projects").select("name").execute()
@@ -101,7 +101,7 @@ def test_org_manager_sees_own_projects():
     assert "Wētāpunga Tracking Program" in names
     assert "Tuatara Documentation" not in names
 
-@pytest.rata.integration
+@pytest.mark.integration
 def test_unassigned_user_sees_no_projects():
     client = login_as("hemi@ww.org")
     projects = client.table("projects").select("name").execute()
@@ -109,7 +109,7 @@ def test_unassigned_user_sees_no_projects():
 ```
 
 > [!WARNING]
-> These integration tests require a running dev Supabase instance with seeded data. They should be tagged with `@pytest.rata.integration` and excluded from the standard CI pipeline (which uses mock env vars). Run them manually or in a dedicated CI job that targets the dev environment.
+> These integration tests require a running dev Supabase instance with seeded data. They should be tagged with `@pytest.mark.integration` and excluded from the standard CI pipeline (which uses mock env vars). Run them manually or in a dedicated CI job that targets the dev environment.
 
 ### Tier 2: Browser-Level UI Validation (Frontend)
 
@@ -140,7 +140,7 @@ async function loginAs(page, email: string) {
   await page.fill('[name="email"]', email);
   await page.fill('[name="password"]', SEED_PASSWORD);
   await page.click('button[type="submit"]');
-  await page.waitForURL('/my-data');
+  await page.waitForURL('/');   // login redirects to the home page
 }
 
 test('org manager sees Upload Model nav link', async ({ page }) => {

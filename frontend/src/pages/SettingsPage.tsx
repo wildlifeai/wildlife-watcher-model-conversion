@@ -5,16 +5,19 @@
 // configuration: account, projects & members (moved here from Results in P2), and —
 // later — capture defaults, default model, and notification rules (P5–P6).
 // Tools stay in Toolkit; monitoring stays in Field.
-/* eslint-disable react-hooks/set-state-in-effect */
+ 
 import { useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate, useSearchParams } from 'react-router-dom'
 import { useAuth } from '../hooks/useAuth'
 import { useProjectSelection } from '../hooks/useProjectSelection'
 import { supabase } from '../config/supabase'
 import { DataTable, type Column } from '../components/ui/DataTable'
+import { Modal } from '../components/ui/Modal'
 import { NAV_BTN } from '../components/data/DeploymentActionRow'
 import { CreateProjectModal, type CreatedProject } from '../components/data/CreateProjectModal'
-import { DemoDisabled } from '../components/common/DemoGuard'
+import { DemoDisabled, useDemoGuard } from '../components/common/DemoGuard'
+import { apiClient } from '../lib/apiClient'
+import { showUndoToast } from '../components/common/undoToastBus'
 import { ProjectMembersPanel } from '../components/data/ProjectMembersPanel'
 import { NotificationRulesPanel } from '../components/settings/NotificationRulesPanel'
 import { ProjectDefaultsPanel } from '../components/settings/ProjectDefaultsPanel'
@@ -49,11 +52,23 @@ export function SettingsPage() {
   const { user } = useAuth()
   const navigate = useNavigate()
   const { clearAll, toggleProject } = useProjectSelection()
+  const { guard } = useDemoGuard()
   const [searchParams] = useSearchParams()
 
   const [projects, setProjects] = useState<ProjectRow[]>([])
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const [projRefresh, setProjRefresh] = useState(0)
+
+  // Which projects the user may delete (project_admin, or an org-manager/system "super" role).
+  const [adminProjectIds, setAdminProjectIds] = useState<Set<string>>(new Set())
+  const [isSuperAdmin, setIsSuperAdmin] = useState(false)
+  const canDeleteProject = (id: string) => isSuperAdmin || adminProjectIds.has(id)
+
+  // Delete-confirmation modal (type the project name to confirm).
+  const [deleteTarget, setDeleteTarget] = useState<ProjectRow | null>(null)
+  const [deleteConfirmText, setDeleteConfirmText] = useState('')
+  const [deleting, setDeleting] = useState(false)
 
   // Auto-open Create Project when arrived with ?create=true (zero-project empty state)
   const [createOpen, setCreateOpen] = useState(() => searchParams.get('create') === 'true')
@@ -86,7 +101,58 @@ export function SettingsPage() {
         setLoading(false)
       })
     return () => { cancelled = true }
+  }, [user, projRefresh])
+
+  // Load the user's roles to decide which projects show a Delete action.
+  useEffect(() => {
+    if (!user) return
+    let cancelled = false
+    supabase
+      .from('user_roles')
+      .select('scope_id, scope_type, role')
+      .eq('user_id', user.id)
+      .then(({ data }) => {
+        if (cancelled || !data) return
+        const admins = new Set<string>()
+        let sup = false
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        for (const r of data as any[]) {
+          if (r.scope_type === 'system') sup = true
+          // Org-managers can only see their own org's projects (RLS), so treating them as
+          // able-to-delete-visible-projects is correct; the backend re-checks per project.
+          if (r.scope_type === 'organisation' && r.role === 'organisation_manager') sup = true
+          if (r.scope_type === 'project' && r.role === 'project_admin') admins.add(r.scope_id)
+        }
+        setAdminProjectIds(admins)
+        setIsSuperAdmin(sup)
+      })
+    return () => { cancelled = true }
   }, [user])
+
+  const doDeleteProject = async () => {
+    if (!deleteTarget) return
+    const target = deleteTarget
+    setDeleting(true)
+    try {
+      const res = await apiClient.del(`/api/projects/${target.id}`) as { deleted_at?: string }
+      const deletedAt = res?.deleted_at
+      setDeleteTarget(null)
+      setProjects(prev => prev.filter(p => p.id !== target.id))
+      if (deletedAt) {
+        showUndoToast({
+          message: `Deleted project "${target.name}"`,
+          onUndo: async () => {
+            await apiClient.post(`/api/projects/${target.id}/restore`, { deleted_at: deletedAt })
+            setProjRefresh(x => x + 1)
+          },
+        })
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Delete failed — you may not have permission.')
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   const projectColumns = useMemo<Column<ProjectRow>[]>(() => [
     { key: 'name', label: 'Name', cellStyle: { fontWeight: 500 } },
@@ -142,10 +208,20 @@ export function SettingsPage() {
           >
             🔔 Notifications
           </button>
+          {canDeleteProject(r.id) && (
+            <button
+              style={{ ...NAV_BTN, color: 'var(--error, #f44336)' }}
+              onClick={e => { e.stopPropagation(); guard(() => { setDeleteTarget(r); setDeleteConfirmText('') })() }}
+              title="Delete this project and all its data"
+            >
+              🗑 Delete
+            </button>
+          )}
         </div>
       ),
     },
-  ], [clearAll, toggleProject, navigate])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  ], [clearAll, toggleProject, navigate, guard, adminProjectIds, isSuperAdmin])
 
   return (
     <div style={{ maxWidth: 960 }}>
@@ -258,6 +334,42 @@ export function SettingsPage() {
           </div>
         </div>
       )}
+
+      <Modal open={!!deleteTarget} onClose={() => setDeleteTarget(null)} title="Delete project" size="sm">
+        {deleteTarget && (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+            <p style={{ fontSize: '0.85rem', margin: 0 }}>
+              This deletes <strong>{deleteTarget.name}</strong> and all its data —
+              {' '}<strong>{deleteTarget.deployment_count}</strong> deployment{deleteTarget.deployment_count !== 1 ? 's' : ''} plus
+              their photos and detections. It's a soft delete, so you can undo it right afterwards.
+            </p>
+            <label style={{ fontSize: '0.78rem', opacity: 0.75 }}>
+              Type the project name to confirm:
+              <input
+                value={deleteConfirmText}
+                onChange={e => setDeleteConfirmText(e.target.value)}
+                placeholder={deleteTarget.name}
+                style={{ width: '100%', marginTop: '0.3rem', padding: '0.45rem 0.55rem', fontSize: '0.85rem', border: '1px solid var(--border)', borderRadius: 'var(--radius)', background: 'var(--surface)', color: 'var(--text-color)' }}
+              />
+            </label>
+            <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+              <button onClick={() => setDeleteTarget(null)} style={{ ...NAV_BTN }}>Cancel</button>
+              <button
+                onClick={doDeleteProject}
+                disabled={deleteConfirmText !== deleteTarget.name || deleting}
+                style={{
+                  padding: '0.4rem 0.9rem', fontSize: '0.82rem', fontWeight: 600, border: 'none', borderRadius: 'var(--radius)',
+                  background: 'var(--error, #f44336)', color: '#fff',
+                  cursor: deleteConfirmText !== deleteTarget.name || deleting ? 'not-allowed' : 'pointer',
+                  opacity: deleteConfirmText !== deleteTarget.name || deleting ? 0.5 : 1,
+                }}
+              >
+                {deleting ? 'Deleting…' : 'Delete project'}
+              </button>
+            </div>
+          </div>
+        )}
+      </Modal>
     </div>
   )
 }

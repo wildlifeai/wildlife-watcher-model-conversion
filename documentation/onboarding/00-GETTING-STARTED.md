@@ -31,8 +31,12 @@ and the backend reads `../.env` before `backend/.env`.
 ```bash
 git clone https://github.com/wildlifeai/ww-website.git
 cd ww-website
-cp .env.example .env
+cp .env.example .env          # blank template — or, Wildlife.ai team:
+bash scripts/fetch-env.sh     # pull the shared dev .env from Azure Key Vault
 ```
+
+Team members get vault access from a maintainer — see the readme's
+[Secrets & Access](../../readme.md#secrets--access) section for the vault name and grant command.
 
 ### Environment variables
 
@@ -88,8 +92,9 @@ npm run dev
 | Swagger | open `http://localhost:8000/docs` | interactive API docs |
 | Frontend up | open `http://localhost:5173` | landing page loads |
 | Auth | click **Login** | Supabase Auth UI appears |
-| Signed-in nav | log in | top tabs: **Toolkit · Annotations · Insights** (plus **Field** when a deployment is active) |
+| Signed-in nav | log in | top tabs: **Toolkit · Annotations · Insights** (plus **Realtime** when a deployment is active) |
 | Data reads | open **Insights** | your projects / deployments |
+| Upload path | log in as a [seed user](../resources/testing-with-seed-users.md) and drag a folder from [`test-fixtures/camera-trap/sdcard/dev-sdcard/MEDIA/`](../../test-fixtures/camera-trap/README.md) into **Upload Data** | pipeline reaches **✅ Done**; the images appear in **Annotations** |
 
 If observation edits fail with `permission denied for table observations`, the database is missing
 write GRANTs for the `authenticated` role — that's a `ww-backend` migration, see

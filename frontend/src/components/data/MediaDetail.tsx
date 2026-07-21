@@ -5,6 +5,7 @@ import type { ObservationRecord, MediaRecord, MediaAssetRecord } from './MediaBr
 import { humanCreateFields, humanReviewFields, isHumanReviewed, isAiLabel } from '../../lib/observations'
 import { SpeciesPicker } from './SpeciesPicker'
 import { StatusBadge } from '../ui/StatusBadge'
+import { AiOriginBadge } from '../ui/AiOriginBadge'
 import { formatCaptureTime } from '../../lib/time'
 
 interface Props {
@@ -248,13 +249,16 @@ function ObservationList({ media, selectedId, onSelectObs }: {
             }}
           >
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '0.5rem', marginBottom: '0.35rem' }}>
-              <StatusBadge
-                status={status}
-                size="sm"
-                label={status === 'ai' && obs.classification_probability != null
-                  ? `AI ${(obs.classification_probability * 100).toFixed(0)}%`
-                  : undefined}
-              />
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '0.35rem', flexWrap: 'wrap' }}>
+                <StatusBadge
+                  status={status}
+                  size="sm"
+                  label={status === 'ai' && obs.classification_probability != null
+                    ? `AI ${(obs.classification_probability * 100).toFixed(0)}%`
+                    : undefined}
+                />
+                <AiOriginBadge obs={obs} />
+              </span>
               {obs.count != null && <span style={{ fontSize: '0.7rem', opacity: 0.6 }}>×{obs.count}</span>}
             </div>
             <div style={{ fontWeight: 600 }}>{obsLabel(obs)}</div>

@@ -65,7 +65,9 @@ The **service-role key is never exposed to the browser** — it stays in the bac
 
 Heavy tasks (Drive uploads, model conversion, pipeline runs) run as **in-process `asyncio`
 background tasks** — no Redis required for local dev. Container deploys can switch to ARQ + Redis
-via `jobs/worker.py`.
+via `jobs/worker.py`. When no Redis is reachable, enqueue logs
+`redis connection error … arq_enqueue_failed_fallback_local` and the job falls back to the
+in-process runner — expected noise in local dev, not a failure.
 
 ```
 create_job() → queued → processing → completed
@@ -142,6 +144,6 @@ instant in the **deployment's** timezone at display time.
 
 ## Supabase resources expected
 
-- **Storage buckets**: `firmware`, `ai-models` (private).
+- **Storage buckets**: `firmware`, `ai-models` (private); `media-renditions` (public — thumbnails/previews, see [04-AI-PIPELINE](./04-AI-PIPELINE.md)).
 - **Auth providers**: GitHub + Google OAuth.
 - **Realtime**: enable on `lorawan_parsed_messages` for live mobile updates.

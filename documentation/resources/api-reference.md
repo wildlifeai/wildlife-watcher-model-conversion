@@ -127,7 +127,7 @@ image-upload pipeline — see [03-DATA-AND-SYNC](../onboarding/03-DATA-AND-SYNC.
 
 | Method · Path | Description |
 |---|---|
-| `POST /api/exif/parse` | Form `files[]` (+ optional `paths[]`, `upload_to_drive`) → per-file parsed EXIF; optionally buffers bytes to Azure and enqueues the Drive upload job |
+| `POST /api/exif/parse` | Form `files[]` (+ optional `paths[]`, `upload_to_drive`, `assigned_deployment_id`, `run_ai`) → per-file parsed EXIF; buffers bytes to Azure + enqueues the Drive upload job. `assigned_deployment_id` binds photos that carry no valid deployment ID; `run_ai` (default `true`) gates the post-upload AI pipeline + Wildlife Brain |
 
 **Key extracted fields:** `deployment_id` (firmware tag `0xF200` → `UserComment` → `Custom_Data`),
 `latitude`/`longitude` (GPS DMS→decimal), `date` (Original → Create → DateTime), `Make`/`Model`,
@@ -225,6 +225,7 @@ Deployment helpers used by the upload flow. JWT required. Prefix `/api/deploymen
 
 | Method · Path | Description |
 |---|---|
+| `POST /api/deployments` | Create a deployment (+ placeholder device) in a project you can access — body `{ project_id, name?, location_name?, latitude?, longitude?, deployment_start?, deployment_end? }`. Backs the "assign/create a deployment at upload" flow: pass the new id as `assigned_deployment_id` to `/api/exif/parse` to bind photos that carry no valid deployment ID |
 | `POST /api/deployments/validate` | Resolve folder-prefix deployment ids to `valid` / `no_access` / `not_found` — the upload pre-check that drives the warning banners. Body `{ "deployment_ids": ["7785FABB", …] }` |
 | `POST /api/deployments/backfill-timezones` | Derive `deployments.timezone` from GPS for rows missing it (idempotent) |
 
@@ -236,7 +237,7 @@ Prefix `/api/camtrapdp`. Gated by `FF_CAMTRAPDP_IMPORT_ENABLED`.
 
 | Method · Path | Description |
 |---|---|
-| `POST /api/camtrapdp/import` | Import a CamtrapDP `.zip` (multipart `file`) → creates deployments + media + observations |
+| `POST /api/camtrapdp/import` | Import a CamtrapDP `.zip` (multipart `file`, optional `run_ai`) → creates deployments + media + observations. `run_ai=true` (default `false`) additionally runs SpeciesNet + Wildlife Brain on the image-backed imported deployments → returns `ai_job_id` |
 
 > Public-API export of CamtrapDP is `POST /api/v1/export/camtrapdp` (see [Public Data API](#public-data-api-v1)).
 
@@ -248,10 +249,12 @@ DINOv3 embeddings → UMAP → HDBSCAN clustering → vector-store similarity, a
 queue. JWT required; gated by **`FF_WILDLIFE_BRAIN_ENABLED`** (returns `FEATURE_DISABLED` when off).
 Prefix `/api/brain`. Architecture: [04-AI-PIPELINE](../onboarding/04-AI-PIPELINE.md).
 
-> **Vector store:** these endpoints are vector-store-backed. Current code uses **Qdrant**; the chosen
-> cloud target is **`pgvector`** in Supabase (Qdrant kept as the scale-up path) — see
-> [deployment guide → Vector Store](deployment-guide.md#vector-store--pgvector-chosen-for-cloud--qdrant-future-scale-up).
-> The `/api/brain/backup` Qdrant-snapshot endpoint is Qdrant-specific (pgvector inherits Supabase PITR).
+> **Vector store:** these endpoints are backed by **`pgvector` in Supabase** (live since 2026-07-09) —
+> vectors live in `media_embeddings.embedding`, searched via the `match_media_embeddings` RPC. The former
+> **Qdrant** container has been **removed**; see
+> [deployment guide → Vector Store](deployment-guide.md#vector-store--pgvector-supabase).
+> `/api/brain/backup` is now a **no-op** (retained for compatibility): pgvector inherits Supabase PITR, so
+> there is no separate snapshot to take.
 
 > Distinct from [Image Clustering](#image-clustering) (`/api/clustering`), which is the legacy
 > perceptual-hash near-duplicate grouping. `/api/brain` is the semantic DINOv3 clustering the
@@ -271,7 +274,7 @@ Prefix `/api/brain`. Architecture: [04-AI-PIPELINE](../onboarding/04-AI-PIPELINE
 | `POST /api/brain/reprocess/project/{project_id}` | Reprocess every deployment in a project |
 | `POST /api/brain/reprocess/all` | Platform-wide re-embed — default dry-run returns a cost estimate; `confirm=true` executes |
 | `GET /api/brain/compare-runs` | Compare cluster assignments between two runs (`?run_a=&run_b=`) |
-| `POST /api/brain/backup` | Enqueue a Qdrant snapshot → private Supabase Storage (disaster recovery) |
+| `POST /api/brain/backup` | **No-op** (compat shim) — pgvector inherits Supabase PITR, so there's no separate snapshot; the job completes with nothing to do |
 
 ### Active Learning & Review
 

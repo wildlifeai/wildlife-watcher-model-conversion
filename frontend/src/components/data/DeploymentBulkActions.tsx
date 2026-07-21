@@ -8,6 +8,9 @@
 import { useState, useRef, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useProjectSelection } from '../../hooks/useProjectSelection'
+import { apiClient } from '../../lib/apiClient'
+import { useDemoGuard } from '../common/DemoGuard'
+import { showUndoToast } from '../common/undoToastBus'
 import type { DeploymentRow } from './DeploymentActionRow'
 
 interface Props {
@@ -15,6 +18,8 @@ interface Props {
   rows: DeploymentRow[]
   onClear: () => void
   onShowMap: () => void
+  /** Called after a delete/undo so the parent can refetch the deployment list. */
+  onDeleted?: () => void
 }
 
 function downloadCsv(rows: DeploymentRow[]) {
@@ -27,10 +32,13 @@ function downloadCsv(rows: DeploymentRow[]) {
   URL.revokeObjectURL(url)
 }
 
-export function DeploymentBulkActions({ selected, rows, onClear, onShowMap }: Props) {
+export function DeploymentBulkActions({ selected, rows, onClear, onShowMap, onDeleted }: Props) {
   const navigate = useNavigate()
   const { clearAll, toggleProject } = useProjectSelection()
+  const { guard } = useDemoGuard()
   const [open, setOpen] = useState(false)
+  const [confirming, setConfirming] = useState(false)
+  const [deleting, setDeleting] = useState(false)
   const ref = useRef<HTMLDivElement>(null)
 
   useEffect(() => {
@@ -58,6 +66,29 @@ export function DeploymentBulkActions({ selected, rows, onClear, onShowMap }: Pr
     navigate('/annotations')
   }
 
+  const doDelete = async () => {
+    const ids = selectedRows.map(r => r.id)
+    setDeleting(true)
+    try {
+      const res = await apiClient.del('/api/deployments/batch', { deployment_ids: ids }) as { deleted_at?: string }
+      const deletedAt = res?.deleted_at
+      setConfirming(false); setOpen(false); onClear(); onDeleted?.()
+      if (deletedAt) {
+        showUndoToast({
+          message: `Deleted ${ids.length} deployment${ids.length !== 1 ? 's' : ''} (and their photos)`,
+          onUndo: async () => {
+            await apiClient.post('/api/deployments/batch/restore', { deployment_ids: ids, deleted_at: deletedAt })
+            onDeleted?.()
+          },
+        })
+      }
+    } catch (e) {
+      alert(e instanceof Error ? e.message : 'Delete failed — you may not have permission.')
+    } finally {
+      setDeleting(false)
+    }
+  }
+
   return (
     <div style={{
       display: 'flex', alignItems: 'center', gap: '0.75rem', marginBottom: '0.75rem',
@@ -66,22 +97,42 @@ export function DeploymentBulkActions({ selected, rows, onClear, onShowMap }: Pr
     }}>
       <span style={{ fontSize: '0.82rem', fontWeight: 600 }}>{selected.size} selected</span>
       <div ref={ref} style={{ position: 'relative' }}>
-        <button className="btn" style={{ fontSize: '0.8rem', padding: '0.3rem 0.7rem' }} onClick={() => setOpen(v => !v)}>
+        <button className="btn" style={{ fontSize: '0.8rem', padding: '0.3rem 0.7rem' }} onClick={() => { setOpen(v => !v); setConfirming(false) }}>
           Actions ▾
         </button>
         {open && (
           <div style={{
-            position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50, minWidth: 200,
+            position: 'absolute', top: 'calc(100% + 4px)', left: 0, zIndex: 50, minWidth: 220,
             background: 'var(--bg-color)', border: '1px solid var(--border)', borderRadius: 'var(--radius)',
             boxShadow: '0 4px 16px rgba(0,0,0,0.15)', padding: '0.25rem 0',
           }}>
-            <button style={item} onClick={() => run(openAnnotations)}>🏷️ Open in Annotations</button>
-            <button style={item} onClick={() => run(onShowMap)}>🗺 Show on map</button>
-            <button style={item} onClick={() => run(() => downloadCsv(selectedRows))}>📄 Export selected (CSV)</button>
-            {single && (
+            {confirming ? (
+              <div style={{ padding: '0.6rem 0.875rem' }}>
+                <div style={{ fontSize: '0.8rem', marginBottom: '0.5rem' }}>
+                  Delete <strong>{selected.size}</strong> deployment{selected.size !== 1 ? 's' : ''}? This also removes
+                  their photos and detections. You can undo.
+                </div>
+                <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
+                  <button style={{ ...item, width: 'auto', padding: '0.3rem 0.7rem' }} onClick={() => setConfirming(false)}>Cancel</button>
+                  <button
+                    onClick={doDelete}
+                    disabled={deleting}
+                    style={{ padding: '0.3rem 0.8rem', fontSize: '0.8rem', border: 'none', borderRadius: 'var(--radius)', background: 'var(--error, #f44336)', color: '#fff', cursor: deleting ? 'wait' : 'pointer' }}
+                  >
+                    {deleting ? 'Deleting…' : 'Delete'}
+                  </button>
+                </div>
+              </div>
+            ) : (
               <>
+                <button style={item} onClick={() => run(openAnnotations)}>🏷️ Open in Annotations</button>
+                <button style={item} onClick={() => run(onShowMap)}>🗺 Show on map</button>
+                <button style={item} onClick={() => run(() => downloadCsv(selectedRows))}>📄 Export selected (CSV)</button>
+                {single && (
+                  <button style={item} onClick={() => run(() => navigate(`/reporting/${single.id}`))}>📊 Results</button>
+                )}
                 <div style={{ height: 1, background: 'var(--border)', margin: '0.25rem 0' }} />
-                <button style={item} onClick={() => run(() => navigate(`/reporting/${single.id}`))}>📊 Results</button>
+                <button style={{ ...item, color: 'var(--error, #f44336)' }} onClick={guard(() => setConfirming(true))}>🗑 Delete</button>
               </>
             )}
           </div>

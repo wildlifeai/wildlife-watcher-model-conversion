@@ -71,6 +71,7 @@ def test_classifier_result_is_duck_compatible_with_observation_builder():
     assert r["vernacular_name"] == "jewelled gecko"
     assert r["source_model_version"] == "fake-1"
     assert r["classification_probability"] == 0.82
+    assert r["ai_origin"] == "cloud"
 
 
 def test_classifier_result_below_threshold_emits_nothing():

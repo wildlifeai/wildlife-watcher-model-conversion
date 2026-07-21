@@ -10,7 +10,7 @@ highlighted nav tab already signals where you are.
 
 ### The Ribbon (Microsoft-Word-style command bar)
 
-`MediaBrowser` and `ResultsPage` use a shared, branded `Ribbon` primitive
+`MediaBrowser` and `InsightsPage` use a shared, branded `Ribbon` primitive
 (`components/ui/Ribbon.tsx`):
 
 - **Menu bar** — a leaf brand mark + ribbon tabs + a live status slot.
@@ -19,7 +19,7 @@ highlighted nav tab already signals where you are.
 
 Annotations ribbon: a **Filter** tab (Deployment · Species · Status · Annotator + a *Refine* group
 whose launcher opens the advanced modal for date range / day-night) and a **View** tab (thumbnail
-size S/M/L). Results uses its four sub-tabs (Projects · Deployments · Map · Reports) as the menu bar.
+size S/M/L). Insights uses its four sub-tabs (Projects · Deployments · Map · Reports) as the menu bar.
 
 ### The grid
 
@@ -80,8 +80,11 @@ confirm fails with `permission denied for table observations`, that's the missin
 |---------|-------|---------|
 | Cluster review | `/clusters/:id` | Bulk-confirm an HDBSCAN cluster to one species |
 | Review queue | `/review/:id` | Active-learning order — highest-value images first |
-| Event review | `/events/:id` | Group observations into ecological events |
 | Dataset health | `/intelligence/:id` | Review funnel + AI-vs-human agreement |
 
+> Event review (`EventReviewPage`) is currently **unrouted** — `/events/:id` was removed from
+> `App.tsx`; the page file remains pending re-route-or-delete.
+
 For the model side of these, see [04-AI-PIPELINE](./04-AI-PIPELINE.md). The full design rationale is
-in [`development reports/annotation-pipeline-review.md`](../development%20reports/annotation-pipeline-review.md).
+in [`development reports/_archive/annotation-pipeline-review.md`](../development%20reports/_archive/annotation-pipeline-review.md)
+(archived — point-in-time review).

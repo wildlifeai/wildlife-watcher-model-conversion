@@ -11,17 +11,20 @@ import { useAuth } from './useAuth'
 // Returns null while resolving, then true/false — so callers can gate admin-only
 // API calls and redirect immediately without a flash or wasted request.
 export function useIsAdmin(): boolean | null {
-  const { user } = useAuth()
+  const { user, loading } = useAuth()
   const [isAdmin, setIsAdmin] = useState<boolean | null>(null)
 
   useEffect(() => {
+    // Session still restoring: stay null. Resolving to false here bounced
+    // admins off /admin/usage before the role check could even start.
+    if (loading) return
     if (!user) { setIsAdmin(false); return }
     let cancelled = false
     supabase
       .rpc('has_system_role', { required_role: 'ww_admin' })
       .then(({ data, error }) => { if (!cancelled) setIsAdmin(!error && data === true) })
     return () => { cancelled = true }
-  }, [user])
+  }, [user, loading])
 
   return isAdmin
 }

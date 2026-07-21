@@ -105,6 +105,8 @@ export function InsightsPage() {
 
   // Tracks the last observations-query key so the live refresh can skip the loading flash.
   const obsKeyRef = useRef('')
+  // Bumped after a deployment delete/undo to refetch the list.
+  const [depRefresh, setDepRefresh] = useState(0)
 
   const [reportFilterDep, setReportFilterDepState]    = useState(deploymentParam)
   const [reportFilterSpecies, setReportFilterSpecies] = useState('')
@@ -161,7 +163,7 @@ export function InsightsPage() {
       setDepLoading(false)
     })
     return () => { cancelled = true }
-  }, [user, selectedProjectIds, deploymentParam])
+  }, [user, selectedProjectIds, deploymentParam, depRefresh])
 
   // Load observations (reports always; map view when shown) ─────────────────
   useEffect(() => {
@@ -351,6 +353,7 @@ export function InsightsPage() {
               rows={deployments}
               onClear={() => setSelectedDeps(new Set())}
               onShowMap={() => setTab('map')}
+              onDeleted={() => { setSelectedDeps(new Set()); setDepRefresh(x => x + 1) }}
             />
             <DataTable<DeploymentRow>
               columns={deploymentColumns}
@@ -380,6 +383,7 @@ export function InsightsPage() {
             metric={mapMetric}
             speciesLabel={mapFilterSpecies || null}
             defaultFocusId={defaultFocusId}
+            showSpeciesPie
           />
         )
       )}
