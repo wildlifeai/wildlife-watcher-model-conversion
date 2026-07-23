@@ -30,7 +30,7 @@ jobs:
           directory: 'frontend'
           verbose: ${{ github.event.inputs.verbose || 'true' }}
           node-version: '20'
-          version: '0.5.1'
+          version: '0.9.0'
 
       - name: Report score
         run: |
