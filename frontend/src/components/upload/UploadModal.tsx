@@ -11,11 +11,13 @@
  * CamtrapDP import is a synchronous single-API-call; progress is shown
  * inline in the modal, which stays open until success/failure is confirmed.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { Modal } from '../ui/Modal'
 import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { apiClient } from '../../lib/apiClient'
+import { UnassignedTriage } from './UnassignedTriage'
+import { buildSessions } from './unassignedSessions'
 import { supabase } from '../../config/supabase'
 import { useNavigate } from 'react-router-dom'
 import { useUploadStore, type UploadDeployment, type PendingUpload } from '../../contexts/UploadContext'
@@ -239,9 +241,18 @@ export function UploadModal() {
     }
   }
 
-  const handleUpload = async () => {
+  const handleUpload = async (
+    sessionAssignments?: { deploymentId: string; indices: number[] }[],
+  ) => {
     if (files.length === 0) return
     setAssignError(null)
+
+    // Photos with no resolvable deployment are dropped server-side (the drive
+    // job only stores files that have one), so resolve them before uploading.
+    if (!sessionAssignments && triageSessions.length > 0) {
+      setShowTriage(true)
+      return
+    }
 
     // Resolve a manual deployment assignment (create project/deployment as needed) for photos
     // that have no recognised deployment. Photos that already resolve to a valid deployment keep
@@ -308,10 +319,27 @@ export function UploadModal() {
         return deploymentId ? { fileName: f.name, deploymentId } : null
       })
       .filter((p): p is PendingUpload => p !== null)
-    const resolvedDeploymentIds = [...new Set(pending.map((p) => p.deploymentId))]
+
+    // Triaged photos resolve through their session, not the folder prefix, so
+    // fold them in too — otherwise they'd be missing from the optimistic grid
+    // and the post-upload redirect would filter to the wrong deployments.
+    const triaged: PendingUpload[] = []
+    if (sessionAssignments?.length) {
+      const byIndex = new Map<number, string>()
+      for (const g of sessionAssignments) for (const i of g.indices) byIndex.set(i, g.deploymentId)
+      files.forEach((f, i) => {
+        const deploymentId = byIndex.get(i)
+        if (deploymentId) triaged.push({ fileName: f.name, deploymentId })
+      })
+    }
+    const allPending = [...pending, ...triaged]
+    const resolvedDeploymentIds = [...new Set(allPending.map((p) => p.deploymentId))]
 
     // Images always sync to Google Drive (long-term storage is the default).
-    startUpload(files, filePaths, true, deployments, assignedDeploymentId, resolvedDeploymentIds, pending)
+    startUpload(
+      files, filePaths, true, deployments,
+      assignedDeploymentId, resolvedDeploymentIds, allPending, sessionAssignments,
+    )
     // Modal closes inside startUpload → no explicit closeModal needed
 
     // Land the user on Annotations, filtered to the just-uploaded deployment, so they watch their
@@ -362,6 +390,27 @@ export function UploadModal() {
   // Manual assignment is required when photos carry no deployment prefix at all, or when some
   // prefixes aren't in the DB. (no_access photos are excluded server-side and don't gate upload.)
   const needsAssignment = uploadMode === 'images' && (deploymentCount === 0 || notFound.length > 0)
+
+  // Files whose deployment cannot be resolved from the card's folder structure.
+  // These are the ones the backend would silently drop (no deployment_id -> not
+  // stored -> no media row), so they go through triage instead.
+  const unresolvedIndices = useMemo(() => {
+    if (uploadMode !== 'images') return []
+    const known = new Set(deployments.map((d) => d.id.slice(0, 8).toUpperCase()))
+    return files
+      .map((f, i) => {
+        const path = filePaths[i] ?? f.name
+        const m = path.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
+        return m && known.has(m[1].toUpperCase()) ? -1 : i
+      })
+      .filter((i) => i >= 0)
+  }, [files, filePaths, deployments, uploadMode])
+
+  const [showTriage, setShowTriage] = useState(false)
+  const triageSessions = useMemo(
+    () => (unresolvedIndices.length ? buildSessions(files, filePaths, unresolvedIndices) : []),
+    [files, filePaths, unresolvedIndices],
+  )
   const depsInProject = deployments.filter((d) => d.project_id === assignProjectId)
   const projectReady = !!assignProjectId && (assignProjectId !== '__new__' || !!newProjectName.trim())
   const deploymentReady = !!assignDeploymentId && (assignDeploymentId !== '__new__' || !!newDepName.trim())
@@ -406,6 +455,22 @@ export function UploadModal() {
       size="md"
       persistent={isActive || camtrapImporting}
     >
+      {/* ── Deployment triage (photos the backend would otherwise drop) ──── */}
+      {showTriage ? (
+        <UnassignedTriage
+          files={files}
+          filePaths={filePaths}
+          unresolved={unresolvedIndices}
+          deployments={deployments}
+          projects={projects}
+          onCancel={() => setShowTriage(false)}
+          onDone={(assignments: { deploymentId: string; indices: number[] }[]) => {
+            setShowTriage(false)
+            handleUpload(assignments)
+          }}
+        />
+      ) : (
+      <>
       {/* ── Drop zone (idle) ─────────────────────────────────────────────── */}
       {uploadMode === 'idle' && (
         <>
@@ -592,7 +657,7 @@ export function UploadModal() {
             </button>
             <button
               className="btn"
-              onClick={handleUpload}
+              onClick={() => handleUpload()}
               disabled={assigning || !assignmentReady}
               style={{ padding: '0.5rem 1.5rem', fontWeight: 600, opacity: assigning || !assignmentReady ? 0.6 : 1 }}
             >
@@ -740,6 +805,8 @@ export function UploadModal() {
             </div>
           )}
         </div>
+      )}
+      </>
       )}
     </Modal>
   )
