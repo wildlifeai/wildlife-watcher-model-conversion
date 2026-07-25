@@ -98,13 +98,22 @@ interface UploadContextValue {
 const EMPTY_PIPELINE: PipelineState = {
   totalFiles: 0,
   uploadedFiles: 0,
+  failedFiles: 0,
   jobs: [],
   logs: [],
   lastUpdateTs: 0,
+  uploadError: null,
 }
 
 export function derivePhase(state: PipelineState): UploadPhase {
   if (state.jobs.some((j) => j.status === 'failed')) return 'failed'
+
+  // A batch that threw is a failed run, not a silent one. Without this a total
+  // upload failure rendered as "Pipeline Complete 100%" with the error buried
+  // in the collapsed technical log (bench, production, 26 Jul).
+  const failed = state.failedFiles ?? 0
+  if (failed > 0 && failed + state.uploadedFiles >= state.totalFiles) return 'failed'
+  if (state.uploadError && state.jobs.length === 0) return 'failed'
 
   if (
     state.jobs.length > 0 &&
@@ -122,7 +131,8 @@ export function derivePhase(state: PipelineState): UploadPhase {
   )
     return 'completed'
 
-  if (state.uploadedFiles < state.totalFiles) return 'uploading'
+  // Only files still unaccounted for (neither uploaded nor failed) mean "uploading"
+  if (state.uploadedFiles + failed < state.totalFiles) return 'uploading'
 
   const idleMs = Date.now() - state.lastUpdateTs
   if (idleMs > 15_000 && state.jobs.some((j) => j.status === 'processing')) return 'stalled'
@@ -363,6 +373,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       setPipelineState({
         totalFiles: files.length,
         uploadedFiles: 0,
+        failedFiles: 0,
+        uploadError: null,
         jobs: [],
         logs: [
           {
@@ -478,6 +490,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               err?.response?.data?.error?.message ??
               err?.message ??
               String(err)
+            const batchCount = Math.min(i + BATCH_SIZE, files.length) - i
             setPipelineState((prev) => ({
               ...prev,
               logs: [
@@ -488,7 +501,13 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                   message: `❌ Batch ${batchNum} failed: ${msg}`,
                 },
               ],
-              uploadedFiles: Math.min(i + BATCH_SIZE, prev.totalFiles),
+              // Count the batch as FAILED - never as uploaded. Advancing
+              // uploadedFiles here made a total failure render as
+              // "N of N photos · Pipeline Complete 100%".
+              failedFiles: (prev.failedFiles ?? 0) + batchCount,
+              // Surface the first error where the user can see it without
+              // expanding the technical log
+              uploadError: prev.uploadError || msg,
               lastUpdateTs: Date.now(),
             }))
           }
