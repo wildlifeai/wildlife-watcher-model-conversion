@@ -24,6 +24,10 @@ export type PipelineJob = {
 export type PipelineState = {
   totalFiles: number
   uploadedFiles: number
+  /** Files whose batch failed. Counted separately so a failed run can never
+   *  reach "N of N photos" and read as a success (it used to: the batch catch
+   *  advanced uploadedFiles by the whole batch). */
+  failedFiles?: number
   jobs: PipelineJob[]
   logs: LogEntry[]
   lastUpdateTs: number
@@ -84,13 +88,22 @@ function deriveSteps(state: PipelineState, phase: string): StepsResult {
   const done = phase === 'completed'
 
   // 1 · Upload (browser → server)
-  const upDone = done || (total > 0 && state.uploadedFiles >= total)
+  // Failed files are counted separately and NEVER as uploaded, so a run that
+  // failed can't display as complete.
+  const upFailed = state.failedFiles ?? 0
+  const upSettled = state.uploadedFiles + upFailed
+  const upDone = (done && upFailed === 0) || (total > 0 && state.uploadedFiles >= total)
   const uploadStep: StepView = {
     key: 'upload',
     label: 'Uploaded',
-    detail: total > 0 ? `${Math.min(state.uploadedFiles, total)} of ${total} photos` : 'Preparing…',
-    status: total > 0 && upDone ? 'done' : 'active',
-    progress: total > 0 ? state.uploadedFiles / total : null,
+    detail:
+      total === 0 ? 'Preparing…'
+      : upFailed > 0 ? `${state.uploadedFiles} of ${total} photos · ${upFailed} failed`
+      : `${Math.min(state.uploadedFiles, total)} of ${total} photos`,
+    status: upFailed > 0 && upSettled >= total ? 'error'
+      : total > 0 && upDone ? 'done'
+      : 'active',
+    progress: total > 0 ? upSettled / total : null,
   }
 
   // 2 · Save to Google Drive
