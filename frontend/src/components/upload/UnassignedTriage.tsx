@@ -70,7 +70,13 @@ function SessionCard({
   const [name, setName] = useState(
     session.cardFolder ? `Card ${session.cardFolder}` : `Photos from ${fmt(session.firstMs)}`,
   )
-  const [projectId, setProjectId] = useState(projects[0]?.id ?? '')
+  // Projects can still be loading when this card first renders, so the initial
+  // value would stick at '' while the <select> visually shows the first option
+  // - "Create & assign" then failed with "pick a project" on an apparently
+  // picked project. Derive the effective value instead of syncing state in an
+  // effect (which this repo's lint rejects).
+  const [pickedProjectId, setPickedProjectId] = useState('')
+  const projectId = pickedProjectId || projects[0]?.id || ''
 
   const resolved = session.deploymentId !== null
   const samplePath = filePaths[session.indices[0]] ?? files[session.indices[0]]?.name ?? ''
@@ -149,7 +155,7 @@ function SessionCard({
               </label>
               <label>
                 <span>Project</span>
-                <select value={projectId} onChange={(e) => setProjectId(e.target.value)}>
+                <select value={projectId} onChange={(e) => setPickedProjectId(e.target.value)}>
                   {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
                 </select>
               </label>
