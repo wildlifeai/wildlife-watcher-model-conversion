@@ -30,17 +30,26 @@ interface Props {
   onDone: (assignments: { deploymentId: string; indices: number[] }[], skipped: number) => void
 }
 
-/** Thumbnails for a handful of representative frames, revoked on unmount. */
-function useSamples(files: File[], indices: number[]): string[] {
-  const picks = useMemo(() => {
+/** A few representative frames from the session (first, last, and between). */
+function useSamplePicks(indices: number[]): number[] {
+  return useMemo(() => {
     if (indices.length <= 4) return indices
     const step = (indices.length - 1) / 3
     return [0, 1, 2, 3].map((n) => indices[Math.round(n * step)])
   }, [indices])
+}
 
-  const urls = useMemo(() => picks.map((i) => URL.createObjectURL(files[i])), [picks, files])
-  useEffect(() => () => urls.forEach((u) => URL.revokeObjectURL(u)), [urls])
-  return urls
+/**
+ * One thumbnail that owns its object URL: created once per mount via the
+ * useState initialiser and revoked on unmount. Keeping the lifecycle inside
+ * the element avoids both a ref ledger (refs must not be read during render)
+ * and setState-in-effect, and there is nothing left to leak when the list
+ * changes because React unmounts the old <Thumb>.
+ */
+function Thumb({ file, alt }: { file: File; alt: string }) {
+  const [url] = useState(() => URL.createObjectURL(file))
+  useEffect(() => () => URL.revokeObjectURL(url), [url])
+  return <img src={url} alt={alt} loading="lazy" />
 }
 
 function SessionCard({
@@ -54,7 +63,7 @@ function SessionCard({
   onAssign: (deploymentId: string) => void
   onSkip: () => void
 }) {
-  const samples = useSamples(files, session.indices)
+  const picks = useSamplePicks(session.indices)
   const [creating, setCreating] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -87,11 +96,11 @@ function SessionCard({
   return (
     <div className={`triage-card${resolved ? ' is-resolved' : ''}${session.skipped ? ' is-skipped' : ''}`}>
       <div className="triage-shots">
-        {samples.map((u, n) => (
-          <img key={u} src={u} alt={`Frame ${n + 1} of this session`} loading="lazy" />
+        {picks.map((i, n) => (
+          <Thumb key={i} file={files[i]} alt={`Frame ${n + 1} of this session`} />
         ))}
-        {session.indices.length > samples.length && (
-          <span className="triage-more">+{session.indices.length - samples.length}</span>
+        {session.indices.length > picks.length && (
+          <span className="triage-more">+{session.indices.length - picks.length}</span>
         )}
       </div>
 

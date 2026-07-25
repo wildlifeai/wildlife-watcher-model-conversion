@@ -319,12 +319,26 @@ export function UploadModal() {
         return deploymentId ? { fileName: f.name, deploymentId } : null
       })
       .filter((p): p is PendingUpload => p !== null)
-    const resolvedDeploymentIds = [...new Set(pending.map((p) => p.deploymentId))]
+
+    // Triaged photos resolve through their session, not the folder prefix, so
+    // fold them in too — otherwise they'd be missing from the optimistic grid
+    // and the post-upload redirect would filter to the wrong deployments.
+    const triaged: PendingUpload[] = []
+    if (sessionAssignments?.length) {
+      const byIndex = new Map<number, string>()
+      for (const g of sessionAssignments) for (const i of g.indices) byIndex.set(i, g.deploymentId)
+      files.forEach((f, i) => {
+        const deploymentId = byIndex.get(i)
+        if (deploymentId) triaged.push({ fileName: f.name, deploymentId })
+      })
+    }
+    const allPending = [...pending, ...triaged]
+    const resolvedDeploymentIds = [...new Set(allPending.map((p) => p.deploymentId))]
 
     // Images always sync to Google Drive (long-term storage is the default).
     startUpload(
       files, filePaths, true, deployments,
-      assignedDeploymentId, resolvedDeploymentIds, pending, sessionAssignments,
+      assignedDeploymentId, resolvedDeploymentIds, allPending, sessionAssignments,
     )
     // Modal closes inside startUpload → no explicit closeModal needed
 
