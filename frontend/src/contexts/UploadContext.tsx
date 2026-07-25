@@ -76,6 +76,8 @@ interface UploadContextValue {
     resolvedDeploymentIds?: string[],
     /** Per-file → deployment mapping, for the optimistic Annotations grid before DB rows exist. */
     pending?: PendingUpload[],
+    /** Capture-session bindings from the triage step, one deployment per group of files. */
+    sessionAssignments?: { deploymentId: string; indices: number[] }[],
   ) => Promise<void>
   clearUpload: () => void
 
@@ -351,9 +353,29 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       assignedDeploymentId?: string,
       resolvedDeploymentIds?: string[],
       pending?: PendingUpload[],
+      /** Per-capture-session bindings from the triage step (see UnassignedTriage).
+       *  Files are ordered so each batch carries a single deployment, because
+       *  assigned_deployment_id is one value per request. */
+      sessionAssignments?: { deploymentId: string; indices: number[] }[],
     ): Promise<void> => {
       if (busyRef.current) return
       busyRef.current = true
+
+      // Order files by session so a batch never mixes deployments, and remember
+      // which deployment each position belongs to.
+      let perFileDeployment: (string | undefined)[] = []
+      if (sessionAssignments?.length) {
+        const byIndex = new Map<number, string>()
+        for (const g of sessionAssignments) for (const i of g.indices) byIndex.set(i, g.deploymentId)
+        const order = files.map((_, i) => i).sort((a, b) => {
+          const da = byIndex.get(a) ?? ''
+          const db = byIndex.get(b) ?? ''
+          return da === db ? a - b : da < db ? -1 : 1
+        })
+        files = order.map((i) => files[i])
+        paths = order.map((i) => paths[i] ?? '')
+        perFileDeployment = order.map((i) => byIndex.get(i))
+      }
 
       // Deployment IDs for the post-upload annotations filter/redirect: prefer the precise set
       // the modal resolved (folder-prefix matches ∪ manual assignment); fall back to all.
@@ -412,7 +434,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           for (const f of chunk) formData.append('files', f)
           for (const p of chunkPaths) formData.append('paths', p)
           if (uploadToDrive) formData.append('upload_to_drive', 'true')
-          if (assignedDeploymentId) formData.append('assigned_deployment_id', assignedDeploymentId)
+          // A triage session's binding wins for its own files; otherwise the
+          // single modal-level assignment applies.
+          const batchAssigned = perFileDeployment[i] ?? assignedDeploymentId
+          if (batchAssigned) formData.append('assigned_deployment_id', batchAssigned)
 
           try {
             const response = await apiClient.upload('/api/exif/parse', formData)
