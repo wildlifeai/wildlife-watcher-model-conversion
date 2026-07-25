@@ -388,7 +388,20 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       // Annotations grid can show them within ~1s (before any server rendition).
       registerLocalPreviews(files)
 
-      const totalBatches = Math.ceil(files.length / BATCH_SIZE)
+      // Batch boundaries must never span two deployments: assigned_deployment_id
+      // is one value per request, so a mixed batch would file the tail of it
+      // under the wrong deployment. Cut a batch at BATCH_SIZE *or* whenever the
+      // deployment changes, whichever comes first. With no session assignments
+      // every entry is undefined and this reduces to plain BATCH_SIZE chunks.
+      const batchPlan: { start: number; end: number; assigned?: string }[] = []
+      for (let s = 0; s < files.length; ) {
+        const dep = perFileDeployment[s]
+        let e = s + 1
+        while (e < files.length && e - s < BATCH_SIZE && perFileDeployment[e] === dep) e++
+        batchPlan.push({ start: s, end: e, assigned: dep })
+        s = e
+      }
+      const totalBatches = batchPlan.length
       lastSeenSeqRef.current = {}
 
       // Initialise state, close modal, show dock
@@ -411,11 +424,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       setDockState('medium')
 
       try {
-        for (let i = 0; i < files.length; i += BATCH_SIZE) {
-          const batchNum = Math.floor(i / BATCH_SIZE) + 1
-          const batchEnd = Math.min(i + BATCH_SIZE, files.length)
-          const chunk = files.slice(i, i + BATCH_SIZE)
-          const chunkPaths = paths.slice(i, i + BATCH_SIZE)
+        for (const [planIdx, plan] of batchPlan.entries()) {
+          const i = plan.start
+          const batchNum = planIdx + 1
+          const batchEnd = plan.end
+          const chunk = files.slice(plan.start, plan.end)
+          const chunkPaths = paths.slice(plan.start, plan.end)
 
           setPipelineState((prev) => ({
             ...prev,
@@ -434,9 +448,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           for (const f of chunk) formData.append('files', f)
           for (const p of chunkPaths) formData.append('paths', p)
           if (uploadToDrive) formData.append('upload_to_drive', 'true')
-          // A triage session's binding wins for its own files; otherwise the
-          // single modal-level assignment applies.
-          const batchAssigned = perFileDeployment[i] ?? assignedDeploymentId
+          // Every file in this batch shares one deployment by construction
+          // (see batchPlan); fall back to the single modal-level assignment.
+          const batchAssigned = plan.assigned ?? assignedDeploymentId
           if (batchAssigned) formData.append('assigned_deployment_id', batchAssigned)
 
           try {
@@ -515,7 +529,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               err?.response?.data?.error?.message ??
               err?.message ??
               String(err)
-            const batchCount = Math.min(i + BATCH_SIZE, files.length) - i
+            const batchCount = plan.end - plan.start
             setPipelineState((prev) => ({
               ...prev,
               logs: [
