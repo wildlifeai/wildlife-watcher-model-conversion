@@ -6,6 +6,7 @@ import { supabase } from '../config/supabase'
 import { QRCodeSVG } from 'qrcode.react'
 import { ThreeStepGuide, DEFAULT_SIGNED_IN_STEPS, DEFAULT_MARKETING_STEPS } from '../components/common/ThreeStepGuide'
 import { DemoLoginButton } from '../components/common/DemoLoginButton'
+import { PrototypeBanner } from '../components/common/PrototypeBanner'
 
 const APP_STORE_URL = 'https://apps.apple.com/app/id6480342929'
 const PLAY_STORE_URL = 'https://play.google.com/store/apps/details?id=com.wildlife.wildlifewatcher&pcampaignid=web_share'
@@ -112,6 +113,8 @@ function Dashboard() {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: '2.5rem' }}>
 
+      <PrototypeBanner />
+
       {/* Greeting */}
       <div>
         <h2 style={{ margin: '0 0 0.25rem 0', fontSize: '1.75rem' }}>
@@ -192,6 +195,9 @@ const SECTION_HEADING: React.CSSProperties = {
 function MarketingHero() {
   return (
     <div>
+      <div style={{ maxWidth: '800px', margin: '0 auto 2rem' }}>
+        <PrototypeBanner />
+      </div>
 
       {/* ── Hero ────────────────────────────────────────────────────────── */}
       <div style={{ textAlign: 'center', maxWidth: '800px', margin: '0 auto', padding: '0 0 3rem 0' }}>
