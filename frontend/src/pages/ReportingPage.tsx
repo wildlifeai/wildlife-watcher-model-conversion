@@ -141,6 +141,10 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
       })
       setLoading(false)
     })
+      // supabase-js resolves query errors into { error }, so the realistic
+      // reject here is an exception inside the .then callback - either way,
+      // never leave the tab stuck on "Loading observations".
+      .catch(() => setLoading(false))
   }, [deploymentId])
 
   const allSpecies = [...new Set(rows.map((r) => r.scientific_name!).filter(Boolean))].sort()
@@ -233,7 +237,7 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
             ? 'A deployment with photos and no detections is a valid result — nothing came past the camera, or the AI missed it. If you spot an animal the AI missed, label it and it will appear here.'
             : 'Upload this deployment’s photos and the results will appear here after analysis.'}
         </p>
-        <Link to="/annotations" style={{ color: 'var(--primary)', fontSize: '0.9rem' }}>
+        <Link to={`/annotations?deployment=${deploymentId}`} style={{ color: 'var(--primary)', fontSize: '0.9rem' }}>
           {mediaCount > 0 ? 'Review the photos in Annotations →' : 'Go to Annotations →'}
         </Link>
       </div>
