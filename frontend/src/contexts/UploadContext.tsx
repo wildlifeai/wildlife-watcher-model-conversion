@@ -462,8 +462,22 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             setPipelineState((prev) => {
               const logs = [...prev.logs]
               const jobs = [...prev.jobs]
+              let uploadError = prev.uploadError ?? null
 
               if (driveInfo) {
+                // The server can refuse the whole storage step - Drive not
+                // configured (GOOGLE_DRIVE_ENABLED unset), or not requested.
+                // Images are then never stored AND never get a media row (the
+                // drive job is what creates them), so this must read as a
+                // failure rather than passing silently: production ran this
+                // branch for weeks while the dock showed a green tick.
+                if (driveInfo.enabled === false) {
+                  const why = driveInfo.reason === 'server_disabled'
+                    ? 'Image storage is not configured on this server, so nothing was saved. Contact an administrator.'
+                    : `Image storage was not used (${driveInfo.reason ?? 'unknown reason'}), so nothing was saved.`
+                  logs.push({ ts: Date.now(), level: 'error', message: `❌ ${why}` })
+                  uploadError = uploadError || why
+                }
                 // Server blocked images whose deployment the user can't access (enforced
                 // regardless of the client-side warning).
                 if (driveInfo.blocked_deployments?.length) {
@@ -519,7 +533,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 })
               }
 
-              return { ...prev, uploadedFiles: batchEnd, jobs, logs, lastUpdateTs: Date.now() }
+              return { ...prev, uploadedFiles: batchEnd, jobs, logs, uploadError, lastUpdateTs: Date.now() }
             })
           } catch (e: unknown) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
