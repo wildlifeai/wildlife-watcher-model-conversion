@@ -164,6 +164,17 @@ svc.table("media").upsert({
   place for it.
 - Response gains `media: [{file_name, media_id, deduped: bool}]` so the
   client can count "already existed" precisely.
+- **Privacy note (EXIF GPS).** This spec changes *when* `exif_metadata` is
+  written, not *who can read it*: the Drive job already writes the full
+  EXIF (GPS included) to `media.exif_metadata` today, and rows stay
+  RLS-scoped to project members either way. Two invariants to hold:
+  ingest-time rows are created only for deployments that passed
+  `classify_deployment_access` (same as the job today), and `pending` rows
+  must never surface through any public path — they default
+  `file_public = false`, and the backups panel/API reads under the same
+  RLS as the Annotations grid. The broader question of coarsening GPS on
+  any *public* surface predates this spec and is tracked as open
+  question 5.
 
 ### 6.2 Drive job → backup-sync job (jobs/definitions.py)
 
@@ -215,7 +226,23 @@ Request (after triage/folder-prefix resolution, so deployment ids are known):
 ```
 
 Response per file: `new` · `synced` · `pending` (row + staged bytes exist —
-don't resend) · `needs_bytes` (row exists, bytes lost/corrupted — resend).
+don't resend) · `needs_bytes` (row exists, bytes lost/corrupted — resend) ·
+`unauthorized` (see below).
+
+**Authorization (mandatory, not an implementation detail).** The endpoint
+requires an authenticated session (401 otherwise) and its **first** step is
+`classify_deployment_access(user_id, distinct deployment_ids)` — the same
+guard `/api/exif/parse` already runs (`app/authz.py`; exif.py builds
+`blocked_ids` from it). Files under a `no_access` deployment are answered
+`unauthorized` **without the media table ever being queried**, so the reply
+is byte-identical whether or not such a row exists — the endpoint cannot be
+used as an existence oracle to probe other projects' deployments for known
+photos (which would confirm species presence at a location). Defence in
+depth: the salted hash means a probe already requires possessing the exact
+image bytes *and* the deployment id, but authz must never lean on that.
+The client treats `unauthorized` like today's `blocked_deployments`
+warning: exclude the files and tell the user. Batch endpoint, one access
+check per distinct deployment — no per-file amplification.
 
 Client hashing replicates `compute_file_hash` with WebCrypto
 (`crypto.subtle.digest('SHA-256', bytes ‖ utf8(deployment_id))`), run
@@ -280,6 +307,13 @@ green and the old order keeps working until cut-over:
    auto-soft-delete after N days?
 4. **Sweeper transport** — reuse `api_jobs` + KEDA (already scales the
    worker) vs. a pg_cron enqueue. Leaning `api_jobs` for uniformity.
+5. **EXIF GPS on public surfaces** — `media.exif_metadata` carries raw
+   coordinates (taonga-species locations are exactly the data-sovereignty
+   case our mātauranga commitments cover). Members-only surfaces are fine
+   (RLS), but any surface that honours `file_public = true` — or a future
+   share/export — should strip or coarsen GPS unless the project opts in
+   (cf. iNaturalist `geoprivacy`). Applies to the **current** pipeline
+   identically; raised here so it gets an owner rather than a shrug.
 
 ## 10. Why this shape and not alternatives
 
