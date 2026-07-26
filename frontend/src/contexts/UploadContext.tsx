@@ -477,7 +477,19 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 })
               }
 
-              return { ...prev, uploadedFiles: batchEnd, jobs, logs, uploadError, lastUpdateTs: Date.now() }
+              // Count this batch's files, don't jump to the absolute position:
+              // batchEnd re-absorbs any earlier batch that failed, so uploaded +
+              // failed exceeded the total and derivePhase went terminal while
+              // later batches were still sending (dropping the optimistic grid
+              // early and overstating "X of Y photos" in the dock).
+              return {
+                ...prev,
+                uploadedFiles: prev.uploadedFiles + (batchEnd - i),
+                jobs,
+                logs,
+                uploadError,
+                lastUpdateTs: Date.now(),
+              }
             })
 
             // enabled:false is a server-wide condition (Drive unconfigured or
