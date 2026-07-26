@@ -149,3 +149,16 @@ body {
 @media (max-width: 1180px) {
   .ribbon-stats { display: none; }
 }
+
+/* Outline variant — .btn alone paints white text (fine on the filled primary
+   background), so a transparent .btn needs its own text colour or it turns
+   white-on-white in light mode. Every "ghost" button should carry this class. */
+.btn.btn-outline {
+  background-color: transparent;
+  color: var(--text-color);
+  border: 1px solid var(--border);
+}
+.btn.btn-outline:hover {
+  background-color: var(--surface);
+  opacity: 1;
+}

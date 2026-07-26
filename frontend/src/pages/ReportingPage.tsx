@@ -433,7 +433,7 @@ export function ReportingPage() {
           <span style={{ fontSize: '0.8125rem', opacity: 0.65 }}>Species diversity, activity & exports · {deployment_id.slice(0, 8)}…</span>
         </div>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
-          <button className="btn" onClick={() => navigate('/insights')}
+          <button className="btn btn-outline" onClick={() => navigate('/insights')}
             style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', fontSize: '0.8125rem' }}>
             My Data
           </button>
