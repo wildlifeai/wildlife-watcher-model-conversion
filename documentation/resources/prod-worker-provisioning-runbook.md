@@ -68,7 +68,7 @@ az containerapp secret set -n ww-embedding-worker -g WW-AE --secrets \
 az containerapp create -n ww-embedding-worker -g WW-AE --environment ww-env \
   --image wwregistry.azurecr.io/ww-backend-worker:latest \
   --workload-profile-name gpu-t4 \
-  --registry-server wwregistry.azurecr.io --registry-username wwregistry --registry-password-secret-ref acr-pw \
+  --registry-server wwregistry.azurecr.io --registry-username wwregistry --registry-password "<ACR admin password>" \
   --min-replicas 0 --max-replicas 1 \
   --cpu 4 --memory 16Gi \
   --env-vars \
@@ -93,6 +93,12 @@ az containerapp create -n ww-embedding-worker -g WW-AE --environment ww-env \
 > 2026-07-10, fixed by bumping to 16Gi (`cpu 4 / memory 16Gi` on the `gpu-t4` profile). The dev worker
 > now runs 16Gi, and `deploy-backend.yml`'s `revision copy` preserves it across rolls. (Durable
 > alternative: run the embed as its own job so the three heavyweight models never coexist.)
+
+> **Erratum (2026-07-26, first prod run):** `--registry-password-secret-ref` is not accepted by
+> current az; pass `--registry-password` (az stores it as an auto-named secret). Executed this
+> day: `ww-redis`, `ww-embedding-worker` (gpu-t4, 16Gi, 0-1), `REDIS_URL` on `ww-backend`,
+> `ww-gpu-worker-stuck` alert. Drive az from **PowerShell** for `--scopes /subscriptions/...`
+> (git-bash rewrites the leading slash as a path).
 
 ## 4 · KEDA scale-to-zero on prod `api_jobs`
 > ⚠️ **Do NOT use `az containerapp update --scale-rule-metadata`** — the CLI silently drops the SQL (spaces/quotes), leaving `query` empty → with `min=0` the worker never wakes. Set it in the **Portal** or a full `--yaml`.
