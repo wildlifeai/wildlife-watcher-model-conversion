@@ -127,7 +127,7 @@ image-upload pipeline — see [03-DATA-AND-SYNC](../onboarding/03-DATA-AND-SYNC.
 
 | Method · Path | Description |
 |---|---|
-| `POST /api/exif/parse` | Form `files[]` (+ optional `paths[]`, `upload_to_drive`, `assigned_deployment_id`, `run_ai`) → per-file parsed EXIF; buffers bytes to Azure + enqueues the Drive upload job. `assigned_deployment_id` binds photos that carry no valid deployment ID; `run_ai` (default `true`) gates the post-upload AI pipeline + Wildlife Brain |
+| `POST /api/exif/parse` | Form `files[]` (+ optional `paths[]`, `upload_to_drive`, `assigned_deployment_id`, `run_ai`) → per-file parsed EXIF; buffers bytes to Azure + enqueues the Drive upload job. `assigned_deployment_id` binds photos that carry no valid deployment ID; `run_ai` (default `true`) gates the post-upload AI pipeline + Wildlife Brain. Response `drive_upload` tells you whether anything was actually stored — clients **must** treat `{enabled: false}` (`reason: server_disabled` = `GOOGLE_DRIVE_ENABLED` unset, or `not_requested`) and `{status: "skipped", reason: "no_deployment_id"}` as *nothing saved* (media rows are only created by the Drive job); `{status: "error"}` = not authenticated; otherwise it carries the enqueued `job_id` |
 
 **Key extracted fields:** `deployment_id` (firmware tag `0xF200` → `UserComment` → `Custom_Data`),
 `latitude`/`longitude` (GPS DMS→decimal), `date` (Original → Create → DateTime), `Make`/`Model`,

@@ -414,7 +414,10 @@ export function UploadModal() {
   const depsInProject = deployments.filter((d) => d.project_id === assignProjectId)
   const projectReady = !!assignProjectId && (assignProjectId !== '__new__' || !!newProjectName.trim())
   const deploymentReady = !!assignDeploymentId && (assignDeploymentId !== '__new__' || !!newDepName.trim())
-  const assignmentReady = !needsAssignment || (projectReady && deploymentReady)
+  // When triage will run it collects the deployment per capture session, so the
+  // single blanket assignment form is redundant - showing both asked the user
+  // the same question twice.
+  const assignmentReady = !needsAssignment || triageSessions.length > 0 || (projectReady && deploymentReady)
 
   // ─────────────────────────────────────────────────────────────────────────
   const ZONE_STYLE: React.CSSProperties = {
@@ -581,7 +584,7 @@ export function UploadModal() {
           )}
 
           {/* Assignment panel — for photos with no / unrecognised deployment */}
-          {needsAssignment && (
+          {needsAssignment && triageSessions.length === 0 && (
             <div style={{
               padding: '0.85rem',
               borderRadius: 'var(--radius)',

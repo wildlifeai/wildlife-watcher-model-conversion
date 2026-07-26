@@ -19,19 +19,18 @@ import React, {
 } from 'react'
 import { apiClient } from '../lib/apiClient'
 import { registerLocalPreviews } from '../lib/localPreviewStore'
+import { derivePhase, type UploadPhase } from '../lib/uploadPhase'
+import { orderFilesBySession, planBatches } from '../lib/uploadPlanning'
 import type { PipelineState, PipelineJob, LogEntry } from '../components/toolkit/PipelineStatusBox'
+
+// Re-exported for existing consumers; implementations live in lib/ so they
+// can be unit-tested without React or the API client.
+export { derivePhase } from '../lib/uploadPhase'
+export type { UploadPhase } from '../lib/uploadPhase'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
 // ─────────────────────────────────────────────────────────────────────────────
-
-export type UploadPhase =
-  | 'idle'
-  | 'uploading'
-  | 'processing'
-  | 'completed'
-  | 'failed'
-  | 'stalled'
 
 export type DockState = 'hidden' | 'minimised' | 'medium'
 
@@ -105,42 +104,6 @@ const EMPTY_PIPELINE: PipelineState = {
   logs: [],
   lastUpdateTs: 0,
   uploadError: null,
-}
-
-export function derivePhase(state: PipelineState): UploadPhase {
-  if (state.jobs.some((j) => j.status === 'failed')) return 'failed'
-
-  // A batch that threw is a failed run, not a silent one. Without this a total
-  // upload failure rendered as "Pipeline Complete 100%" with the error buried
-  // in the collapsed technical log (bench, production, 26 Jul).
-  const failed = state.failedFiles ?? 0
-  if (failed > 0 && failed + state.uploadedFiles >= state.totalFiles) return 'failed'
-  if (state.uploadError && state.jobs.length === 0) return 'failed'
-
-  if (
-    state.jobs.length > 0 &&
-    state.jobs.every((j) =>
-      ['completed', 'completed_with_errors', 'failed', 'skipped'].includes(j.status),
-    )
-  )
-    return 'completed'
-
-  // Edge case: all files were duplicates — no jobs enqueued but upload finished
-  if (
-    state.totalFiles > 0 &&
-    state.uploadedFiles === state.totalFiles &&
-    state.jobs.length === 0
-  )
-    return 'completed'
-
-  // Only files still unaccounted for (neither uploaded nor failed) mean "uploading"
-  if (state.uploadedFiles + failed < state.totalFiles) return 'uploading'
-
-  const idleMs = Date.now() - state.lastUpdateTs
-  if (idleMs > 15_000 && state.jobs.some((j) => j.status === 'processing')) return 'stalled'
-
-  if (state.jobs.length > 0) return 'processing'
-  return 'idle'
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -363,18 +326,10 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
       // Order files by session so a batch never mixes deployments, and remember
       // which deployment each position belongs to.
-      let perFileDeployment: (string | undefined)[] = []
-      if (sessionAssignments?.length) {
-        const byIndex = new Map<number, string>()
-        for (const g of sessionAssignments) for (const i of g.indices) byIndex.set(i, g.deploymentId)
-        const order = files.map((_, i) => i).sort((a, b) => {
-          const da = byIndex.get(a) ?? ''
-          const db = byIndex.get(b) ?? ''
-          return da === db ? a - b : da < db ? -1 : 1
-        })
+      const { order, perFileDeployment } = orderFilesBySession(files.length, sessionAssignments)
+      if (order) {
         files = order.map((i) => files[i])
         paths = order.map((i) => paths[i] ?? '')
-        perFileDeployment = order.map((i) => byIndex.get(i))
       }
 
       // Deployment IDs for the post-upload annotations filter/redirect: prefer the precise set
@@ -388,19 +343,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       // Annotations grid can show them within ~1s (before any server rendition).
       registerLocalPreviews(files)
 
-      // Batch boundaries must never span two deployments: assigned_deployment_id
-      // is one value per request, so a mixed batch would file the tail of it
-      // under the wrong deployment. Cut a batch at BATCH_SIZE *or* whenever the
-      // deployment changes, whichever comes first. With no session assignments
-      // every entry is undefined and this reduces to plain BATCH_SIZE chunks.
-      const batchPlan: { start: number; end: number; assigned?: string }[] = []
-      for (let s = 0; s < files.length; ) {
-        const dep = perFileDeployment[s]
-        let e = s + 1
-        while (e < files.length && e - s < BATCH_SIZE && perFileDeployment[e] === dep) e++
-        batchPlan.push({ start: s, end: e, assigned: dep })
-        s = e
-      }
+      // Batch boundaries must never span two deployments — see lib/uploadPlanning.
+      const batchPlan = planBatches(files.length, perFileDeployment, BATCH_SIZE)
       const totalBatches = batchPlan.length
       lastSeenSeqRef.current = {}
 
@@ -462,8 +406,22 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
             setPipelineState((prev) => {
               const logs = [...prev.logs]
               const jobs = [...prev.jobs]
+              let uploadError = prev.uploadError ?? null
 
               if (driveInfo) {
+                // The server can refuse the whole storage step - Drive not
+                // configured (GOOGLE_DRIVE_ENABLED unset), or not requested.
+                // Images are then never stored AND never get a media row (the
+                // drive job is what creates them), so this must read as a
+                // failure rather than passing silently: production ran this
+                // branch for weeks while the dock showed a green tick.
+                if (driveInfo.enabled === false) {
+                  const why = driveInfo.reason === 'server_disabled'
+                    ? 'Image storage is not configured on this server, so nothing was saved. Contact an administrator.'
+                    : `Image storage was not used (${driveInfo.reason ?? 'unknown reason'}), so nothing was saved.`
+                  logs.push({ ts: Date.now(), level: 'error', message: `❌ ${why}` })
+                  uploadError = uploadError || why
+                }
                 // Server blocked images whose deployment the user can't access (enforced
                 // regardless of the client-side warning).
                 if (driveInfo.blocked_deployments?.length) {
@@ -519,8 +477,45 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                 })
               }
 
-              return { ...prev, uploadedFiles: batchEnd, jobs, logs, lastUpdateTs: Date.now() }
+              // Count this batch's files, don't jump to the absolute position:
+              // batchEnd re-absorbs any earlier batch that failed, so uploaded +
+              // failed exceeded the total and derivePhase went terminal while
+              // later batches were still sending (dropping the optimistic grid
+              // early and overstating "X of Y photos" in the dock).
+              return {
+                ...prev,
+                uploadedFiles: prev.uploadedFiles + (batchEnd - i),
+                jobs,
+                logs,
+                uploadError,
+                lastUpdateTs: Date.now(),
+              }
             })
+
+            // enabled:false is a server-wide condition (Drive unconfigured or
+            // not requested), not a property of this batch - every remaining
+            // batch would upload its bytes just to get the same refusal. Stop
+            // here and count the unsent files as failed so the dock's totals
+            // stay honest.
+            if (driveInfo && driveInfo.enabled === false) {
+              const remaining = files.length - batchEnd
+              if (remaining > 0) {
+                setPipelineState((prev) => ({
+                  ...prev,
+                  logs: [
+                    ...prev.logs,
+                    {
+                      ts: Date.now(),
+                      level: 'error',
+                      message: `⏹️ Stopping — not sending the remaining ${remaining} photo${remaining === 1 ? '' : 's'}: the server refuses image storage, so they would be discarded too.`,
+                    },
+                  ],
+                  failedFiles: (prev.failedFiles ?? 0) + remaining,
+                  lastUpdateTs: Date.now(),
+                }))
+              }
+              break
+            }
           } catch (e: unknown) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const err = e as any

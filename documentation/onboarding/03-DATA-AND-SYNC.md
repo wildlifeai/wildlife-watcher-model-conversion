@@ -33,12 +33,18 @@ fail with *permission denied for table* even though the policy would have allowe
 `has_project_role(uid, project, role)` is **hierarchical**: `project_admin` satisfies a
 `project_member` check. Use `project_member` in policies for actions reviewers should perform.
 
+**Schema files ≠ live database.** A GRANT present in the `ww-backend` baseline can still be missing
+from an environment created before it (prod `media_assets`, Jul 2026: every Annotations query died
+with *permission denied* because a PostgREST embed aborts the whole request). When debugging
+permissions, verify against the **live** DB, not just the migrations.
+
 ## Core tables the web touches
 
 | Table | Used by | Access |
 |-------|---------|--------|
 | `projects`, `deployments` | Results, EXIF matching, Drive folders | RLS (+ service-role) |
 | `media` | Annotations grid + modal | RLS (read; uploads via backend) |
+| `media_assets` | embedded in `media` queries (renditions: provider, dimensions, bytes) | RLS read — a missing GRANT aborts the **whole** embedding query (prod, Jul 2026) |
 | `observations` | Annotations modal (confirm/correct/blank/box/add) | RLS — `authenticated` needs INSERT/UPDATE GRANT |
 | `taxa` | SpeciesPicker (local search) | RLS read |
 | `user_roles` | membership / `has_project_role` | RLS + `get_organisation_users` RPC |
@@ -93,6 +99,42 @@ Dragging camera images into the website (Upload Data page → `AnalyseImages`, o
 modal) runs this end-to-end. **Images always sync to Google Drive** — the old "Sync to Google Drive"
 toggle was removed; Drive is the default long-term store.
 
+> [!IMPORTANT]
+> Media rows are created **inside the Drive job, only for files bound to a deployment**. Two
+> consequences drive the client design below: photos without a deployment are never stored anywhere,
+> and a disabled/broken Drive backend means *nothing* is stored. The planned fix is
+> [decoupled-upload-pipeline-spec](../development%20reports/decoupled-upload-pipeline-spec.md)
+> (media rows at ingest + resumable backup sync).
+
+### In the browser (`UploadModal` → `UploadContext`)
+
+1. **Deployment resolution from the card layout.** Each file path is matched for a card folder
+   (`MEDIA/<8-hex>/`); the 8-hex prefix is matched against the user's deployment ids.
+2. **Triage of unassigned photos** (`UnassignedTriage`). Files that resolve to no deployment are
+   grouped into **capture sessions** — same card folder, gaps under 6 h (`unassignedSessions.ts`) —
+   and shown with sample thumbnails and time-span stats. Per session the user assigns an existing
+   deployment, creates one from the photos (`POST /api/deployments`), or skips it. **Skipped photos
+   are not uploaded** and the screen says so; before triage existed they were silently dropped
+   (Jul 2026). The older single "assign everything to one deployment" form remains only for the
+   residual case where triage has nothing to show (e.g. no deployments exist at all).
+3. **Batch planning** (`UploadContext.startUpload`). Files are ordered by deployment and cut into
+   batches of ≤ 10 that **never span two deployments**, so a batch's `assigned_deployment_id`
+   cannot mislabel a mixed batch. Triaged photos join the optimistic Annotations grid and the
+   post-upload redirect filter like folder-resolved ones.
+4. Each batch → `POST /api/exif/parse`; job polling and the dock live in `UploadContext`.
+
+### Failure surfacing (no false success)
+
+`derivePhase` returns **`failed`** — the dock can no longer end green when nothing was stored:
+
+- a batch request throws → `failedFiles` + `uploadError` (per-batch catch in `startUpload`);
+- the server refuses storage → the response's `drive_upload.enabled === false`
+  (e.g. `GOOGLE_DRIVE_ENABLED` unset → `reason: "server_disabled"`) is logged as an error and
+  fails the run. Production ran exactly this way for weeks while the dock showed a green tick
+  (Jul 2026) — the incident this branch guards against.
+
+### On the server
+
 ```
 POST /api/exif/parse  → parse EXIF, match deployment (EXIF Deployment_ID → UserComment → GPS),
                         buffer bytes to Azure blob store, enqueue upload_drive_images_job
@@ -106,6 +148,19 @@ upload_drive_images_job:
   → AUTO-ANNOTATE    enqueue auto_annotate_deployments (the AI pipeline, async) — see 04-AI-PIPELINE
   → CLEANUP          delete the Azure blobs; job completes
 ```
+
+### Backend environment requirements (per environment)
+
+| Var | Notes |
+|-----|-------|
+| `GOOGLE_DRIVE_ENABLED` | Defaults to **`False`** — unset means the API parses EXIF, stores **nothing**, and reports `enabled: false`. |
+| `GOOGLE_DRIVE_FOLDER_ID` | Root Drive folder for that environment's archive. |
+| `GOOGLE_SERVICE_ACCOUNT_JSON` | ACA secret `google-sa-json`. The Drive folder must be shared (**Editor**) with the service-account email or uploads 404 at write time. |
+
+Both ACA apps have all three since **2026-07-26** (prod was missing all of them — the root cause of
+"empty `media` table in production"). Dev and prod currently share one service account
+(`ww-drive-uploader@ww-drive-upload-photos.iam.gserviceaccount.com`); a prod-only account is planned
+so key rotation can't take down both.
 
 **Idempotency guards** (so re-uploads / partial uploads are safe):
 - **Guard 1 — media dedup + self-heal:** Drive upload hashes content (`appProperties.sha256`) and
