@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 import urllib.request
@@ -66,11 +67,19 @@ VALUE_COMPARED_SUFFIXES = ("_ENABLED",)
 
 
 def az(args: list[str]):
-    """Run az and parse JSON output. az is a .cmd on Windows, hence shell."""
-    cmd = "az " + " ".join(args) + " -o json"
-    res = subprocess.run(cmd, shell=True, capture_output=True, text=True, timeout=300)
+    """Run az and parse JSON output.
+
+    Resolved via shutil.which so the .cmd shim works on Windows without
+    shell=True - args stay a real argv list and are never re-parsed by a
+    shell, so nothing is injectable even once app/RG become CLI flags.
+    """
+    exe = shutil.which("az")
+    if not exe:
+        sys.exit("az CLI not found on PATH - install it and run: az login")
+    res = subprocess.run([exe, *args, "-o", "json"],
+                         capture_output=True, text=True, timeout=300)
     if res.returncode != 0:
-        sys.exit(f"az failed: {cmd}\n{res.stderr.strip()[:400]}")
+        sys.exit(f"az failed: az {' '.join(args)}\n{res.stderr.strip()[:400]}")
     return json.loads(res.stdout or "null")
 
 
