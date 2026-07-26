@@ -111,6 +111,7 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
     end: string | null
     mediaCount: number
   } | null>(null)
+  const [loadError, setLoadError] = useState<string | null>(null)
 
   useEffect(() => {
     setLoading(true)
@@ -133,6 +134,16 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
         .eq('deployment_id', deploymentId)
         .is('deleted_at', null),
     ]).then(([obs, dep, media]) => {
+      // supabase-js resolves failures into { error } rather than rejecting -
+      // without this check a permissions or network failure would render as
+      // "0 animal observations", a false zero (review, #113).
+      const err = obs.error || dep.error || media.error
+      if (err) {
+        setLoadError(err.message)
+        setLoading(false)
+        return
+      }
+      setLoadError(null)
       setRows(obs.data || [])
       setZeroContext({
         start: dep.data?.deployment_start ?? null,
@@ -203,6 +214,16 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
   }
 
   if (loading) return <div style={{ padding: '2rem', opacity: 0.5 }}>Loading observations…</div>
+
+  if (loadError) {
+    return (
+      <div className="glass-card" style={{ padding: '2rem', textAlign: 'center' }}>
+        <div style={{ fontSize: '1.5rem', marginBottom: '0.5rem' }}>⚠️</div>
+        <p style={{ margin: '0 0 0.25rem', fontWeight: 600 }}>Couldn&apos;t load this deployment&apos;s results</p>
+        <p style={{ margin: 0, fontSize: '0.875rem', opacity: 0.65 }}>{loadError}</p>
+      </div>
+    )
+  }
 
   if (rows.length === 0) {
     const fmtD = (iso: string | null) =>
