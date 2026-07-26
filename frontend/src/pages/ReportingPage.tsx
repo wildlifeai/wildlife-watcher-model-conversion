@@ -152,10 +152,14 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
       })
       setLoading(false)
     })
-      // supabase-js resolves query errors into { error }, so the realistic
-      // reject here is an exception inside the .then callback - either way,
-      // never leave the tab stuck on "Loading observations".
-      .catch(() => setLoading(false))
+      // supabase-js resolves query errors into { error } (handled above), so
+      // a rejection here is an exception in the .then callback or a genuine
+      // transport failure. Route it into the same error card - clearing only
+      // the spinner would fall through to the zero state, a false zero.
+      .catch((e: unknown) => {
+        setLoadError(e instanceof Error ? e.message : String(e))
+        setLoading(false)
+      })
   }, [deploymentId])
 
   const allSpecies = [...new Set(rows.map((r) => r.scientific_name!).filter(Boolean))].sort()
