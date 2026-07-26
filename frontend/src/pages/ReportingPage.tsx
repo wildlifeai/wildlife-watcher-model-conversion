@@ -103,19 +103,44 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
   const [selectedSpecies, setSelectedSpecies] = useState<Set<string>>(new Set())
   const chartRef = useRef<HTMLDivElement>(null)
 
+  // Context for the zero-observation state: a deployment with photos and no
+  // detections is a real monitoring result ("nothing came past"), so the page
+  // shows the period and effort instead of a bare "no data" void.
+  const [zeroContext, setZeroContext] = useState<{
+    start: string | null
+    end: string | null
+    mediaCount: number
+  } | null>(null)
+
   useEffect(() => {
     setLoading(true)
-    supabase
-      .from('observations')
-      .select('created_at, scientific_name, observation_type')
-      .eq('deployment_id', deploymentId)
-      .is('deleted_at', null)
-      .not('scientific_name', 'is', null)
-      .order('created_at')
-      .then(({ data }) => {
-        setRows(data || [])
-        setLoading(false)
+    Promise.all([
+      supabase
+        .from('observations')
+        .select('created_at, scientific_name, observation_type')
+        .eq('deployment_id', deploymentId)
+        .is('deleted_at', null)
+        .not('scientific_name', 'is', null)
+        .order('created_at'),
+      supabase
+        .from('deployments')
+        .select('deployment_start, deployment_end')
+        .eq('id', deploymentId)
+        .single(),
+      supabase
+        .from('media')
+        .select('id', { count: 'exact', head: true })
+        .eq('deployment_id', deploymentId)
+        .is('deleted_at', null),
+    ]).then(([obs, dep, media]) => {
+      setRows(obs.data || [])
+      setZeroContext({
+        start: dep.data?.deployment_start ?? null,
+        end: dep.data?.deployment_end ?? null,
+        mediaCount: media.count ?? 0,
       })
+      setLoading(false)
+    })
   }, [deploymentId])
 
   const allSpecies = [...new Set(rows.map((r) => r.scientific_name!).filter(Boolean))].sort()
@@ -176,12 +201,40 @@ function ChartsTab({ deploymentId }: { deploymentId: string }) {
   if (loading) return <div style={{ padding: '2rem', opacity: 0.5 }}>Loading observations…</div>
 
   if (rows.length === 0) {
+    const fmtD = (iso: string | null) =>
+      iso ? new Date(iso).toLocaleDateString(undefined, { day: '2-digit', month: 'short', year: 'numeric' }) : null
+    const start = fmtD(zeroContext?.start ?? null)
+    const end = fmtD(zeroContext?.end ?? null)
+    const mediaCount = zeroContext?.mediaCount ?? 0
     return (
-      <div style={{ padding: '3rem', textAlign: 'center', opacity: 0.5 }}>
-        <div style={{ fontSize: '2rem', marginBottom: '0.5rem' }}>📊</div>
-        No observations with species labels found for this deployment.<br />
-        <Link to={`/clusters/${deploymentId}`} style={{ color: 'var(--primary)', fontSize: '0.9rem' }}>
-          Confirm clusters first →
+      <div className="glass-card" style={{ padding: '2.5rem', textAlign: 'center' }}>
+        <div style={{ fontSize: '2rem', marginBottom: '0.75rem' }}>📊</div>
+        <h4 style={{ margin: '0 0 1rem' }}>
+          {mediaCount > 0 ? '0 animal observations in this deployment period' : 'No data for this deployment yet'}
+        </h4>
+        <div style={{ display: 'flex', gap: '2rem', justifyContent: 'center', flexWrap: 'wrap', marginBottom: '1.25rem' }}>
+          {start && (
+            <div>
+              <div style={{ fontSize: '0.75rem', opacity: 0.55, textTransform: 'uppercase' }}>Monitoring period</div>
+              <div style={{ fontWeight: 600 }}>{start} → {end ?? 'ongoing'}</div>
+            </div>
+          )}
+          <div>
+            <div style={{ fontSize: '0.75rem', opacity: 0.55, textTransform: 'uppercase' }}>Photos analysed</div>
+            <div style={{ fontWeight: 600 }}>{mediaCount}</div>
+          </div>
+          <div>
+            <div style={{ fontSize: '0.75rem', opacity: 0.55, textTransform: 'uppercase' }}>Animal observations</div>
+            <div style={{ fontWeight: 600 }}>0</div>
+          </div>
+        </div>
+        <p style={{ fontSize: '0.875rem', opacity: 0.65, maxWidth: '46ch', margin: '0 auto 0.75rem' }}>
+          {mediaCount > 0
+            ? 'A deployment with photos and no detections is a valid result — nothing came past the camera, or the AI missed it. If you spot an animal the AI missed, label it and it will appear here.'
+            : 'Upload this deployment’s photos and the results will appear here after analysis.'}
+        </p>
+        <Link to="/annotations" style={{ color: 'var(--primary)', fontSize: '0.9rem' }}>
+          {mediaCount > 0 ? 'Review the photos in Annotations →' : 'Go to Annotations →'}
         </Link>
       </div>
     )
