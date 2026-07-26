@@ -5,6 +5,7 @@ import { apiClient } from '../../lib/apiClient'
 import { supabase } from '../../config/supabase'
 import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { PipelineStatusBox, type PipelineState, type LogEntry } from './PipelineStatusBox'
+import { derivePhase } from '../../lib/uploadPhase'
 // Temporarily commented out — re-enable when these features are restored
 // import { INaturalistPanel } from './INaturalistPanel'
 // import { ImageClustering } from './ImageClustering'
@@ -37,29 +38,9 @@ interface ExifResult {
   matched_deployment: string | null
 }
 
-function derivePhase(state: PipelineState): 'idle' | 'uploading' | 'processing' | 'completed' | 'failed' | 'stalled' {
-  // Staging/enqueue failed before any job was created (e.g. Azure buffer down) —
-  // must beat the "0 jobs → completed" edge case below, or a failed upload would
-  // be reported as "✅ Complete".
-  if (state.uploadError) return 'failed'
-
-  if (state.jobs.some(j => j.status === 'failed')) return 'failed'
-
-  if (state.jobs.length > 0 && state.jobs.every(j =>
-    ['completed', 'completed_with_errors', 'failed', 'skipped'].includes(j.status)
-  )) return 'completed'
-
-  // Edge Case: 0 jobs generated (all files were skipped as duplicates)
-  if (state.totalFiles > 0 && state.uploadedFiles === state.totalFiles && state.jobs.length === 0) return 'completed'
-
-  if (state.uploadedFiles < state.totalFiles) return 'uploading'
-
-  const lastUpdateAge = Date.now() - state.lastUpdateTs
-  if (lastUpdateAge > 15000 && state.jobs.some(j => j.status === 'processing')) return 'stalled'
-
-  if (state.jobs.length > 0) return 'processing'
-  return 'idle'
-}
+// derivePhase moved to lib/uploadPhase — this page carried its own copy, which
+// drifted: it predated failedFiles, so a failed batch rendered as "uploading"
+// forever here even after the dock got the fix.
 
 const FIELD: React.CSSProperties = {
   padding: '0.4rem 0.6rem', fontSize: '0.8125rem', border: '1px solid var(--border)',
