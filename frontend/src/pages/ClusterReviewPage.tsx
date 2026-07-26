@@ -526,15 +526,15 @@ export function ClusterReviewPage() {
           </span>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap' }}>
-          <Link to={`/review/${deployment_id}`} className="btn"
+          <Link to={`/review/${deployment_id}`} className="btn btn-outline"
             style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>
             ▶ Review Queue
           </Link>
-          <Link to={`/umap/${deployment_id}`} className="btn"
+          <Link to={`/umap/${deployment_id}`} className="btn btn-outline"
             style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>
             ✦ UMAP
           </Link>
-          <Link to={`/annotations?deployment=${deployment_id}`} className="btn"
+          <Link to={`/annotations?deployment=${deployment_id}`} className="btn btn-outline"
             style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>
             🏷️ Annotations
           </Link>

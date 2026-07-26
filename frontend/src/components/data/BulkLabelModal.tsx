@@ -36,7 +36,7 @@ export function BulkLabelModal({ count, busy, onApply, onClose }: Props) {
 
       <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '1rem' }}>
         <button
-          className="btn"
+          className="btn btn-outline"
           disabled={busy}
           onClick={() => onApply(null)}
           style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', fontSize: '0.8rem' }}

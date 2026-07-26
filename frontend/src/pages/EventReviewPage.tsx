@@ -378,7 +378,7 @@ export function EventReviewPage() {
           >
             {aggregating ? '⏳ Grouping Events...' : '⚡ Run Event Aggregation'}
           </button>
-          <button className="btn" onClick={() => navigate('/insights')} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)' }}>
+          <button className="btn btn-outline" onClick={() => navigate('/insights')} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)' }}>
             My Data
           </button>
           <button className="btn" onClick={() => navigate(`/reporting/${deployment_id}`)} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', color: 'var(--primary)' }}>

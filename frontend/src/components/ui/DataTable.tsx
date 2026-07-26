@@ -365,6 +365,7 @@ export function DataTable<T>({
                 border: '1px solid var(--border)',
                 borderRadius: 'var(--radius)',
                 backgroundColor: 'transparent',
+                color: 'var(--text-color)',
                 cursor: page === 1 ? 'default' : 'pointer',
                 opacity: page === 1 ? 0.4 : 1,
               }}
@@ -379,6 +380,7 @@ export function DataTable<T>({
                 border: '1px solid var(--border)',
                 borderRadius: 'var(--radius)',
                 backgroundColor: 'transparent',
+                color: 'var(--text-color)',
                 cursor: page === totalPages ? 'default' : 'pointer',
                 opacity: page === totalPages ? 0.4 : 1,
               }}

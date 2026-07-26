@@ -89,8 +89,8 @@ export function UmapExplorerPage() {
           <span style={{ fontSize: '0.8125rem', opacity: 0.7 }}>{points.length} points · {clusterCount} clusters · coloured by cluster</span>
         </div>
         <div style={{ display: 'flex', gap: '0.75rem' }}>
-          <Link to={`/clusters/${deployment_id}`} className="btn" style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>◧ Clusters</Link>
-          <Link to={`/annotations?deployment=${deployment_id}`} className="btn" style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>🏷️ Annotations</Link>
+          <Link to={`/clusters/${deployment_id}`} className="btn btn-outline" style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>◧ Clusters</Link>
+          <Link to={`/annotations?deployment=${deployment_id}`} className="btn btn-outline" style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>🏷️ Annotations</Link>
         </div>
       </div>
 
