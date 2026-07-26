@@ -93,7 +93,7 @@ export function ReviewQueuePage() {
           <h3 style={{ margin: 0 }}>Review Queue</h3>
           <span style={{ fontSize: '0.8125rem', opacity: 0.7 }}>{idx + 1} / {queue.length} · ranked by active-learning score</span>
         </div>
-        <Link to={`/clusters/${deployment_id}`} className="btn" style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>Exit</Link>
+        <Link to={`/clusters/${deployment_id}`} className="btn btn-outline" style={{ backgroundColor: 'transparent', border: '1px solid var(--border)', textDecoration: 'none', fontSize: '0.8125rem' }}>Exit</Link>
       </div>
 
       <div className="glass-card" style={{ padding: '1.25rem', display: 'flex', flexDirection: 'column', gap: '1rem', alignItems: 'center' }}>
@@ -129,8 +129,8 @@ export function ReviewQueuePage() {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', justifyContent: 'center' }}>
           <button className="btn" disabled={decide.isPending || !name.trim()} onClick={() => submit('approve')} style={{ backgroundColor: 'var(--primary)' }}>✓ Approve (A)</button>
           <button className="btn" disabled={decide.isPending || !name.trim()} onClick={() => submit('reassign')} style={{ backgroundColor: 'transparent', border: '1px solid #ff9800', color: '#ff9800' }}>↻ Reassign (R)</button>
-          <button className="btn" disabled={decide.isPending} onClick={() => submit('expert')} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)' }}>⚑ Expert (E)</button>
-          <button className="btn" disabled={decide.isPending} onClick={advance} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)' }}>Skip (S)</button>
+          <button className="btn btn-outline" disabled={decide.isPending} onClick={() => submit('expert')} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)' }}>⚑ Expert (E)</button>
+          <button className="btn btn-outline" disabled={decide.isPending} onClick={advance} style={{ backgroundColor: 'transparent', border: '1px solid var(--border)' }}>Skip (S)</button>
         </div>
       </div>
     </div>

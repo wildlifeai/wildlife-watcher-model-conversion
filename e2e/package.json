@@ -1,0 +1,19 @@
+{
+  "name": "ww-website-e2e",
+  "private": true,
+  "description": "Browser-level checks against the dev website: smoke, demo flow, upload + EXIF/deployment binding, LoRaWAN realtime.",
+  "scripts": {
+    "e2e": "playwright test",
+    "e2e:headed": "playwright test --headed",
+    "e2e:smoke": "playwright test specs/01-smoke.spec.ts",
+    "e2e:demo": "playwright test specs/02-demo.spec.ts",
+    "e2e:upload": "playwright test specs/03-upload-exif.spec.ts",
+    "e2e:lorawan": "playwright test specs/04-lorawan-realtime.spec.ts",
+    "report": "playwright show-report"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@supabase/supabase-js": "^2.47.0",
+    "dotenv": "^16.4.5"
+  }
+}

@@ -163,6 +163,29 @@ Run quarterly (or before a cost review):
 - [ ] Secrets are ACA secrets, not plaintext env (the legacy dev app stored Supabase/Azure/Google
       secrets as plaintext — the rebuilt apps use ACA secrets; rotate any exposed keys).
 - [ ] Cost Management has no surprise line items.
+- [ ] `python scripts/parity_audit.py` reports **no unexplained gaps** (see below).
+
+## Dev → prod parity audit
+
+Three silent parity gaps reached production in two days (26 Jul 2026): a stale `media` RLS
+predicate, missing `GOOGLE_DRIVE_*` config, and missing `FF_MEDIA_REGISTRY_ENABLED` +
+`media-renditions` bucket. Each one made a feature fail invisibly — green ticks over empty tables.
+
+**[`scripts/parity_audit.py`](../../scripts/parity_audit.py)** diffs the surfaces those gaps live
+on: container-app **env vars** (names; values for `FF_*`/`*_ENABLED`), **secret names** (never
+values), **storage buckets**, **auth providers**, and — via a printed SQL query whose JSON outputs
+you feed back with `--sql-dev`/`--sql-prod` — **RLS policies, grants, function bodies (md5), and
+the realtime publication**. Requires a logged-in `az` CLI; exit code 1 on unexplained gaps.
+
+Rules of use:
+
+- **Run it before testing any feature on production**, after prod config changes, and as part of
+  this checklist.
+- Intentional differences go in the `EXPECTED_*` allowlists **in the script, with the reason**
+  (e.g. `REDIS_URL` — prod runs jobs in-process). An allowlist entry is a documented decision,
+  not a mute button.
+- A gap means one of two actions: apply the config to prod, or add it to the allowlist with a
+  reason. Leaving it in the report is the only wrong option.
 
 ## Naming conventions
 
