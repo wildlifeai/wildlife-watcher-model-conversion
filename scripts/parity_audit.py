@@ -144,10 +144,18 @@ select 'grant', table_name, grantee || ':' || string_agg(privilege_type, ',' ord
  where table_schema = 'public' and grantee in ('authenticated', 'anon')
  group by table_name, grantee
 union all
-select 'function', p.proname, md5(pg_get_functiondef(p.oid))
+select 'function', p.proname,
+       -- hash the STORED body with CR stripped, plus the clauses prosrc omits.
+       -- pg_get_functiondef embeds prosrc verbatim, so CRLF-applied prod vs
+       -- LF-applied dev reported 18 phantom drifts (26 Jul) for byte-identical
+       -- functions; translate(...,chr(13),'') makes the hash ending-neutral.
+       md5(translate(p.prosrc, chr(13), '')
+           || '|' || p.prosecdef::text
+           || '|' || coalesce(array_to_string(p.proconfig, ','), '')
+           || '|' || pg_get_function_identity_arguments(p.oid))
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
  where n.nspname = 'public'
-   and p.prokind = 'f'  -- pg_get_functiondef errors 42809 on aggregates (PostGIS)
+   and p.prokind = 'f'  -- aggregates (PostGIS) have no plain body
    and not exists (      -- extension-owned functions are vendor code, not app schema
      select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
 union all
