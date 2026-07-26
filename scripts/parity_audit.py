@@ -47,10 +47,17 @@ SERVICE_KEY_SECRET = "supabase-service-key"
 # entry here is a documented decision, not a way to silence the report.
 EXPECTED_ENV_DIFFS: dict[str, str] = {
     "REDIS_URL": "dev offloads jobs to the GPU worker; prod runs in-process",
-    "SUPABASE_URL": "different Supabase project per environment",
-    "ENVIRONMENT": "environment name string",
-    "SENTRY_ENVIRONMENT": "environment name string",
-    "CORS_ORIGINS": "different frontend origins per environment",
+}
+
+# Vars that must exist on BOTH sides with DIFFERENT values. These never
+# belong in EXPECTED_ENV_DIFFS (that list excuses absence, and losing one
+# of these is a real gap) - for them the dangerous state is identical
+# values, i.e. one environment pointing at the other's infrastructure.
+MUST_DIFFER: dict[str, str] = {
+    "SUPABASE_URL": "identical URL = one env talking to the other's database",
+    "ALLOWED_ORIGINS": "each API must allow only its own frontend origins",
+    "GOOGLE_DRIVE_FOLDER_ID": "each env archives into its own Drive root",
+    "AZURE_STORAGE_CONTAINER_NAME": "each env buffers uploads in its own container",
 }
 EXPECTED_SECRET_DIFFS: dict[str, str] = {
     "pg-conn": "KEDA scaler pooler creds live on the worker app (dev-only)",
@@ -189,6 +196,11 @@ def main() -> int:
             pv = (prod_env[name].get("value") or "").lower()
             if dv != pv:
                 gaps.append(f"{name}: dev={dv or '<secretref>'} prod={pv or '<secretref>'}")
+        elif name in MUST_DIFFER:
+            dv = (dev_env[name].get("value") or "")
+            pv = (prod_env[name].get("value") or "")
+            if dv and pv and dv == pv:
+                gaps.append(f"{name}: identical in both envs - {MUST_DIFFER[name]}")
     problems += report(f"Env vars ({DEV_APP} vs {PROD_APP})", gaps, expected)
 
     # ── 2. Secrets (names only) ──
