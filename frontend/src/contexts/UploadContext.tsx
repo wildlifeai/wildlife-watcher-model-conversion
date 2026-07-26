@@ -535,6 +535,31 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
 
               return { ...prev, uploadedFiles: batchEnd, jobs, logs, uploadError, lastUpdateTs: Date.now() }
             })
+
+            // enabled:false is a server-wide condition (Drive unconfigured or
+            // not requested), not a property of this batch - every remaining
+            // batch would upload its bytes just to get the same refusal. Stop
+            // here and count the unsent files as failed so the dock's totals
+            // stay honest.
+            if (driveInfo && driveInfo.enabled === false) {
+              const remaining = files.length - batchEnd
+              if (remaining > 0) {
+                setPipelineState((prev) => ({
+                  ...prev,
+                  logs: [
+                    ...prev.logs,
+                    {
+                      ts: Date.now(),
+                      level: 'error',
+                      message: `⏹️ Stopping — not sending the remaining ${remaining} photo${remaining === 1 ? '' : 's'}: the server refuses image storage, so they would be discarded too.`,
+                    },
+                  ],
+                  failedFiles: (prev.failedFiles ?? 0) + remaining,
+                  lastUpdateTs: Date.now(),
+                }))
+              }
+              break
+            }
           } catch (e: unknown) {
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             const err = e as any
