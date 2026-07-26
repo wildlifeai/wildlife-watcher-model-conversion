@@ -140,6 +140,9 @@ union all
 select 'function', p.proname, md5(pg_get_functiondef(p.oid))
   from pg_proc p join pg_namespace n on n.oid = p.pronamespace
  where n.nspname = 'public'
+   and p.prokind = 'f'  -- pg_get_functiondef errors 42809 on aggregates (PostGIS)
+   and not exists (      -- extension-owned functions are vendor code, not app schema
+     select 1 from pg_depend d where d.objid = p.oid and d.deptype = 'e')
 union all
 select 'realtime', schemaname || '.' || tablename, 'in supabase_realtime publication'
   from pg_publication_tables where pubname = 'supabase_realtime'
