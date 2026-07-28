@@ -30,8 +30,10 @@ CamtrapDP ZIP (uploaded or downloaded)
 ```
 
 The HTTP entrypoint is `POST /api/camtrapdp/import` (multipart: `file` = the `.zip`,
-`annotation_mode` = `final` | `unprocessed`). The importing user's **primary organisation**
-(first `user_roles` org membership) owns the new project.
+`annotation_mode` = `final` (default) | `unprocessed`, `run_ai` = `false` (default) | `true`).
+`run_ai=true` additionally runs SpeciesNet + Wildlife Brain over the image-backed imported deployments
+and returns an `ai_job_id`. The importing user's **primary organisation** (first `user_roles` org
+membership) owns the new project.
 
 ### Automated Taxa Registration
 
@@ -124,7 +126,7 @@ python scripts/seed_camtrapdp_example.py \
 |------|---------|-------------|
 | `--supabase-url` | `SUPABASE_URL` env or `http://localhost:54321` | Target Supabase URL |
 | `--service-role-key` | `SUPABASE_SERVICE_ROLE_KEY` env | Service role key (required) |
-| `--user-id` | `a0000000-...-000000000012` (apps@wildlife.ai) | UUID of the user who will own the imported project |
+| `--user-id` | see `scripts/seed_camtrapdp_example.py` | UUID of the user who will own the imported project. The examples above pass `a0000000-0000-0000-0000-000000000002` (`tama@ww.org`) — pass it explicitly rather than relying on the default |
 | `--local-zip` | *(none)* | Path to a local CamtrapDP ZIP (skips download) |
 
 ### Recommended Test Users

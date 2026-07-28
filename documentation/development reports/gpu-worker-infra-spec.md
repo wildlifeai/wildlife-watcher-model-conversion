@@ -1,9 +1,15 @@
 # Spec — ARQ GPU Worker infrastructure (Wildlife Watcher AI pipeline)
 
-> **Status:** ✅ **SHIPPED (dev, 2026-07-03).** The dev worker `ww-embedding-worker-dev` now runs on a
-> **serverless T4 GPU** (`gpu-t4` = `Consumption-GPU-NC8as-T4` profile on `ww-env`, `cuda`, scale-to-zero).
-> Live operational details + gotchas: [cloud-infrastructure.md](../resources/cloud-infrastructure.md).
-> This doc is retained as the original design spec/history.
+> **Status:** ✅ **SHIPPED (dev, 2026-07-03)** — retained as the original **design spec / history**,
+> not as an operating procedure. The dev worker `ww-embedding-worker-dev` runs on a **serverless T4 GPU**
+> (`gpu-t4` = `Consumption-GPU-NC8as-T4` profile on `ww-env`, `cuda`, scale-to-zero).
+>
+> **Read the live docs first — parts of this spec were overridden during the build** (§3 Redis and §7
+> scale rule in particular; see the note at the end). What actually exists:
+> [cloud-infrastructure.md](../resources/cloud-infrastructure.md) · how to stand up prod:
+> [prod-worker-provisioning-runbook.md](../resources/prod-worker-provisioning-runbook.md).
+> All `--resource-group WW-Website` commands below are **stale** — everything now lives in `WW-AE`
+> (`australiaeast`); the old RG was deleted 2026-06-30.
 
 **Goal:** stand up the **ARQ GPU worker** that runs the heavy ML pipeline (SpeciesNet detect, BioCLIP
 classify, DINOv3 embeddings) off the lean API. This is the **infrastructure prerequisite** for (a)
@@ -434,22 +440,23 @@ SpeciesNet + BioCLIP + DINOv3 run on the worker, then land the per-crop change b
   *plumbing* (Redis/ARQ/worker) without GPU quota; DINOv3 ViT-H clustering is impractical on CPU, so
   the Wildlife Brain stays effectively GPU-gated.
 
-## Documentation updates required (when this lands)
+## Documentation updates required (when this lands) — ✅ done
 
-- **[resources/deployment-guide.md](../resources/deployment-guide.md)** — the **"GPU Worker +
-  Scale-to-Zero"** section already sketches this; once deployed, promote it from "target architecture"
-  to **current**: update the *Backend Deployment → Architecture* note (line ~53) and the
-  *Scaling* table to reflect the live worker app, and tick the AI-pipeline rows in the
-  *full-pipeline config checklist* (the `FF_SPECIESNET_ENABLED` / BioCLIP+DINOv3 rows that say
-  "confirm the worker container is deployed").
-- **[resources/deployment-guide.md](../resources/deployment-guide.md) → "Vector Store — pgvector
-  (chosen for cloud) → Qdrant (future scale-up)"** — once the **pgvector** path is implemented + live,
-  update that section from "chosen / pending" to **current** (record the `embeddings` table + HNSW index
-  and the `embedding_model` read filter). Only revisit the Qdrant subsection if the scale-up path is
-  later adopted.
-- **[onboarding/04-AI-PIPELINE.md](../onboarding/04-AI-PIPELINE.md)** — note that the pipeline now runs
-  in a **dedicated ARQ GPU worker** (not in-process on the API), and that AI detection is *off* on any
-  backend without `REDIS_URL` + a deployed worker.
-- **[onboarding/01-TECHNOLOGY-STACK.md](../onboarding/01-TECHNOLOGY-STACK.md)** — add Azure Cache for
-  Redis to the external-services list (the **Vector store** row is already updated to pgvector → Qdrant).
+- ✅ **[resources/deployment-guide.md](../resources/deployment-guide.md)** — the *Backend Deployment →
+  Architecture* note and the *GPU Worker* section now describe the **live** worker rather than a target
+  architecture, and point at `cloud-infrastructure.md` / `prod-worker-provisioning-runbook.md` instead
+  of repeating provisioning commands.
+- ✅ **deployment-guide → Vector Store** — recorded as **current**: `media_embeddings.embedding`, the
+  `match_media_embeddings` RPC, the `embedding_model` read filter, no ANN index yet.
+- ✅ **[onboarding/04-AI-PIPELINE.md](../onboarding/04-AI-PIPELINE.md)** — states that the pipeline runs
+  in a dedicated ARQ GPU worker and that AI is *off* on any backend without `REDIS_URL` + a worker.
+- ✅ **[onboarding/01-TECHNOLOGY-STACK.md](../onboarding/01-TECHNOLOGY-STACK.md)** — Redis added to the
+  external-services list.
+
+> ⚠️ **Two decisions in this spec were overridden by reality — do not copy them:** the broker is an
+> internal **Container App** running `redis:7-alpine`, *not* Azure Cache for Redis; and the worker
+> scales on a **KEDA PostgreSQL scaler** over `api_jobs`, *not* the `ww:gpu:pending` Redis list marker
+> described in §7 (the ACA KEDA operator cannot reach the internal Redis). Live truth:
+> [cloud-infrastructure.md](../resources/cloud-infrastructure.md).
+
 - This spec → move to `_archive/` once the worker is live in staging.

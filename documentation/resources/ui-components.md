@@ -16,9 +16,9 @@ import { ThreeStepGuide, DEFAULT_SIGNED_IN_STEPS } from '../components/common'
 
 | Export | File | Used by |
 |---|---|---|
-| `<Ribbon>` | `Ribbon.tsx` | **Annotations + Results command bars** (Word-style menu bar + grouped ribbon) |
+| `<Ribbon>` | `Ribbon.tsx` | **Annotations + Insights command bars** (Word-style menu bar + grouped ribbon) |
 | `<Modal>` | `Modal.tsx` | Upload modal, advanced settings, create-project |
-| `<DataTable>` | `DataTable.tsx` | Results → Deployments / Projects tables |
+| `<DataTable>` | `DataTable.tsx` | Insights → Deployments / Projects tables |
 | `<ControlBar>`, `<FilterSelect>`, `<SearchInput>`, `<ColumnToggle>` | `ControlBar.tsx` | `FilterSelect` inside ribbon groups; `ControlBar` is the older flat toolbar |
 | `<StatusBadge>`, `deriveAnnotationStatus` | `StatusBadge.tsx` | Annotation thumbnail grid + modal |
 | `<VegaChart>`, `VEGA_CONFIG` | `VegaChart.tsx` | All charts (Vega-Lite) |
@@ -52,7 +52,7 @@ for advanced settings. Controlled (wire `activeTabId`/`onTabChange` to page stat
 | Prop | Type | Description |
 |---|---|---|
 | `tabs` | `RibbonTabDef[]` | `{ id, label, icon?, groups: RibbonGroupDef[] }` |
-| `activeTabId` / `onTabChange` | `string` / `(id) => void` | Controlled mode (e.g. Results sub-tabs) |
+| `activeTabId` / `onTabChange` | `string` / `(id) => void` | Controlled mode (e.g. Insights sub-tabs) |
 | `defaultTabId` | `string` | Uncontrolled initial tab |
 | `status` | `ReactNode` | Right-aligned menu-bar status |
 
@@ -93,7 +93,7 @@ Generic typed table with sort, search, column toggle, CSV + JSON export, and opt
 
 ## `<ControlBar>` / `<FilterSelect>` / `<SearchInput>` / `<ColumnToggle>`
 
-`ControlBar` is the original flat filters+actions toolbar; the Annotations and Results pages have
+`ControlBar` is the original flat filters+actions toolbar; the Annotations and Insights pages have
 since moved to `<Ribbon>`. `FilterSelect` (a sized `<select>`) is still used **inside ribbon
 groups**; `SearchInput` and `ColumnToggle` are used by `DataTable`.
 
@@ -115,7 +115,7 @@ driven by `review_status` — see [`lib/observations.ts`](../onboarding/05-ANNOT
 | `'pending'` | grey | ⧗ | No observations yet — still working through the pipeline (default) |
 | `'ai'` | teal | AI | AI-produced label (incl. `blank`), not yet human-reviewed |
 | `'reviewed'` | green | ✓ | A human validated the label |
-| `'issue'` | red | ✕ | Explicit pipeline error (reserved for BE-2) |
+| `'issue'` | red | ✕ | Explicit pipeline error — **reserved**, not yet emitted (see `StatusBadge.tsx`) |
 
 ```tsx
 const status = deriveAnnotationStatus({

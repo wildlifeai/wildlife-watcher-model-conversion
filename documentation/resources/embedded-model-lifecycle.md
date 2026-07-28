@@ -59,7 +59,7 @@ class index *i* ↔ `labels[i]` ↔ `label_map`. Detail:
 Either the **mobile app** transfers the model over BLE (`loadmodel`, OP 14
 `firmware_model_id` + OP 15 `version_number`) or the user copies `MANIFEST.zip` to
 the SD card. Only `validated`/`deployed` models sync. Detail:
-[mobile AI-Model-Integration](../../../wildlife-watcher-mobile-app/documentation/resources/AI-Model-Integration.md).
+[mobile AI-Model-Integration](../../../ww-mobile-app/documentation/resources/AI-Model-Integration.md).
 
 ## 6. On-device inference (firmware)
 The device loads the model + `labels.txt` from the SD-card manifest, runs inference,
@@ -72,8 +72,9 @@ and writes three things into each JPEG's EXIF:
 > firmware `USE_PERCENTAGE` flag is disabled (the confidence producer is compiled out;
 > the fallback writes raw int8 logits, which ingestion does not treat as scores).
 > **Fix staged** on firmware branch `feat/exif-confidence-enable` (flag enabled + a
-> compile-time guard coupling the two flags); device build/verification pending. Detail:
-> [firmware NN_confidence_EXIF_not_written](../../../Seeed_Grove_Vision_AI_Module_V2/EPII_CM55M_APP_S/app/ww_projects/ww500_md/doc/NN_confidence_EXIF_not_written.md).
+> compile-time guard coupling the two flags); device build/verification pending. Detail lives in the
+> firmware repo (`Seeed_Grove_Vision_AI_Module_V2`, `ww500_md` — the write-up is on that branch, not on
+> `main`; see `cvapp.h` `USE_PERCENTAGE` / `ENABLE_EXIF_CONFIDENCE`).
 > Until that ships, stages 7–8 have no embedded prediction to ingest.
 
 ## 7. Ingest EXIF (website)

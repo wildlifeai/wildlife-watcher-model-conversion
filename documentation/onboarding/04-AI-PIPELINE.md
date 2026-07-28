@@ -13,6 +13,13 @@ classify) and the **Wildlife Brain** (DINOv3 embeddings → clustering → activ
 > **Running it locally** (the heavy ML deps live in the `dev` Docker image, feature flags, model
 > weights, HF token) → see [Running the AI/ML pipeline locally](../../readme.md#running-the-aiml-pipeline-locally).
 
+> **Where it runs in the cloud.** Everything below executes in a **dedicated ARQ GPU worker**
+> (`--target worker`, serverless T4), *not* in the API container — the lean `--target api` image has no
+> ML deps. The API only enqueues. So **AI detection is off on any backend without `REDIS_URL` + a
+> deployed worker**: dev has both (since 2026-07-03), production does not yet. Flags must be set on the
+> **worker**, not just the API. See [cloud-infrastructure](../resources/cloud-infrastructure.md) and
+> [prod-worker-provisioning-runbook](../resources/prod-worker-provisioning-runbook.md).
+
 ## SpeciesNet inference pipeline
 
 Lives in [`backend/app/domain/pipeline.py`](../../backend/app/domain/pipeline.py), triggered by
@@ -23,7 +30,7 @@ built from the enabled per-step flags). Steps run in order:
 | Step (`PipelineStepType`) | What it does | Flag |
 |---|---|---|
 | `MEDIA_PREP` | Generate thumbnail + preview renditions and upload them to the **public Supabase Storage bucket** (`media-renditions`), recording the URLs on `media_assets` so the grid never hits Google Drive. Originals stay in Drive. No observations. | `FF_MEDIA_REGISTRY_ENABLED` |
-| `SPECIESNET` | **The core model.** Resolves each image to a temp file, runs the **SpeciesNet ensemble** (detector + species classifier in one pass), and writes media-level `observations` with bbox, detection `confidence`, species `classification_probability`, and `scientific_name`/`vernacular_name`. SpeciesNet classifies **one species per image**, so multiple detection boxes of the same type are collapsed into **one** observation carrying a `count` (number of boxes) + the highest-confidence box as the representative bbox — not N duplicate rows. The species is **taxonomically rolled up** by confidence (`rollup_taxon`): below `SPECIES_CONFIDENCE` (0.5) it backs off to genus, below `GENUS_CONFIDENCE` (0.35) to the most specific available higher rank — so a shaky 0.4 "Apteryx mantelli" is recorded as "Apteryx", not a false species claim. | `FF_SPECIESNET_ENABLED` |
+| `SPECIESNET` | **The core model.** Resolves each image to a temp file, runs the **SpeciesNet ensemble** (detector + species classifier in one pass), and writes media-level `observations` with bbox, detection `confidence`, species `classification_probability`, and `scientific_name`/`vernacular_name`. By default SpeciesNet classifies **one species per image**, so multiple detection boxes of the same type are collapsed into **one** observation carrying a `count` (number of boxes) + the highest-confidence box as the representative bbox — not N duplicate rows. **With `FF_PER_CROP_CLASSIFY_ENABLED` on** this collapse is skipped: each kept detection becomes its own observation (`count = 1`, its own bbox), refined per crop by the classify stage — see [Per-detection classification](#per-detection-classification-ff_per_crop_classify_enabled) below. The species is **taxonomically rolled up** by confidence (`rollup_taxon`): below `SPECIES_CONFIDENCE` (0.5) it backs off to genus, below `GENUS_CONFIDENCE` (0.35) to the most specific available higher rank — so a shaky 0.4 "Apteryx mantelli" is recorded as "Apteryx", not a false species claim. | `FF_SPECIESNET_ENABLED` |
 | `ANIMAL_CROP` | Crops the best animal detection into `media_assets.animal_crop_url` for DINOv3 / BioCLIP. No observations. | — |
 | `BIOCLIP` | **Classify stage — pluggable.** Runs a classifier on the animal crop and adds a *second* `animal` observation tagged with the classifier's `source_model_version` — a complement / second opinion to SpeciesNet, strong for taxa outside SpeciesNet's ~2k label set. The classifier is resolved from a registry (`domain/classifiers.py`): [Imageomics BioCLIP](https://imageomics.github.io/pybioclip/) (`bioclip-2`) by default, or whatever `config['classifier']` selects. | `FF_BIOCLIP_ENABLED` |
 
@@ -52,6 +59,26 @@ classifier flows through the same observation builder unchanged.
 > rides the `config['classifier']` run override, and persisting the choice on the project row is the
 > remaining wiring. A parallel `Detector` contract (so detection could also vary) is a *possible*
 > future step, **not** something in use — detection stays global.
+
+### Per-detection classification (`FF_PER_CROP_CLASSIFY_ENABLED`)
+
+A frame holding a cat *and* a rat gets **one** species by default, because SpeciesNet's classifier is
+image-level even though its detector is multi-box. With the flag on, the collapse in
+`build_speciesnet_observations` is skipped and BioCLIP classifies **each crop**, so every animal gets
+its own observation and species:
+
+```
+SpeciesNet DETECT → one observation per detection (provisional species, count=1)
+  → generate_observation_crops → crop_url per observation
+  → classify_crops (BioCLIP per crop) → per-observation species
+  → DINOv3 embeddings on crops → clustering / similarity
+```
+
+Low-scoring crops still roll up to a coarse taxon rather than a confidently-wrong species. With the
+flag on, `count` becomes **human-only** ("N individuals" annotations) since AI rows are 1-per-detection.
+Requires the GPU worker; set it on the **worker**, and reprocess a deployment to migrate existing rows
+(`delete_superseded_ai_observations` makes re-runs replace, not append). Design detail:
+[per-crop-classification-spec](../development%20reports/per-crop-classification-spec.md).
 
 **Idempotent + incremental (Guard 2):** by default `run_pipeline(only_unannotated=True)` fetches only
 media that **don't already have an `source_type='ai'` observation**, so re-running (or re-uploading)

@@ -42,7 +42,7 @@ permissions, verify against the **live** DB, not just the migrations.
 
 | Table | Used by | Access |
 |-------|---------|--------|
-| `projects`, `deployments` | Results, EXIF matching, Drive folders | RLS (+ service-role) |
+| `projects`, `deployments` | Insights, EXIF matching, Drive folders | RLS (+ service-role) |
 | `media` | Annotations grid + modal | RLS (read; uploads via backend) |
 | `media_assets` | embedded in `media` queries (renditions: provider, dimensions, bytes) | RLS read — a missing GRANT aborts the **whole** embedding query (prod, Jul 2026) |
 | `observations` | Annotations modal (confirm/correct/blank/box/add) | RLS — `authenticated` needs INSERT/UPDATE GRANT |

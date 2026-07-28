@@ -1,13 +1,21 @@
 # Wildlife Watcher — Dual-Layer AI Architecture
 
-**Status:** Proposal for adoption · 2026-07-08 · *v0 partially built on `feat/dual-ai-v0` (2026-07-10)*
+**Status:** Adopted · 2026-07-08 · v0 built and merged (2026-07-10)
 
-> **Build progress (this branch).** Shipped: the **`AI-ARCHITECTURE.md`** umbrella, the **user guide**,
-> lifecycle **stage 8** (`domain/edge_reflection.py`, gated on `FF_EDGE_REFLECT_ENABLED`), and the
-> **LM-1/2** label-chain checks in `domain/model.py`. Still open for v0: the firmware `USE_PERCENTAGE`
-> fix + `LM-9` guard (cross-repo), the ww-backend `ai_origin` schema (`feat/dual-ai-v0-schema`) must land
-> before edge reflection can run, LM-5 + the golden-set parity harness, and seed/test data (a project
-> model with a real `label_map` + media carrying UserComment NN scores). See §4.1.
+> **Build progress.** Shipped and merged: the **`AI-ARCHITECTURE.md`** umbrella (now the canonical
+> naming doc — prefer it over §1 here), the **user guide**, lifecycle **stage 8**
+> (`domain/edge_reflection.py`, gated on `FF_EDGE_REFLECT_ENABLED`, **on for dev**), the **LM-1/2**
+> label-chain checks in `domain/model.py`, and the ww-backend **`dual_ai_v0`** schema
+> (`observations.ai_origin` + `device_alert_rules`) — **merged**, so edge reflection is unblocked.
+> Still open for v0: the firmware `USE_PERCENTAGE` fix + `LM-9` guard (cross-repo — **the gating item**),
+> LM-5 + the golden-set parity harness, and seed/test data (a project model with a real `label_map`
+> + media carrying UserComment NN scores). See §4.1 and
+> [dual-ai-production-rollout](../resources/dual-ai-production-rollout.md).
+>
+> ⚠️ **Where this doc has been overtaken:** the alert-rules table shipped as **`device_alert_rules`**,
+> not `alert_rules` as sketched in §3.2, and the build breakdown §2.2 calls for now exists as
+> [lorawan-alert-execution-spec](./lorawan-alert-execution-spec.md). The design reasoning in §3
+> (modes, ownership split, fair-use) is still current.
 **Scope:** Naming, integration architecture, LoRaWAN alert logic, and validation roadmap for the two AI approaches (Cloud AI and Edge AI), grounded in the current state of `ww-backend`, `ww-website`, `Seeed_Grove_Vision_AI_Module_V2` (Himax firmware), `ww-hardware` (Nordic firmware), and `wwmobile`.
 
 **Companion canon (already exists — this document does not replace it):**
@@ -129,7 +137,7 @@ Keep detail in the repo that owns the stage (matching existing repo doc rules); 
 | Edge map | `embedded-model-lifecycle.md` (stages 1–8) | exists, current |
 | Cloud map | `04-AI-PIPELINE.md` | exists, current |
 | Stage detail | per-repo (`ai-model-pipeline.md`, firmware `_Documentation/`, mobile `AI-Model-Integration.md`, backend `DATABASE_REFERENCE.md`) | exists |
-| Alerting spec | **NEW:** `ww-hardware` + backend doc pair once §3 is adopted (Nordic owns device behaviour; backend owns rules schema + decoder) | to create |
+| Alerting spec | [`lorawan-alert-execution-spec.md`](./lorawan-alert-execution-spec.md) — the build breakdown across all four repos (Nordic owns device behaviour; backend owns rules schema + decoder) | ✅ created |
 | User-facing | **NEW guide** via the website `guide-author` skill, category `Analysis`: *"How Wildlife Watcher's two AIs work together"* — Camera AI / Cloud AI / Species Brain glossary, one diagram, no vendor names. Respect the canon rule: LoRaWAN = "in development" until §3 ships | ✅ created (this branch) |
 
 Conventions for all AI docs: state **which layer** in the first sentence; name the owning repo per stage; every claim of device behaviour links to firmware code or `_Documentation/`; known gaps get a ⚠ block (the lifecycle doc's pattern — keep it).
@@ -174,10 +182,11 @@ Stages 1–5 are **built**; the deltas are marked.
 
 ## 3.2 Rule configuration (backend → device)
 
-**New table (backend-owned, non-breaking):**
+**New table (backend-owned, non-breaking).** ⚠️ This shipped as **`device_alert_rules`** in the
+ww-backend `dual_ai_v0` migration — the sketch below kept its working name:
 
 ```sql
-CREATE TABLE alert_rules (
+CREATE TABLE device_alert_rules (   -- as shipped; sketched here as `alert_rules`
   id               uuid PRIMARY KEY DEFAULT gen_random_uuid(),
   project_id       uuid NOT NULL REFERENCES projects (id),
   model_family_id  uuid NOT NULL REFERENCES ai_model_families (id),
