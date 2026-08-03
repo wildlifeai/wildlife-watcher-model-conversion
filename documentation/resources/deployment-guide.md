@@ -405,9 +405,13 @@ This automatically captures:
 
 ### Azure Container Apps
 
+> `min-replicas` for the API is **set by [`deploy-backend.yml`](../../.github/workflows/deploy-backend.yml)
+> on every deploy** (dev 0, prod 1). A manual `az containerapp update --min-replicas …` is overwritten by
+> the next deploy of that branch — change the workflow's *Determine target* step instead.
+
 | Setting | Dev | Staging/Prod |
 |---------|-----|--------------|
-| `min-replicas` | 0 (scale to zero) | 1 |
+| `min-replicas` | 0 (scale to zero) | 1 (keeps the public demo button warm) |
 | `max-replicas` | 1 | 3 |
 | CPU | 0.25 vCPU | 0.5 vCPU |
 | Memory | 0.5 Gi | 1 Gi |

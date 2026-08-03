@@ -48,10 +48,19 @@ extra Log Analytics workspaces — that is the main source of sprawl and cost co
 | `wwregistry` | Container Registry (ACR) | Image repos `ww-backend` (api, `--target api`) + `ww-backend-worker` (worker). | ✅ | Standard SKU, admin-enabled; `az acr build` builds in-cloud (no local Docker). Login server `wwregistry.azurecr.io`. |
 | `wwuploadsae` | Storage account | **Azure Blob** temporary upload buffer (deleted after Drive archival). | ✅ | Connection string is an ACA secret on the apps. |
 | `ww-redis-dev` | Container App | **ARQ broker** (internal `redis:7-alpine`, TCP, `exposedPort=6379`). | ✅ | Reach app-to-app via the **short name** `redis://ww-redis-dev:6379` (the `.internal.*` FQDN times out for TCP). **Not KEDA-reachable** — see the worker row. |
-| `ww-backend-dev` | Container App | **Dev API** (`--target api`), min-1, external ingress. `REDIS_URL` → offloads jobs to the worker. FQDN `ww-backend-dev.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. | ✅ | Dev Supabase project; secrets as **ACA secrets**. |
+| `ww-backend-dev` | Container App | **Dev API** (`--target api`), **min-0** (scale-to-zero), external ingress. `REDIS_URL` → offloads jobs to the worker. FQDN `ww-backend-dev.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. | ✅ | Dev Supabase project; secrets as **ACA secrets**. **`min-replicas` is set by CI, not by hand** — see the note below. |
 | `ww-embedding-worker-dev` | Container App | **Dev ML worker** (`--target worker`) on the **`gpu-t4` serverless T4 GPU** profile. SpeciesNet detect + per-crop BioCLIP + DINOv3 (Wildlife Brain, live). ~1–2 s/image vs ~30–50 s on CPU. | ✅ | `EMBEDDING_DEVICE=cuda` / `BIOCLIP_DEVICE=cuda` (SpeciesNet auto-detects CUDA). Gated DINOv3 weights need the **`HF_TOKEN`** ACA secret (else `image_count=0`). Scales **0↔1** via **KEDA Postgres scaler on `api_jobs`** (see below). Secrets as ACA secrets. |
 | `ww-backend` | Container App | **Prod API** (`--target api`), serving the production website. FQDN `ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. | ✅ | Prod Supabase project. Google Drive archival configured **2026-07-26**: `GOOGLE_DRIVE_ENABLED`, `GOOGLE_DRIVE_FOLDER_ID`, secret `google-sa-json` (⚠️ currently the **same service account as dev**, `ww-drive-uploader@…` — split before it matters for rotation/audit). Before that date all three were unset, so prod stored no images at all. Console logs can lag ~1 day — don't use them to prove live traffic. |
 | Log Analytics workspace | Log Analytics | Container Apps logs (auto-created with the env). | ✅ | Keep exactly one. |
+
+> **`min-replicas` is owned by [`deploy-backend.yml`](../../.github/workflows/deploy-backend.yml), not by
+> `az`.** The deploy step passes `--min-replicas` on every run — **dev 0, prod 1** — so a manual
+> `az containerapp update --min-replicas …` survives only until the next deploy of that branch. Change the
+> policy in the workflow's *Determine target* step, or it silently reverts. (Prod stays warm so the public
+> "Try the demo" button doesn't hit the ~1-min cold start; dev doesn't need that.)
+>
+> ⏳ **Applies from the next `dev` deploy** (workflow changed 2026-07-28). Until then the live app is still
+> min-1; `az containerapp show -n ww-backend-dev -g WW-AE --query properties.template.scale` confirms which.
 
 **Worker scaling (the one subtlety).** The ARQ broker is an internal Redis container — fine for
 **app-to-app** (worker/API reach it by short name) but **the ACA KEDA operator cannot reach it**
@@ -97,6 +106,34 @@ the same shared pooler host (IPv4). **Verified: scales to 0 when idle** (GPU T4,
 (→ `True`). Pipeline code is GPU-ready: BioCLIP/DINOv3 read `BIOCLIP_DEVICE`/`EMBEDDING_DEVICE`
 (`services/bioclip_service.py`, `services/dinov3.py`); SpeciesNet passes no device and auto-detects CUDA.
 The `ww-backend-worker:dev-latest` image already ships CUDA-enabled torch.
+
+### Cost review — 2026-07-28 (30 days, Jun 30 – Jul 29: **NZ$212.84**)
+
+Two line items are 99.98% of the bill. Recorded here so the next review compares against real numbers
+rather than re-deriving them.
+
+| Service | 30 days | Note |
+|---|---|---|
+| Azure Container Apps | NZ$168.91 | A flat ~NZ$5.50–6/day floor + 4 GPU spikes to NZ$12–15 |
+| Container Registry | NZ$43.91 | ~US$0.88/day — **above** Standard's flat US$0.667/day, so storage overage or a higher SKU |
+| Everything else | NZ$0.03 | Storage, Key Vault, Monitor, bandwidth — all effectively free |
+
+The **flat floor is the cost, not the GPU**: three always-on containers (`ww-backend-dev`, `ww-backend`,
+`ww-redis-dev`) at roughly NZ$1.80–2/day each. The T4 spikes total only ~NZ$25–30/month, which is the
+worker doing real work — scale-to-zero is behaving.
+
+**Open actions** (not yet applied — do not treat these as done):
+
+- [ ] **ACR is the anomaly.** `az acr show -n wwregistry --query sku.name` + `az acr show-usage -n wwregistry -o table`.
+      The worker image is multi-GB and `deploy-backend.yml` pushes a `<sha>` tag every build, so unbounded
+      accumulation is the likely driver. Purge old tags (**dry-run first — deleting tags is irreversible and
+      removes the ability to roll back to those shas**), then drop to Basic if total is under 10 GB (~NZ$35/mo saved).
+- [ ] **Right-size `ww-redis-dev`** from 0.5 vCPU / 1 Gi to 0.25 / 0.5 Gi — it brokers a low-volume ARQ
+      queue and is over-provisioned (~NZ$12/mo). Restarting it drops anything queued, so do it while idle.
+- [x] **`ww-backend-dev` → scale-to-zero**, via the workflow (above), ~NZ$55/mo.
+
+Consider whether prod's `ww-backend` needs min-1 while production has no real traffic — another ~NZ$55/mo,
+but it's a product call: it's what keeps the public demo button fast.
 
 ### How to keep Azure clean
 - **Audit:** `az resource list -o table` — every resource should be in `WW-AE` and map to a row above.
