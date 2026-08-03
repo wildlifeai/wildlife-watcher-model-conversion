@@ -47,7 +47,7 @@ extra Log Analytics workspaces — that is the main source of sprawl and cost co
 | `ww-env` | Container Apps **environment** | Hosts all container apps; workload profiles **`Consumption`** (CPU apps) + **`gpu-t4`** (`Consumption-GPU-NC8as-T4`, serverless T4 for the worker); KEDA. | ✅ | Region-locked — recreating it means recreating its apps. GPU profile: `az containerapp env workload-profile list -g WW-AE -n ww-env`. |
 | `wwregistry` | Container Registry (ACR) | Image repos `ww-backend` (api, `--target api`) + `ww-backend-worker` (worker). | ✅ | Standard SKU, admin-enabled; `az acr build` builds in-cloud (no local Docker). Login server `wwregistry.azurecr.io`. |
 | `wwuploadsae` | Storage account | **Azure Blob** temporary upload buffer (deleted after Drive archival). | ✅ | Connection string is an ACA secret on the apps. |
-| `ww-redis-dev` | Container App | **ARQ broker** (internal `redis:7-alpine`, TCP, `exposedPort=6379`). | ✅ | Reach app-to-app via the **short name** `redis://ww-redis-dev:6379` (the `.internal.*` FQDN times out for TCP). **Not KEDA-reachable** — see the worker row. |
+| `ww-redis-dev` | Container App | **ARQ broker** (internal `redis:7-alpine`, TCP, `exposedPort=6379`). 0.25 vCPU / 0.5 Gi (right-sized 2026-08-03). | ✅ | Reach app-to-app via the **short name** `redis://ww-redis-dev:6379` (the `.internal.*` FQDN times out for TCP). **Not KEDA-reachable** — see the worker row. |
 | `ww-backend-dev` | Container App | **Dev API** (`--target api`), **min-0** (scale-to-zero), external ingress. `REDIS_URL` → offloads jobs to the worker. FQDN `ww-backend-dev.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. | ✅ | Dev Supabase project; secrets as **ACA secrets**. **`min-replicas` is set by CI, not by hand** — see the note below. |
 | `ww-embedding-worker-dev` | Container App | **Dev ML worker** (`--target worker`) on the **`gpu-t4` serverless T4 GPU** profile. SpeciesNet detect + per-crop BioCLIP + DINOv3 (Wildlife Brain, live). ~1–2 s/image vs ~30–50 s on CPU. | ✅ | `EMBEDDING_DEVICE=cuda` / `BIOCLIP_DEVICE=cuda` (SpeciesNet auto-detects CUDA). Gated DINOv3 weights need the **`HF_TOKEN`** ACA secret (else `image_count=0`). Scales **0↔1** via **KEDA Postgres scaler on `api_jobs`** (see below). Secrets as ACA secrets. |
 | `ww-backend` | Container App | **Prod API** (`--target api`), serving the production website. FQDN `ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. | ✅ | Prod Supabase project. Google Drive archival configured **2026-07-26**: `GOOGLE_DRIVE_ENABLED`, `GOOGLE_DRIVE_FOLDER_ID`, secret `google-sa-json` (⚠️ currently the **same service account as dev**, `ww-drive-uploader@…` — split before it matters for rotation/audit). Before that date all three were unset, so prod stored no images at all. Console logs can lag ~1 day — don't use them to prove live traffic. |
@@ -59,8 +59,8 @@ extra Log Analytics workspaces — that is the main source of sprawl and cost co
 > policy in the workflow's *Determine target* step, or it silently reverts. (Prod stays warm so the public
 > "Try the demo" button doesn't hit the ~1-min cold start; dev doesn't need that.)
 >
-> ⏳ **Applies from the next `dev` deploy** (workflow changed 2026-07-28). Until then the live app is still
-> min-1; `az containerapp show -n ww-backend-dev -g WW-AE --query properties.template.scale` confirms which.
+> ✅ **Live since 2026-08-03** (applied via `az` after the workflow change, so CI and reality agree).
+> `az containerapp show -n ww-backend-dev -g WW-AE --query properties.template.scale` → `minReplicas: 0`.
 
 **Worker scaling (the one subtlety).** The ARQ broker is an internal Redis container — fine for
 **app-to-app** (worker/API reach it by short name) but **the ACA KEDA operator cannot reach it**
@@ -122,15 +122,21 @@ The **flat floor is the cost, not the GPU**: three always-on containers (`ww-bac
 `ww-redis-dev`) at roughly NZ$1.80–2/day each. The T4 spikes total only ~NZ$25–30/month, which is the
 worker doing real work — scale-to-zero is behaving.
 
-**Open actions** (not yet applied — do not treat these as done):
+**Actions** (state as of 2026-08-03):
 
-- [ ] **ACR is the anomaly.** `az acr show -n wwregistry --query sku.name` + `az acr show-usage -n wwregistry -o table`.
-      The worker image is multi-GB and `deploy-backend.yml` pushes a `<sha>` tag every build, so unbounded
-      accumulation is the likely driver. Purge old tags (**dry-run first — deleting tags is irreversible and
-      removes the ability to roll back to those shas**), then drop to Basic if total is under 10 GB (~NZ$35/mo saved).
-- [ ] **Right-size `ww-redis-dev`** from 0.5 vCPU / 1 Gi to 0.25 / 0.5 Gi — it brokers a low-volume ARQ
-      queue and is over-provisioned (~NZ$12/mo). Restarting it drops anything queued, so do it while idle.
-- [x] **`ww-backend-dev` → scale-to-zero**, via the workflow (above), ~NZ$55/mo.
+- [x] **`ww-backend-dev` → scale-to-zero** (~NZ$55/mo). Applied live via `az` **and** enforced by
+      `deploy-backend.yml`, so it survives deploys.
+- [x] **`ww-redis-dev` right-sized** 0.5 vCPU / 1 Gi → **0.25 / 0.5 Gi** (~NZ$12/mo). Done while the
+      worker was at 0 replicas (nothing queued); replica confirmed `Running` after the revision.
+- [ ] **ACR — measured, partially resolved.** SKU **Standard**; usage **150.4 GiB against the 100 GiB
+      included** → ~50 GiB of overage on top of the flat rate ≈ the observed NZ$43.91/mo.
+      **Age-based purging does not work here:** the registry's entire history spans 2026-06-29 → 2026-07-26
+      (recreated with the `WW-AE` migration), so `acr purge --ago 30d --keep 5` deleted only 2 tags and
+      **0 manifests — 0 bytes reclaimed**. The storage is ~94 *recent* manifests (42 of them multi-GB
+      worker images). The effective lever is count-based: `--ago 0d --keep 5` (keep only the 5 newest per
+      repo) — **irreversible; removes rollback to the deleted shas; get sign-off first**. Basic
+      (10 GiB, ~NZ$8/mo) is out of reach while 5 worker images are kept; killing the overage
+      (→ ~NZ$33/mo) is the realistic target. Re-check with `az acr show-usage -n wwregistry -o table`.
 
 Consider whether prod's `ww-backend` needs min-1 while production has no real traffic — another ~NZ$55/mo,
 but it's a product call: it's what keeps the public demo button fast.
