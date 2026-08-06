@@ -115,7 +115,7 @@ rather than re-deriving them.
 | Service | 30 days | Note |
 |---|---|---|
 | Azure Container Apps | NZ$168.91 | A flat ~NZ$5.50–6/day floor + 4 GPU spikes to NZ$12–15 |
-| Container Registry | NZ$43.91 | ~US$0.88/day — **above** Standard's flat US$0.667/day, so storage overage or a higher SKU |
+| Container Registry | NZ$43.91 | Measured 2026-08-03: **Standard SKU + ~50 GiB storage overage** (150.4 GiB used vs 100 GiB included) — see the ACR action below |
 | Everything else | NZ$0.03 | Storage, Key Vault, Monitor, bandwidth — all effectively free |
 
 The **flat floor is the cost, not the GPU**: three always-on containers (`ww-backend-dev`, `ww-backend`,
