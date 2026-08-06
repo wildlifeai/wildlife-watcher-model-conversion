@@ -40,6 +40,7 @@ import { NotificationsPage } from './pages/NotificationsPage'
 import { ProcessingHistoryPage } from './pages/ProcessingHistoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { UploadLogsPage } from './pages/UploadLogsPage'
+import { FourZeroFourPage } from './pages/FourZeroFourPage'
 import { UploadProvider, useUploadStore } from './contexts/UploadContext'
 import { UploadModal } from './components/upload/UploadModal'
 import { DemoGuardProvider, RequireNotDemo } from './components/common/DemoGuard'
@@ -521,6 +522,9 @@ export default function App() {
 
               {/* MyDataPage kept at a legacy path (internal; /my-data redirects above) */}
               <Route path="/my-data-legacy" element={<RequireAuth><MyDataPage /></RequireAuth>} />
+
+              {/* 404 Page kept at the end of all routes due to wildcard '*' path. */}
+              <Route path='*' element={<FourZeroFourPage />} />
             </Routes>
           </Layout>
           </UploadProvider>

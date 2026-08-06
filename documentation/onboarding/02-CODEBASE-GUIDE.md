@@ -85,6 +85,9 @@ full-screen modal (see [05-ANNOTATION-WORKFLOW](./05-ANNOTATION-WORKFLOW.md)). `
 currently **unrouted** (`/events/:id` was removed from `App.tsx`; the file remains pending
 re-route-or-delete).
 
+**Fallback**: any unmatched path renders `FourZeroFourPage` (404) — the wildcard `*` route at the
+end of `App.tsx`. Client-side only: the Cloudflare Pages SPA fallback still serves HTTP 200.
+
 ## Backend (`backend/app/`)
 
 Layered so HTTP concerns never leak into business logic:
