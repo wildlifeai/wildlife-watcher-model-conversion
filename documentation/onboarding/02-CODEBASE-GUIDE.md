@@ -53,7 +53,8 @@ when the user has an active deployment.
 
 ### Routes
 
-**Public**: `/`, `/login`, `/reset-password`, `/privacy`, `/terms`, `/resources`, `/faq`, `/guides`.
+**Public**: `/`, `/login`, `/reset-password`, `/privacy`, `/terms`, `/resources`, `/faq`, `/guides`,
+`/guides/:slug` (both lazy-loaded); `/support` redirects to `/faq`.
 
 **Protected (`RequireAuth`)**
 
@@ -72,7 +73,7 @@ when the user has an active deployment.
 | `/intelligence/:id` | `DatasetHealthPage` | Dataset health + QA agreement (per project) |
 | `/reporting/:id` | `ReportingPage` | Diel activity, CamtrapDP / Darwin Core exports |
 | `/processing` | `ProcessingHistoryPage` | Upload & pipeline job history |
-| `/notifications` | `NotificationsPage` | Notification inbox |
+| `/notifications` | `NotificationsPage` | Notification inbox — read **direct from Supabase** via `useNotifications` (there is no `/api/notifications` router); the unread count drives the nav badge. Delivery/email config (`EMAIL_PROVIDER`, `RESEND_API_KEY`, …): [deployment-guide](../resources/deployment-guide.md#full-pipeline-config-checklist-per-subsystem) |
 | `/settings` | `SettingsPage` | Account settings |
 | `/admin/usage` | `AdminUsagePage` | Per-user usage limits (platform admin) |
 
@@ -102,9 +103,11 @@ middleware/→ request id, structured logging, rate limiting, CORS
 registries/→ static config (camera configs, model + embedding registries)
 ```
 
-**Routers** (`/api/*`): `exif`, `jobs`, `manifest`, `models`, `lorawan`, `clustering`,
-`camtrapdp`, `inaturalist`, `media`, `pipeline`, `deployments`, `brain` (embeddings/clusters/UMAP/
-similarity), `intelligence` (dataset health/alerts), `qa` (AI-vs-human agreement), `public_api`.
+**Routers** (`/api/*`, registered in `app/main.py`): `auth` (demo session), `jobs`, `deployments`,
+`projects`, `exif`, `lorawan`, `manifest`, `models`, `media`, `public_api`, `inaturalist`,
+`clustering`, and — each behind its feature flag — `camtrapdp`, `pipeline`, `brain`
+(embeddings/clusters/UMAP/similarity), `qa` (AI-vs-human agreement), `intelligence`
+(dataset health/alerts).
 
 **Key domain modules**: `exif`, `photo_preprocessing`, `pipeline` (SpeciesNet steps), `events`,
 `clustering`, `wildlife_brain` + `embedding_lifecycle` + `active_learning` (the DINOv3 "Brain"),

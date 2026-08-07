@@ -1,7 +1,7 @@
 # Decoupled upload pipeline — durable media rows, resumable backup, dedup & integrity
 
-**Status:** proposal (nothing here is implemented)
-**Date:** 2026-07-26
+> **Status:** 📋 Proposal — **nothing here is implemented**. Dated 2026-07-26; ww-backend (schema) +
+> ww-website (ingest, sweeper, UI).
 **Motivating incidents:** production uploads silently discarded for weeks
 (`GOOGLE_DRIVE_ENABLED` unset → `media` table empty, newest job 10 Jun);
 unassigned photos silently dropped (fixed by triage, PR #99); false-success

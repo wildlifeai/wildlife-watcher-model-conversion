@@ -21,8 +21,12 @@ Repos: **website** (`ww-website`), **backend** (`ww-backend`), **Himax firmware*
   `clear_window_min`, `enabled`. RLS: project members read, admins manage; service
   role for the manifest job + decoder.
 - **Adjacent, already built:** the manifest job (`domain/manifest.py`, writes
-  `CONFIG.TXT` OP codes), the LoRaWAN webhook ingest (`lorawan-webhook-setup.md`,
-  `FF_LORAWAN_WEBHOOKS_ENABLED`), and `conservation_alerts` (decode target).
+  `CONFIG.TXT` OP codes) and `conservation_alerts` (decode target).
+- **Ingest caveat:** the canonical production uplink path is the **ww-backend
+  `lorawan-ingest` edge function**, *not* the website's FastAPI webhook — that one
+  ([lorawan-webhook-setup.md](../resources/lorawan-webhook-setup.md),
+  `FF_LORAWAN_WEBHOOKS_ENABLED`) is a legacy prototype whose parser predates the
+  WW500's FPort-2 TLV format. Piece 4 below extends the **edge function**.
 
 ## What's missing — four pieces
 

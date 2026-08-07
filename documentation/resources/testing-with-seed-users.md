@@ -4,13 +4,15 @@
 
 ## Overview
 
-The Wildlife Watcher development environment includes **17 pre-seeded user accounts** with different organisational roles and project assignments. These accounts are designed to let developers manually test and automatically validate role-based access control (RBAC), multi-tenant isolation, and feature visibility across the website.
+The Wildlife Watcher development environment ships pre-seeded user accounts with different organisational roles and project assignments. These accounts are designed to let developers manually test and automatically validate role-based access control (RBAC), multi-tenant isolation, and feature visibility across the website.
+
+> Exact counts (users, orgs, projects) are **not** repeated here — they change with the seed. Read them from `USER-CREDENTIALS-REFERENCE.md` below.
 
 ## Where Are the Test Users Defined?
 
 | What | Location |
 |------|----------|
-| **User emails, roles, org/project assignments, and UUIDs** | [`ww-backend/supabase/seeds/USER-CREDENTIALS-REFERENCE.md`](https://github.com/wildlifeai/ww-backend/blob/dev/supabase/seeds/USER-CREDENTIALS-REFERENCE.md) |
+| **User emails, roles, org/project assignments, and UUIDs** | [`ww-backend/documentation/resources/USER-CREDENTIALS-REFERENCE.md`](https://github.com/wildlifeai/wildlife-watcher-backend/blob/dev/documentation/resources/USER-CREDENTIALS-REFERENCE.md) |
 | **SQL that creates them** | `ww-backend/supabase/seeds/dev/data.sql` (development seed) |
 | **SQL that creates the core Apps Manager** | `ww-backend/supabase/seeds/seed.sql` (production-safe seed) |
 | **Password** | Set via `SEED_USER_PASSWORD` env var. Stored as a GitHub Secret and available to developers on request. Never hardcoded in source. |
@@ -20,7 +22,7 @@ The Wildlife Watcher development environment includes **17 pre-seeded user accou
 
 ## Password Access
 
-All 17 test users share the same password, configured via the `SEED_USER_PASSWORD` environment variable:
+All test users share the same password, configured via the `SEED_USER_PASSWORD` environment variable:
 
 - **Local development:** Set `SEED_USER_PASSWORD` in `.env.test`, then run `bash scripts/seed-local.sh` after `supabase db reset`.
 - **CI / Cloud dev:** Set `SEED_USER_PASSWORD` in GitHub → Settings → Environments → `dev`.
@@ -28,7 +30,7 @@ All 17 test users share the same password, configured via the `SEED_USER_PASSWOR
 
 ## Role Hierarchy and Website Feature Mapping
 
-The seed data covers four distinct permission levels. Each level unlocks different website capabilities:
+The seed data covers five distinct permission levels. Each level unlocks different website capabilities:
 
 | Role | Example User | Website Capabilities |
 |------|-------------|---------------------|
@@ -65,14 +67,19 @@ Using `pytest` + the Supabase client, you can authenticate as each test user and
 
 **What to validate:**
 
-| Test Scenario | Login As | API Call | Expected Result |
-|--------------|----------|----------|-----------------|
-| Org manager sees own org projects | `kowhai@ww.org` | `GET /api/projects` | Returns Wētāpunga Tracking, Kiwi Migration Study only |
-| Org manager cannot see other org projects | `kowhai@ww.org` | `GET /api/projects` | Does NOT return Tuatara Documentation, Jewelled Gecko Patrol |
-| Project member sees assigned project | `ngaio@ww.org` | `GET /api/projects` | Returns Wētāpunga Tracking only |
-| Project member cannot see unassigned project | `ngaio@ww.org` | `GET /api/projects` | Does NOT return Kiwi Migration Study |
-| Unassigned user sees no projects | `hemi@ww.org` | `GET /api/projects` | Returns empty list |
+> Project **reads** go **direct to Supabase under RLS** — there is no `GET /api/projects` (the
+> `/api/projects` router covers only create/delete/restore). So the read scenarios below query the
+> table with an authed client, which is exactly what the frontend does and what exercises the policies.
+
+| Test Scenario | Login As | Call | Expected Result |
+|--------------|----------|------|-----------------|
+| Org manager sees own org projects | `kowhai@ww.org` | `supabase.from('projects').select()` | Returns Wētāpunga Tracking, Kiwi Migration Study only |
+| Org manager cannot see other org projects | `kowhai@ww.org` | `supabase.from('projects').select()` | Does NOT return Tuatara Documentation, Jewelled Gecko Patrol |
+| Project member sees assigned project | `ngaio@ww.org` | `supabase.from('projects').select()` | Returns Wētāpunga Tracking only |
+| Project member cannot see unassigned project | `ngaio@ww.org` | `supabase.from('projects').select()` | Does NOT return Kiwi Migration Study |
+| Unassigned user sees no projects | `hemi@ww.org` | `supabase.from('projects').select()` | Returns empty list |
 | Upload Model blocked for non-managers | `rata@ww.org` | `POST /api/models/convert` | Returns `403` |
+| Project delete blocked for members | `rata@ww.org` | `DELETE /api/projects/{id}` | Returns `404` (admin-only, doesn't leak existence) |
 | CamtrapDP import succeeds for any authenticated user | `ngaio@ww.org` | `POST /api/camtrapdp/import` | Returns `200` with valid ZIP |
 
 **Implementation approach:**
@@ -179,7 +186,7 @@ For quick manual testing during feature development, use these users:
 
 ## Multi-Tenant Isolation Quick Checks
 
-The seed data creates 4 organisations and 4 projects specifically to test data isolation:
+The seed data creates several organisations and projects specifically to test data isolation (shape below; exact membership is in `USER-CREDENTIALS-REFERENCE.md`):
 
 ```
 General                         Wildlife Research Institute
@@ -208,6 +215,6 @@ When logged in as **Kōwhai**, the RLS policies should ensure:
 If you need additional test personas:
 
 1. Add the user to `ww-backend/supabase/seeds/dev/data.sql`
-2. Update `ww-backend/supabase/seeds/USER-CREDENTIALS-REFERENCE.md` with the new user's details
+2. Update `ww-backend/documentation/resources/USER-CREDENTIALS-REFERENCE.md` with the new user's details
 3. Re-run `bash scripts/seed-local.sh` after `supabase db reset`
 4. Update this document if the new user covers a new role or test scenario

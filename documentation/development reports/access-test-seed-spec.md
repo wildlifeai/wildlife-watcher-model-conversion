@@ -1,6 +1,8 @@
 # Report — Access-Scenario Seed Deployments (ww-backend)
 
-> **Status:** 🔧 Active spec — current engineering hand-off; kept current until shipped.
+> **Status:** ✅ **Shipped** — seeded by `ww-backend/supabase/seeds/dev/access_test_deployments.sql`.
+> Retained as the reasoning behind those rows; the SQL in that repo is authoritative if the two ever
+> disagree. Move to `_archive/` at the next docs tidy.
 
 **Audience:** whoever maintains `ww-backend/supabase/seeds`.
 **Goal:** seed the deployments that back the `sdcard/dev-sdcard/` fixtures so a fresh dev DB
@@ -31,9 +33,9 @@ existing fixtures use.
 
 ## Critical access-model facts (verified in `data.sql`)
 
-- The seed admin **alice `a0000000-…-000001` is a global `ww_admin`** (`system` scope) → she sees
-  **every** deployment in **every** org, so she **cannot** be the subject for *no-access*. Use her for
-  valid / not-found / no-id.
+- The seed admin **tui `a0000000-…-000001` (`tui@ww.org`) is a global `ww_admin`** (`system` scope) →
+  they see **every** deployment in **every** org, so they **cannot** be the subject for *no-access*.
+  Use them for valid / not-found / no-id.
 - **Tama `a0000000-…-000002`** is the non-admin test user — but he is a member of **both** `b0…001`
   **and** `b0…002`. So the no-access deployment must live in an org Tama is **not** in. Orgs `b0…003`
   and `b0…004` have none of the test users; the seed uses **`b0…003`** (owner `a0…004`, a real member)
@@ -45,7 +47,7 @@ existing fixtures use.
 
 | Scenario | Deployment UUID | Org | Owner | Test user sees it? |
 |----------|-----------------|-----|-------|--------------------|
-| **Valid** (night skinks / blanks) | `7785fabb-e00e-4da2-aed6-a0fb906e6d79` | General `b0…001` | `a0…001` | ✅ (alice, or any member with a project role) |
+| **Valid** (night skinks / blanks) | `7785fabb-e00e-4da2-aed6-a0fb906e6d79` | General `b0…001` | `a0…001` | ✅ (tui, or any member with a project role) |
 | **Valid — diverse content** (cats & birds) | `e005a4ab-a287-4efe-9878-56568f5c30bb` | General `b0…001` | `a0…001` | ✅ — best for exercising SpeciesNet (recognisable animals) |
 | **No access** | `242025df-5d55-47d6-b245-e1690ef44126` | `b0…003` (Tama not a member) | `a0…004` | ❌ for Tama `a0…002` → `no_access` |
 | **Not found** | `08702e50-f7c6-499f-8b9d-3ecf9cfe050a` | — | — | ❌ (no row) → `not_found` |
@@ -95,33 +97,36 @@ BEGIN
             'a0000000-0000-0000-0000-000000000001', true);
   END IF;
 
-  -- ── NO ACCESS: org b0…002, owner a0…00b; Tama gets NO role here ──
+  -- ── NO ACCESS: org b0…003, owner a0…004; Tama gets NO role here ──
+  -- MUST be b0…003, NOT b0…002: Tama is a member of both b0…001 and b0…002, so seeding this in
+  -- b0…002 would silently produce a *valid* fixture and the no-access test would pass vacuously.
   INSERT INTO devices (id, name, organisation_id, modified_by, bluetooth_id, device_eui)
-  VALUES ('d242025d-0000-4000-8000-000000000002', 'WW500 — no-access test',
-          'b0000000-0000-0000-0000-000000000002', 'a0000000-0000-0000-0000-00000000000b',
+  VALUES ('d242025d-0000-4000-8000-000000000003', 'WW500 — no-access test',
+          'b0000000-0000-0000-0000-000000000003', 'a0000000-0000-0000-0000-000000000004',
           'BT_TEST_2420', 'EUI_TEST_2420') ON CONFLICT (id) DO NOTHING;
 
   INSERT INTO projects (id, name, description, organisation_id, created_by, modified_by, is_active)
-  VALUES ('a242025d-0000-4000-8000-000000000002', 'Access Test — No Access',
+  VALUES ('a242025d-0000-4000-8000-000000000003', 'Access Test — No Access',
           'Different org; the non-admin test user is not a member',
-          'b0000000-0000-0000-0000-000000000002',
-          'a0000000-0000-0000-0000-00000000000b', 'a0000000-0000-0000-0000-00000000000b', true)
+          'b0000000-0000-0000-0000-000000000003',
+          'a0000000-0000-0000-0000-000000000004', 'a0000000-0000-0000-0000-000000000004', true)
   ON CONFLICT (id) DO NOTHING;
 
   INSERT INTO deployments (id, project_id, device_id, name, location_name, deployment_status_id,
           deployment_start, setup_by, modified_by)
-  VALUES ('242025df-5d55-47d6-b245-e1690ef44126', 'a242025d-0000-4000-8000-000000000002',
-          'd242025d-0000-4000-8000-000000000002', 'No-Access Test', 'Test Location', 2,
-          '2026-06-12T00:00:00Z', 'a0000000-0000-0000-0000-00000000000b',
-          'a0000000-0000-0000-0000-00000000000b') ON CONFLICT (id) DO NOTHING;
+  VALUES ('242025df-5d55-47d6-b245-e1690ef44126', 'a242025d-0000-4000-8000-000000000003',
+          'd242025d-0000-4000-8000-000000000003', 'No-Access Test', 'Test Location', 2,
+          '2026-06-12T00:00:00Z', 'a0000000-0000-0000-0000-000000000004',
+          'a0000000-0000-0000-0000-000000000004') ON CONFLICT (id) DO NOTHING;
 
   -- NOT FOUND (08702e50-…): intentionally no rows.
 END $$;
 ```
 
-> Verify `a0000000-…-00000b` exists in the seed users (it should — the seed defines 17). If not, use
-> any non-General user. Confirm `deployment_status_id = 2` ("ended") is the value you want — ended
-> deployments are the normal "ready to upload SD card" state.
+> Verify `a0000000-…-000004` exists and owns org `b0…003` (check
+> `USER-CREDENTIALS-REFERENCE.md`). If not, use any user with **no** membership in `b0…001`/`b0…002`.
+> Confirm `deployment_status_id = 2` ("ended") is the value you want — ended deployments are the normal
+> "ready to upload SD card" state.
 
 ## BMP + JPEG in the fixtures
 
@@ -141,7 +146,7 @@ against the same deployment.
 ## Acceptance test
 
 On a fresh dev DB (with `FF_BMP_INGEST_ENABLED=true`):
-1. As **alice** → upload `MEDIA/7785FABB/` → both JPG and BMP-derived frames bind, pipeline runs.
+1. As **tui** → upload `MEDIA/7785FABB/` → both JPG and BMP-derived frames bind, pipeline runs.
    Upload `MEDIA/08702E50/` → `not_found` banner.
 2. As **Tama** → upload `MEDIA/242025DF/` → `no_access` banner (for both JPG and BMP frames).
 3. As anyone → upload `MEDIA/00000000/` → images don't bind (no `Deployment_ID`, no folder match).

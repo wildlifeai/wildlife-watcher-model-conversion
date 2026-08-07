@@ -31,7 +31,9 @@ was updated to:
    > ⚠️ **Correction (2026-06-19):** the device does **not** currently write the NN scores to
    > `UserComment`. The `UserComment` tag is omitted entirely because the firmware `USE_PERCENTAGE`
    > flag is disabled (while `ENABLE_EXIF_CONFIDENCE` is on), so the confidence producer is compiled
-   > out — see [firmware NN_confidence_EXIF_not_written](../../../Seeed_Grove_Vision_AI_Module_V2/EPII_CM55M_APP_S/app/ww_projects/ww500_md/doc/NN_confidence_EXIF_not_written.md).
+   > out — see the firmware repo (`Seeed_Grove_Vision_AI_Module_V2`, `ww500_md`: `cvapp.h`
+   > `USE_PERCENTAGE` / `ENABLE_EXIF_CONFIDENCE`; the write-up lives on the
+   > `feat/exif-confidence-enable` branch, not on `main`).
    > The parser is ready; the firmware flag is the blocker. Full flow:
    > [Embedded model lifecycle](../resources/embedded-model-lifecycle.md).
 

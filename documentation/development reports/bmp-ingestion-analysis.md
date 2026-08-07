@@ -1,6 +1,8 @@
 # Analysis — Ingesting BMP (raw) Frames Alongside Device JPEG
 
-> **Status:** 🔧 Active spec — current engineering hand-off; kept current until shipped.
+> **Status:** ✅ **Website side shipped** (`FF_BMP_INGEST_ENABLED` + `BMP_JPEG_QUALITY`, see
+> [Implemented](#implemented-shipped)). Still open as a **firmware** hand-off: same-frame BMP+JPEG
+> dual-write (#1) and a BMP-only capture mode. Move to `_archive/` when those land or are dropped.
 
 **Context:** the WW500's on-device JPEG compression is degrading image quality noticeably, so we want
 to ingest the raw BMP frames and let the **website** do the JPEG compression in the upload pipeline.

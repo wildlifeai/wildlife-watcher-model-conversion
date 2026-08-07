@@ -40,8 +40,11 @@ Team members get vault access from a maintainer — see the readme's
 
 ### Environment variables
 
-Defined and validated in [`backend/app/config.py`](../../backend/app/config.py). Missing **required**
-values make the backend refuse to start.
+Defined and validated in [`backend/app/config.py`](../../backend/app/config.py) — that file is the
+**complete, authoritative list**; the tables below are only what you need to run locally. For the
+per-subsystem cloud set (storage, AI pipeline, demo, integrations) see the
+[full-pipeline config checklist](../resources/deployment-guide.md#full-pipeline-config-checklist-per-subsystem).
+Missing **required** values make the backend refuse to start.
 
 **Required**
 

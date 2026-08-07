@@ -56,7 +56,7 @@ The API processes each uplink and:
 - A LoRaWAN gateway within range
 - An account on TTN (The Things Network) or a Chirpstack instance
 - The Wildlife Watcher API deployed and accessible (see [Deployment Guide](deployment-guide.md))
-- Your API's webhook URL: `https://api.wildlifewatcher.ai/api/lorawan/webhook/ttn` (or `/chirpstack`)
+- Your API's webhook URL: `https://ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io/api/lorawan/webhook/ttn` (or `/chirpstack`)
 
 ---
 
@@ -87,7 +87,7 @@ openssl rand -hex 16
 Set this in your API's environment:
 
 ```bash
-# In .env or Render environment variables
+# In the root .env locally, or as an Azure Container App env var / secret in the cloud
 LORAWAN_TTN_WEBHOOK_SECRET=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
 ```
 
@@ -102,7 +102,7 @@ LORAWAN_TTN_WEBHOOK_SECRET=a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6
    |-------|-------|
    | **Webhook ID** | `wildlife-watcher` |
    | **Webhook format** | `JSON` |
-   | **Base URL** | `https://api.wildlifewatcher.ai/api/lorawan/webhook/ttn` |
+   | **Base URL** | `https://ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io/api/lorawan/webhook/ttn` |
    | **Downlink API key** | _(leave empty)_ |
 
 5. Under **Additional headers**, add:
@@ -148,7 +148,7 @@ For the API to match incoming messages to devices, ensure your device is registe
    | Field | Value |
    |-------|-------|
    | **Payload encoding** | `JSON` |
-   | **Event endpoint URL(s)** | `https://api.wildlifewatcher.ai/api/lorawan/webhook/chirpstack` |
+   | **Event endpoint URL(s)** | `https://ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io/api/lorawan/webhook/chirpstack` |
 
 4. Under **Headers**, add:
 
@@ -178,7 +178,7 @@ You can test the webhook without a physical device by sending a simulated uplink
 **TTN Format:**
 
 ```bash
-curl -X POST https://api.wildlifewatcher.ai/api/lorawan/webhook/ttn \
+curl -X POST https://ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io/api/lorawan/webhook/ttn \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Secret: your-secret-here" \
   -d '{
@@ -204,7 +204,7 @@ The `frm_payload` is base64-encoded. `S0o=` decodes to bytes `[75, 42]`, which m
 **Chirpstack Format:**
 
 ```bash
-curl -X POST https://api.wildlifewatcher.ai/api/lorawan/webhook/chirpstack \
+curl -X POST https://ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io/api/lorawan/webhook/chirpstack \
   -H "Content-Type: application/json" \
   -H "X-Webhook-Secret: your-secret-here" \
   -d '{
