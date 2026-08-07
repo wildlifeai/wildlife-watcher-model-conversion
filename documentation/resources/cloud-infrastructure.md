@@ -45,7 +45,7 @@ extra Log Analytics workspaces — that is the main source of sprawl and cost co
 | Resource | Type | Purpose | Status | Maintenance |
 |----------|------|---------|--------|-------------|
 | `ww-env` | Container Apps **environment** | Hosts all container apps; workload profiles **`Consumption`** (CPU apps) + **`gpu-t4`** (`Consumption-GPU-NC8as-T4`, serverless T4 for the worker); KEDA. | ✅ | Region-locked — recreating it means recreating its apps. GPU profile: `az containerapp env workload-profile list -g WW-AE -n ww-env`. |
-| `wwregistry` | Container Registry (ACR) | Image repos `ww-backend` (api, `--target api`) + `ww-backend-worker` (worker). | ✅ | Standard SKU, admin-enabled; `az acr build` builds in-cloud (no local Docker). Login server `wwregistry.azurecr.io`. |
+| `wwregistry` | Container Registry (ACR) | Image repos `ww-backend` (api, `--target api`) + `ww-backend-worker` (worker). | ✅ | Standard SKU, admin-enabled; `az acr build` builds in-cloud (no local Docker). Login server `wwregistry.azurecr.io`. **`weekly-purge` task** keeps sha tags to the 5 newest per repo (SHA-only filter; `stable`/`latest`/`dev-latest` immune) — see the cost-review action. |
 | `wwuploadsae` | Storage account | **Azure Blob** temporary upload buffer (deleted after Drive archival). | ✅ | Connection string is an ACA secret on the apps. |
 | `ww-redis-dev` | Container App | **ARQ broker** (internal `redis:7-alpine`, TCP, `exposedPort=6379`). 0.25 vCPU / 0.5 Gi (right-sized 2026-08-03). | ✅ | Reach app-to-app via the **short name** `redis://ww-redis-dev:6379` (the `.internal.*` FQDN times out for TCP). **Not KEDA-reachable** — see the worker row. |
 | `ww-backend-dev` | Container App | **Dev API** (`--target api`), **min-0** (scale-to-zero), external ingress. `REDIS_URL` → offloads jobs to the worker. FQDN `ww-backend-dev.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`. | ✅ | Dev Supabase project; secrets as **ACA secrets**. **`min-replicas` is set by CI, not by hand** — see the note below. |
@@ -136,9 +136,11 @@ worker doing real work — scale-to-zero is behaving.
       deleted, usage now 45.7 GiB** — under the included 100 GiB, ACR back to the flat ~NZ$33/mo.
       Before purging, the deployed images were pinned as **`:stable`** (`az acr import … --image
       <repo>:stable`) — a purge-proof rollback anchor; **re-point `stable` when you bless a new build**
-      (`az acr import --force`). Note this is one-shot: CI pushes a sha tag per deploy, so storage
-      regrows — re-run the purge when `az acr show-usage` nears 100 GiB (or schedule it as an ACR task
-      if that gets tedious). Basic (10 GiB) stays out of reach while 5 multi-GB worker images are kept.
+      (`az acr import --force`). CI pushes a sha tag per deploy, so storage regrows — kept flat by the
+      **`weekly-purge` ACR task** (created 2026-08-07): the same command, scheduled `0 14 * * 6` UTC
+      (Sun ~2 am NZ). Check it with `az acr task list-runs -r wwregistry -n weekly-purge -o table`;
+      it must be updated in lockstep if the tag scheme ever changes. Basic (10 GiB) stays out of
+      reach while 5 multi-GB worker images are kept.
 
 Consider whether prod's `ww-backend` needs min-1 while production has no real traffic — another ~NZ$55/mo,
 but it's a product call: it's what keeps the public demo button fast.
