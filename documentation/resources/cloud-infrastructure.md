@@ -128,15 +128,17 @@ worker doing real work — scale-to-zero is behaving.
       `deploy-backend.yml`, so it survives deploys.
 - [x] **`ww-redis-dev` right-sized** 0.5 vCPU / 1 Gi → **0.25 / 0.5 Gi** (~NZ$12/mo). Done while the
       worker was at 0 replicas (nothing queued); replica confirmed `Running` after the revision.
-- [ ] **ACR — measured, partially resolved.** SKU **Standard**; usage **150.4 GiB against the 100 GiB
-      included** → ~50 GiB of overage on top of the flat rate ≈ the observed NZ$43.91/mo.
-      **Age-based purging does not work here:** the registry's entire history spans 2026-06-29 → 2026-07-26
-      (recreated with the `WW-AE` migration), so `acr purge --ago 30d --keep 5` deleted only 2 tags and
-      **0 manifests — 0 bytes reclaimed**. The storage is ~94 *recent* manifests (42 of them multi-GB
-      worker images). The effective lever is count-based: `--ago 0d --keep 5` (keep only the 5 newest per
-      repo) — **irreversible; removes rollback to the deleted shas; get sign-off first**. Basic
-      (10 GiB, ~NZ$8/mo) is out of reach while 5 worker images are kept; killing the overage
-      (→ ~NZ$33/mo) is the realistic target. Re-check with `az acr show-usage -n wwregistry -o table`.
+- [x] **ACR overage eliminated — count-based purge executed 2026-08-07.** Prior state: Standard SKU,
+      **150.4 GiB against the 100 GiB included** (~50 GiB overage ≈ the extra ~NZ$10/mo; age-based
+      purge reclaimed 0 bytes — the whole registry postdates the 2026-06-29 `WW-AE` migration).
+      Ran `acr purge --filter '<repo>:^[0-9a-f]{40}$' --ago 0d --keep 5 --untagged` on both repos
+      (SHA-only filter, so `latest`/`dev-latest`/`stable` can never match): **80 tags + 74 manifests
+      deleted, usage now 45.7 GiB** — under the included 100 GiB, ACR back to the flat ~NZ$33/mo.
+      Before purging, the deployed images were pinned as **`:stable`** (`az acr import … --image
+      <repo>:stable`) — a purge-proof rollback anchor; **re-point `stable` when you bless a new build**
+      (`az acr import --force`). Note this is one-shot: CI pushes a sha tag per deploy, so storage
+      regrows — re-run the purge when `az acr show-usage` nears 100 GiB (or schedule it as an ACR task
+      if that gets tedious). Basic (10 GiB) stays out of reach while 5 multi-GB worker images are kept.
 
 Consider whether prod's `ww-backend` needs min-1 while production has no real traffic — another ~NZ$55/mo,
 but it's a product call: it's what keeps the public demo button fast.
@@ -233,5 +235,5 @@ Rules of use:
 ## Naming conventions
 
 - Container apps: `ww-<role>[-dev]` (`ww-backend`, `ww-backend-dev`, `ww-embedding-worker-dev`, `ww-redis-dev`).
-- ACR: `wwregistry` (`wwregistry.azurecr.io`); repos `ww-backend` (api) + `ww-backend-worker` (worker); tags `dev-latest` / `latest` / `<sha>`.
+- ACR: `wwregistry` (`wwregistry.azurecr.io`); repos `ww-backend` (api) + `ww-backend-worker` (worker); tags `dev-latest` / `latest` / `<sha>` / `stable` (pinned rollback anchor — never purged; re-point on each blessed build).
 - Storage: `wwuploadsae`. One resource group (`WW-AE`), one region (**Australia East**) for everything.
