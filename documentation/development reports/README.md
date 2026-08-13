@@ -1,0 +1,59 @@
+# Development reports
+
+Working records of how the website got here: design proposals, engineering hand-offs,
+reviews and the evidence behind decisions. Same convention as `development reports/` in
+ww-backend, ww-mobile-app and the firmware repo.
+
+For *what the code does today*, read [`../onboarding/`](../onboarding/) and
+[`../resources/`](../resources/) — those track the code. These reports do not.
+
+Two rules keep this simple:
+
+1. **Docs are the record; GitHub issues are the tracker.** Anything still *open* when a
+   discussion pauses — a bug found, a decision not yet made, a follow-up — is filed as a
+   GitHub issue (they land on the
+   [project board](https://github.com/orgs/wildlifeai/projects/3) automatically). A document
+   is never the only place an open item lives. File one in 30 seconds with the
+   [review-finding template](../../.github/ISSUE_TEMPLATE/review-finding.md).
+2. **Every report opens with a one-line `> **Status:**` banner.** It is what tells the next
+   reader whether they are looking at a plan, a live hand-off, or history. Keep it true.
+
+## Writing one
+
+Most reports here are a **single dated file** — `topic-name.md` with a status banner. That is
+the right shape for a spec or an analysis. When a discussion grows working files around it
+(logs, evidence, scripts), give it a dated folder `YYYY-MM_short-topic/` with a `README.md`
+carrying **Status / Outcome / Open items** instead. Append as it evolves — these are the audit
+trail, don't rewrite them.
+
+Closing a report (the only ritual):
+
+- [ ] Outcome written — the short "why" a future developer reads instead of the whole thread
+- [ ] every remaining open item filed as an issue and linked
+- [ ] the docs that track the code updated (`onboarding/`, `resources/`) — a report is not a
+      substitute for them
+- [ ] status banner changed to `🕰️ Historical snapshot` and the file moved to
+      [`_archive/`](_archive/)
+
+`_archive/` is frozen: point-in-time plans and roadmaps kept for the *why*. Never read it as a
+description of current behaviour.
+
+## Reports
+
+Ordered roughly by how likely you are to need them. Descriptions live in the
+[documentation index](../README.md) — this table is the status board.
+
+| Report | Status |
+|---|---|
+| [ww-backend-schema-handoff](ww-backend-schema-handoff.md) | 📋 Open items for the `ww-backend` schema/seed owners |
+| [decoupled-upload-pipeline-spec](decoupled-upload-pipeline-spec.md) | 📋 Proposal — nothing implemented; needs a decision |
+| [lorawan-alert-execution-spec](lorawan-alert-execution-spec.md) | 📋 Active spec — not started; gated on the firmware `USE_PERCENTAGE` fix |
+| [storage-quota-spec](storage-quota-spec.md) | 🔧 Active — needs `ww-backend` schema, then website enforcement |
+| [per-crop-classification-spec](per-crop-classification-spec.md) | 🔧 Active — GPU worker prerequisite met; flag-gated rollout |
+| [exif-telemetry-firmware-spec](exif-telemetry-firmware-spec.md) | 🔧 Active — firmware hand-off; website side already shipped |
+| [dual-camera-rpi-analysis](dual-camera-rpi-analysis.md) | 🔧 Active — firmware/hardware analysis; no website work |
+| [inaturalist-integration](inaturalist-integration.md) | ⚠️ Phases 1–4 built, but the `ww-backend` tables were never migrated |
+| [dual-layer-ai-architecture-proposal](dual-layer-ai-architecture-proposal.md) | ✅ Adopted — v0 built and merged |
+| [gpu-worker-infra-spec](gpu-worker-infra-spec.md) | ✅ Shipped (dev) — retained as design history |
+| [bmp-ingestion-analysis](bmp-ingestion-analysis.md) | ✅ Website side shipped |
+| [access-test-seed-spec](access-test-seed-spec.md) | ✅ Shipped — seeded in `ww-backend` |
