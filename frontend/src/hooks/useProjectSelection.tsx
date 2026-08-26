@@ -40,6 +40,7 @@ export const ProjectSelectionProvider = ({ children }: { children: ReactNode }) 
       const { data, error } = await supabase
         .from('projects')
         .select('id, name')
+        .is('deleted_at', null)
         .order('name')
       
       if (isMounted) {
