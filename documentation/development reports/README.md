@@ -45,6 +45,7 @@ Ordered roughly by how likely you are to need them. Descriptions live in the
 
 | Report | Status |
 |---|---|
+| [ios-universal-links-team-id](ios-universal-links-team-id.md) | 🔧 Active — one-value fix identified and verified; iOS password-reset links stay broken until it ships |
 | [ww-backend-schema-handoff](ww-backend-schema-handoff.md) | 📋 Open items for the `ww-backend` schema/seed owners |
 | [decoupled-upload-pipeline-spec](decoupled-upload-pipeline-spec.md) | 📋 Proposal — nothing implemented; needs a decision |
 | [lorawan-alert-execution-spec](lorawan-alert-execution-spec.md) | 📋 Active spec — not started; gated on the firmware `USE_PERCENTAGE` fix |
