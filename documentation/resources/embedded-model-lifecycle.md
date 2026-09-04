@@ -39,6 +39,23 @@ could not run on NPU" = not int8-quantized), and uses unique `_pending/{job_id}`
 placeholder paths to satisfy the `NOT NULL UNIQUE` path columns
 (see backend [path-columns design issue](../../../ww-backend/documentation/development%20reports/ai-models-path-columns-design-issue.md)).
 
+**Label integrity is enforced here**, because upload is the last point where the
+model and its labels are seen together. Conversion is refused when the labels list
+is not as long as the model's output tensor (**LM-1**, read from the TFLite
+flatbuffer, so it also covers a precompiled `.tfl` that carries no Edge Impulse
+metadata), when a precompiled `labels.txt` disagrees with `model_variables.h` in
+count or order (**LM-2**), and when the metadata contradicts its own declared class
+count. A model whose output shape cannot be read is allowed through: that is a
+missing cross-check, not a mismatch. Class order is never sorted, because device
+class index *i* must resolve to `labels[i]`.
+
+> LM-1 was originally implemented against the header's self-declared count only,
+> which a precompiled package without a header slips past. That is how a two-class
+> "Person Detection (96x96)" model shipped with a one-line labels file: the device
+> named class 1 with an empty string, so every `UserComment` on that deployment
+> read `'': 70%` and no prediction could be mapped to a taxon
+> ([#134](https://github.com/wildlifeai/ww-website/issues/134)).
+
 ## 3. Label mapping (website)
 After validation, [`ModelLabelMapper`](../../frontend/src/components/toolkit/ModelLabelMapper.tsx)
 asks the uploader what each output class means — **target species** (mapped to a
@@ -106,6 +123,13 @@ Gated on `FF_EDGE_REFLECT_ENABLED`. The ww-backend `dual_ai_v0` migration
 - **Firmware:** merge + verify the `USE_PERCENTAGE` fix (branch
   `feat/exif-confidence-enable`) so the device emits percentage NN scores (stage 6).
   **This is the gating item** — until it ships, edge reflection has no real device data.
+- **Data:** the existing "Person Detection (96x96)" v1.0.0 row on dev
+  (`b24428cc-e7a2-46f1-9e75-715144ae0043`) still carries the one-line labels file and an
+  empty `label_map`, so it is stored in the state LM-1 now rejects. Its `20V1.TXT` needs
+  two lines in class order and a `label_map` for both classes, then a redeploy that
+  actually retransfers the file (the card sync only sends files it is missing, so the old
+  `20V1.TXT` has to be deleted from `/MANIFEST/` or the card reformatted)
+  ([#134](https://github.com/wildlifeai/ww-website/issues/134)).
 - **Rollout:** promote schema (ww-backend `main`) + app (staging) + enable the flag per
   [dual-ai-production-rollout](./dual-ai-production-rollout.md); coordinate `ai_origin`
   with mobile.

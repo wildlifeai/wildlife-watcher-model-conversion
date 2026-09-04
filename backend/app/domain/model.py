@@ -115,6 +115,54 @@ def _extract_labels_from_header(vars_h_path: Path) -> List[str]:
     raise HeaderLabelsNotFound("No labels found in model_variables.h")
 
 
+def _output_class_count(model_path: Path) -> Optional[int]:
+    """How many output classes the model itself has, or None when unreadable.
+
+    Reads the TFLite flatbuffer's first output tensor and returns its last
+    dimension (``[1, N]`` → N). A Vela-compiled ``.tfl`` is still a TFLite
+    flatbuffer, so this works on either side of conversion.
+
+    None means "no cross-check available", never "zero classes": a file that
+    isn't a parseable flatbuffer would fail Vela or the device loader anyway,
+    and refusing to upload on a parse failure here would reject packages whose
+    real problem lies elsewhere.
+    """
+    try:
+        from ethosu.vela.tflite.Model import Model
+
+        subgraph = Model.GetRootAs(bytearray(model_path.read_bytes()), 0).Subgraphs(0)
+        if subgraph is None or subgraph.OutputsLength() < 1:
+            return None
+        tensor = subgraph.Tensors(subgraph.Outputs(0))
+        if tensor is None or tensor.ShapeLength() < 1:
+            return None
+        count = int(tensor.Shape(tensor.ShapeLength() - 1))
+        return count if count > 0 else None
+    except Exception:  # noqa: BLE001 — any parse failure means "unknown", not "invalid"
+        logger.info("output_tensor_shape_unreadable", file=model_path.name)
+        return None
+
+
+def _check_label_count(labels: List[str], class_count: Optional[int]) -> None:
+    """LM-1: the labels list must be as long as the model's output tensor.
+
+    The check the design always specified — parse the output shape, compare to
+    the labels — as opposed to the metadata's own self-declared count, which
+    only catches a header that contradicts itself. A one-line labels file for a
+    two-class person detector passed every other check and shipped: the device
+    named class 1 with an empty string, so every EXIF UserComment on that
+    deployment carried ``'': 70%`` and nothing could map it to a taxon
+    (wildlifeai/ww-website#134).
+    """
+    if class_count is not None and class_count != len(labels):
+        raise ModelDomainError(
+            f"Label/tensor mismatch: the model has {class_count} output classes but "
+            f"{len(labels)} label(s) were supplied ({labels}). Give every class its own "
+            "line in labels.txt, in class order. The device reports a class with no "
+            "label as an empty name, which cannot be mapped to a species."
+        )
+
+
 def _build_firmware_filename(vars_h_path: Path) -> str:
     """Build 8.3-style filename from model_variables.h project/version IDs.
 
@@ -291,6 +339,11 @@ async def convert_uploaded_model(zip_content: bytes, filename: str) -> Tuple[byt
                         "Fix the export rather than reordering labels by hand."
                     )
 
+            # LM-1 against the compiled model itself. This is the only check that
+            # sees a precompiled package carrying no Edge Impulse metadata, which
+            # is how a one-label two-class model got through before.
+            _check_label_count(labels, _output_class_count(tfl_file))
+
             tfl_bytes = tfl_file.read_bytes()
             txt_bytes = labels_txt.read_bytes()
 
@@ -321,6 +374,10 @@ async def convert_uploaded_model(zip_content: bytes, filename: str) -> Tuple[byt
 
         logger.info("model_extracted", model=container_name)
 
+        # Read the class count from the source model now: Vela's output can be
+        # moved over this path, so after conversion it may no longer be here.
+        source_class_count = _output_class_count(tflite_path)
+
         # 2. Run Vela conversion
         try:
             vela_output = await run_vela_conversion(tflite_path, work_dir)
@@ -338,6 +395,7 @@ async def convert_uploaded_model(zip_content: bytes, filename: str) -> Tuple[byt
 
         # 4. Extract labels
         labels = _extract_labels_from_header(vars_h_path)
+        _check_label_count(labels, source_class_count)
 
         labels_txt_path = work_dir / "labels.txt"
         labels_txt_path.write_text("\n".join(labels))

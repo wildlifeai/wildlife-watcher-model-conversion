@@ -207,3 +207,120 @@ class TestLabelIntegrity:
         zip_bytes = TestConvertUploadedModelDiscovery._zip({"out/MOD00001.tfl": b"\x00tfl", "out/labels.txt": b"\n\n"})
         with pytest.raises(ModelDomainError, match="empty"):
             await convert_uploaded_model(zip_bytes, "pkg.zip")
+
+
+def _tflite_with_output_classes(n: int) -> bytes:
+    """A minimal but valid TFLite flatbuffer whose output tensor is ``[1, n]``.
+
+    Built rather than checked in as a binary fixture so the class count under
+    test is visible in the test that uses it.
+    """
+    import flatbuffers
+    from ethosu.vela.tflite import Buffer, Model, SubGraph, Tensor
+
+    b = flatbuffers.Builder(1024)
+    name = b.CreateString("output")
+
+    Tensor.TensorStartShapeVector(b, 2)  # vectors build back to front
+    b.PrependInt32(n)
+    b.PrependInt32(1)
+    shape = b.EndVector()
+
+    Tensor.TensorStart(b)
+    Tensor.TensorAddName(b, name)
+    Tensor.TensorAddShape(b, shape)
+    Tensor.TensorAddType(b, 9)  # INT8
+    Tensor.TensorAddBuffer(b, 0)
+    tensor = Tensor.TensorEnd(b)
+
+    SubGraph.SubGraphStartTensorsVector(b, 1)
+    b.PrependUOffsetTRelative(tensor)
+    tensors = b.EndVector()
+
+    SubGraph.SubGraphStartOutputsVector(b, 1)
+    b.PrependInt32(0)
+    outputs = b.EndVector()
+
+    SubGraph.SubGraphStart(b)
+    SubGraph.SubGraphAddTensors(b, tensors)
+    SubGraph.SubGraphAddOutputs(b, outputs)
+    subgraph = SubGraph.SubGraphEnd(b)
+
+    Model.ModelStartSubgraphsVector(b, 1)
+    b.PrependUOffsetTRelative(subgraph)
+    subgraphs = b.EndVector()
+
+    Buffer.BufferStart(b)
+    buffer0 = Buffer.BufferEnd(b)
+    Model.ModelStartBuffersVector(b, 1)
+    b.PrependUOffsetTRelative(buffer0)
+    buffers = b.EndVector()
+
+    Model.ModelStart(b)
+    Model.ModelAddVersion(b, 3)
+    Model.ModelAddSubgraphs(b, subgraphs)
+    Model.ModelAddBuffers(b, buffers)
+    b.Finish(Model.ModelEnd(b), file_identifier=b"TFL3")
+    return bytes(b.Output())
+
+
+class TestOutputTensorLabelCount:
+    """LM-1 as specified: parse the output tensor, compare it to the labels.
+
+    The regression is wildlifeai/ww-website#134 — a two-class person detector
+    shipped with a one-line labels file, so the device reported class 1 as an
+    empty string and no EXIF prediction could be mapped to a taxon.
+    """
+
+    def test_reads_class_count_from_a_real_model(self, tmp_path):
+        from app.domain.model import _output_class_count
+
+        model = tmp_path / "m.tfl"
+        model.write_bytes(_tflite_with_output_classes(2))
+        assert _output_class_count(model) == 2
+
+    def test_unparseable_model_is_unknown_not_zero(self, tmp_path):
+        """An unreadable file means "no cross-check", so upload still proceeds."""
+        from app.domain.model import _output_class_count
+
+        model = tmp_path / "m.tfl"
+        model.write_bytes(b"\x00\x01tflcontent")
+        assert _output_class_count(model) is None
+
+    def test_check_passes_when_count_is_unknown(self):
+        from app.domain.model import _check_label_count
+
+        _check_label_count(["unknown"], None)
+
+    def test_check_raises_on_mismatch(self):
+        from app.domain.model import _check_label_count
+
+        with pytest.raises(ModelDomainError, match="2 output classes but 1 label"):
+            _check_label_count(["unknown"], 2)
+
+    @pytest.mark.asyncio
+    async def test_precompiled_one_label_two_class_model_is_refused(self):
+        """The #134 package: a real 2-class .tfl beside a 7-byte labels.txt."""
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = TestConvertUploadedModelDiscovery._zip(
+            {
+                "out/20V1.TFL": _tflite_with_output_classes(2),
+                "out/labels.txt": b"unknown",
+            }
+        )
+        with pytest.raises(ModelDomainError, match="Label/tensor mismatch"):
+            await convert_uploaded_model(zip_bytes, "Person Detection (96x96)-custom-1.0.0.zip")
+
+    @pytest.mark.asyncio
+    async def test_precompiled_two_labels_two_class_model_passes(self):
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = TestConvertUploadedModelDiscovery._zip(
+            {
+                "out/20V1.TFL": _tflite_with_output_classes(2),
+                "out/labels.txt": b"no person\nperson\n",
+            }
+        )
+        _tfl, _txt, labels = await convert_uploaded_model(zip_bytes, "pkg.zip")
+        assert labels == ["no person", "person"]
