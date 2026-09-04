@@ -7,7 +7,7 @@ ww-backend, ww-mobile-app and the firmware repo.
 For *what the code does today*, read [`../onboarding/`](../onboarding/) and
 [`../resources/`](../resources/) — those track the code. These reports do not.
 
-Two rules keep this simple:
+Three rules keep this simple:
 
 1. **Docs are the record; GitHub issues are the tracker.** Anything still *open* when a
    discussion pauses — a bug found, a decision not yet made, a follow-up — is filed as a
@@ -17,6 +17,10 @@ Two rules keep this simple:
    [review-finding template](../../.github/ISSUE_TEMPLATE/review-finding.md).
 2. **Every report opens with a one-line `> **Status:**` banner.** It is what tells the next
    reader whether they are looking at a plan, a live hand-off, or history. Keep it true.
+3. **Never leave substantive material only in a chat transcript, email or PR comment.** An
+   investigation, a review exchange, a diagnosis that took an afternoon: it belongs in a
+   report here. This is the failure mode to watch for, because the work is done and the
+   finding is real, and it evaporates anyway because it only ever existed in a conversation.
 
 ## Writing one
 
@@ -30,6 +34,8 @@ Closing a report (the only ritual):
 
 - [ ] Outcome written — the short "why" a future developer reads instead of the whole thread
 - [ ] every remaining open item filed as an issue and linked
+- [ ] the linked issues checked that they are *still* open work: one already fixed and merged
+      reads as available work and wastes someone's afternoon
 - [ ] the docs that track the code updated (`onboarding/`, `resources/`) — a report is not a
       substitute for them
 - [ ] status banner changed to `🕰️ Historical snapshot` and the file moved to
@@ -37,6 +43,23 @@ Closing a report (the only ritual):
 
 `_archive/` is frozen: point-in-time plans and roadmaps kept for the *why*. Never read it as a
 description of current behaviour.
+
+## Filing a finding
+
+When a review or an investigation turns up several distinct problems, give each one its own
+folder under the thread: `<Letter>_short_name/`, holding an `explanation.md` written in the
+four sections of the
+[review-finding template](../../.github/ISSUE_TEMPLATE/review-finding.md), whatever
+reproduces it (a script, a failing request, a query), and `logs/` for the evidence.
+
+- **Reproduce it before you file it**, and say how in the Evidence section. A finding nobody
+  can reproduce on demand is not an issue yet.
+- **The issue body is the explanation without its header**, with evidence as permalinks to the
+  commit rather than pasted excerpts that drift out of date.
+- **When you learn more, edit the explanation and the issue body together.** Never add a
+  comment that leaves the next reader reconciling two versions of the same finding.
+
+Worked example, in the firmware repo: `_Documentation/development reports/2026-09-03_capture_bench_findings/`.
 
 ## Reports
 

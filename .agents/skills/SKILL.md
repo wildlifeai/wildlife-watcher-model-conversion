@@ -35,6 +35,20 @@ The `ww-website` repository is a multi-service platform consisting of:
 
 ---
 
+## Development conversations and documentation
+
+**Docs are the record, GitHub issues are the tracker.** The rules live in
+[`documentation/development reports/README.md`](../../documentation/development%20reports/README.md),
+including how to file a finding and what to check before closing a thread. Read it before
+starting or closing one.
+
+Never leave substantive material only in a chat transcript, an email or a PR comment. An
+investigation, a review exchange or a design decision belongs in a dated report. This is the
+failure mode to watch for, because the work is done and the finding is real, and it
+evaporates anyway because it only ever existed in a conversation.
+
+---
+
 # 1. Critical Invariants
 
 These rules are non-negotiable.
