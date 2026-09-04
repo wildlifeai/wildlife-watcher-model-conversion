@@ -17,9 +17,14 @@ env/
 # Streamlit
 .streamlit/
 
-# Agent files
+# Agent files — PERSONAL configs only.
+# The SHARED agent layer is committed on purpose and must stay committable:
+#   AGENTS.md, CLAUDE.md, .agents/**  (skills, DESIGN.md)
+# Verify with: git check-ignore .agents/skills/SKILL.md CLAUDE.md AGENTS.md  → no output
 .cursorrules
 .windsurfrules
+.claude/
+**/claude/
 
 # Docker
 docker-compose.override.yml
