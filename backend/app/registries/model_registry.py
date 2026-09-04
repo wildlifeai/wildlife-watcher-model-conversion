@@ -65,13 +65,19 @@ MODEL_REGISTRY = {
 def get_model_config(model_type: str, resolution: str) -> dict:
     """Safe retrieval of a model's download config.
 
+    ``labels`` and ``firmware_model_id`` are declared once per architecture, not
+    per resolution, so both are folded into the returned config. Callers hold
+    only this dict, and a ``config.get("labels")`` against the bare resolution
+    entry silently returns nothing — which is how every pretrained model shipped
+    a one-line ``unknown`` labels file (wildlifeai/ww-website#134).
+
     Raises:
         ValueError: If model_type or resolution is unknown.
     """
     try:
         config = MODEL_REGISTRY[model_type]["resolutions"][resolution].copy()
-        # Include firmware_model_id in the returned config
         config["firmware_model_id"] = MODEL_REGISTRY[model_type].get("firmware_model_id")
+        config["labels"] = list(MODEL_REGISTRY[model_type].get("labels", []))
         return config
     except KeyError:
         raise ValueError(f"Configuration not found for {model_type} at {resolution}")
