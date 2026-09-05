@@ -94,6 +94,7 @@ function Dashboard() {
     supabase
       .from('projects')
       .select('id, name, description, created_at, deployments(id)')
+      .is('deleted_at', null)
       .is('deployments.deleted_at', null)
       .order('created_at', { ascending: false })
       .then(({ data }) => {
