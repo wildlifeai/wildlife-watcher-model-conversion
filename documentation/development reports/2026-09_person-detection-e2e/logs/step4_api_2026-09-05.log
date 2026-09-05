@@ -1,0 +1,736 @@
+2026-09-05 08:03:10 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:03:10 [info     ] request_completed              duration_ms=1270.75 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:38612 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:03:10 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:03:10 [info     ] request_completed              duration_ms=360.69 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:38624 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:03:31 [info     ] request_completed              duration_ms=2530.72 method=POST path=/api/deployments/validate request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:36324 - "POST /api/deployments/validate HTTP/1.1" 200 OK
+2026-09-05 08:03:50 [info     ] request_completed              duration_ms=2660.33 method=POST path=/api/deployments/validate request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:57650 - "POST /api/deployments/validate HTTP/1.1" 200 OK
+2026-09-05 08:06:56 [info     ] file_skipped_no_deployment_id  filename=A9BA6B50.JPG
+2026-09-05 08:06:56 [info     ] file_skipped_no_deployment_id  filename=A9BB4580.JPG
+2026-09-05 08:06:56 [debug    ] background_job_enqueued        active_tasks=1
+2026-09-05 08:06:56 [info     ] job_start                      job_id=73c83406-65cd-4089-99f6-1f6b9bef00ef job_type=upload_drive_images
+2026-09-05 08:06:56 [info     ] request_completed              duration_ms=2712.77 method=POST path=/api/exif/parse request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:45528 - "POST /api/exif/parse HTTP/1.1" 200 OK
+2026-09-05 08:07:01 [info     ] photo_batch_preprocessed       deployment_folder=2026-09-05_01e03d10 file_count=8 project_folder=personal-test_edee72aa
+2026-09-05 08:07:01 [info     ] file_skipped_no_deployment_id  filename=A9BB4600.JPG
+2026-09-05 08:07:01 [info     ] file_skipped_no_deployment_id  filename=A9BB4660.JPG
+2026-09-05 08:07:01 [info     ] file_skipped_no_deployment_id  filename=A9BB4C70.JPG
+2026-09-05 08:07:01 [info     ] file_skipped_no_deployment_id  filename=A9BB56D0.JPG
+2026-09-05 08:07:01 [info     ] file_skipped_no_deployment_id  filename=A9BB56F0.JPG
+2026-09-05 08:07:01 [info     ] file_skipped_no_deployment_id  filename=A9BB5870.JPG
+2026-09-05 08:07:01 [debug    ] background_job_enqueued        active_tasks=2
+2026-09-05 08:07:01 [info     ] job_start                      job_id=193555c3-a400-4bea-b5af-aa6bf6e46c20 job_type=upload_drive_images
+2026-09-05 08:07:01 [info     ] request_completed              duration_ms=4429.77 method=POST path=/api/exif/parse request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:45528 - "POST /api/exif/parse HTTP/1.1" 200 OK
+2026-09-05 08:07:01 [info     ] photo_batch_preprocessed       deployment_folder=2026-09-05_01e03d10 file_count=2 project_folder=personal-test_edee72aa
+2026-09-05 08:07:01 [error    ] job_failed                     error="GOOGLE_SERVICE_ACCOUNT_JSON points to a file that does not exist in this environment: '/app/service-account.json'. In Docker, start the API with the dev compose so the service account is mounted and the path is set to /app/service-account.json:\n  docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d api\nOr set GOOGLE_SERVICE_ACCOUNT_JSON to the inline service-account JSON." job_id=73c83406-65cd-4089-99f6-1f6b9bef00ef job_type=upload_drive_images
+2026-09-05 08:07:02 [error    ] job_failed                     error="GOOGLE_SERVICE_ACCOUNT_JSON points to a file that does not exist in this environment: '/app/service-account.json'. In Docker, start the API with the dev compose so the service account is mounted and the path is set to /app/service-account.json:\n  docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d api\nOr set GOOGLE_SERVICE_ACCOUNT_JSON to the inline service-account JSON." job_id=193555c3-a400-4bea-b5af-aa6bf6e46c20 job_type=upload_drive_images
+Traceback (most recent call last):
+  File "/usr/local/bin/uvicorn", line 8, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/click/core.py", line 1631, in __call__
+    return self.main(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/click/core.py", line 1552, in main
+    rv = self.invoke(ctx)
+         ^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/click/core.py", line 1415, in invoke
+    return ctx.invoke(self.callback, **ctx.params)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/click/core.py", line 910, in invoke
+    return callback(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/main.py", line 440, in main
+    run(
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/main.py", line 616, in run
+    ChangeReload(config, target=server.run, sockets=[sock]).run()
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/supervisors/basereload.py", line 51, in run
+    for changes in self:
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/supervisors/basereload.py", line 70, in __next__
+    return self.should_restart()
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/uvicorn/supervisors/watchfilesreload.py", line 82, in should_restart
+    changes = next(self.watcher)
+              ^^^^^^^^^^^^^^^^^^
+  File "/usr/local/lib/python3.11/site-packages/watchfiles/main.py", line 131, in watch
+    raw_changes = watcher.watch(debounce, step, rust_timeout, stop_event)
+                  ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+_rust_notify.WatchfilesRustInternalError: error in underlying watcher: Operation not supported (os error 95)
+2026-09-05 08:15:50 [info     ] request_completed              duration_ms=3096.08 method=POST path=/api/deployments/validate request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:48114 - "POST /api/deployments/validate HTTP/1.1" 200 OK
+2026-09-05 08:16:16 [info     ] file_skipped_no_deployment_id  filename=A9BA6B50.JPG
+2026-09-05 08:16:16 [info     ] file_skipped_no_deployment_id  filename=A9BB4580.JPG
+2026-09-05 08:16:17 [debug    ] background_job_enqueued        active_tasks=1
+2026-09-05 08:16:17 [info     ] job_start                      job_id=05483df6-328a-4d10-ba08-ea3b8e99cece job_type=upload_drive_images
+2026-09-05 08:16:17 [info     ] request_completed              duration_ms=3445.54 method=POST path=/api/exif/parse request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:51374 - "POST /api/exif/parse HTTP/1.1" 200 OK
+2026-09-05 08:16:18 [debug    ] supabase_sync_skipped          error='<ConnectionTerminated error_code:1, last_stream_id:33, additional_data:None>'
+2026-09-05 08:16:18 [debug    ] supabase_sync_skipped          error='<ConnectionTerminated error_code:1, last_stream_id:33, additional_data:None>'
+2026-09-05 08:16:18 [debug    ] supabase_sync_skipped          error='<ConnectionTerminated error_code:1, last_stream_id:33, additional_data:None>'
+2026-09-05 08:16:18 [error    ] drive_enqueue_failed           error='<ConnectionTerminated error_code:1, last_stream_id:33, additional_data:None>'
+2026-09-05 08:16:18 [info     ] request_completed              duration_ms=861.35 method=POST path=/api/exif/parse request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:51374 - "POST /api/exif/parse HTTP/1.1" 200 OK
+2026-09-05 08:16:21 [info     ] photo_batch_preprocessed       deployment_folder=2026-09-05_01e03d10 file_count=8 project_folder=personal-test_edee72aa
+2026-09-05 08:16:24 [info     ] drive_folder_created           folder_id=1QEXoZR6LElKMhCr1ACSiSEHQkbRWOnfw name=personal-test_edee72aa
+2026-09-05 08:16:29 [info     ] drive_folder_created           folder_id=1PSKWFYlOl6E1xwOcaGaefxA2greuJQ1n name=2026-09-05_01e03d10
+2026-09-05 08:16:34 [info     ] drive_file_uploaded            file_id=1KX-Ll5i_cRB98NncTwF698UdekcdblYa filename=20260905194539_01.jpg
+2026-09-05 08:16:35 [info     ] drive_file_uploaded            file_id=1BRCagqdSxho94qSON7b1GdU0EJx_x_Pa filename=20260905194554_01.jpg
+2026-09-05 08:16:36 [info     ] drive_file_uploaded            file_id=1GelokqBzL72mrv5qxWFH-zxl88zdXskm filename=20260905194556_01.jpg
+2026-09-05 08:16:37 [info     ] drive_file_uploaded            file_id=12_GfIT9eI9Au0fnudN5lZV8WsnWL8G0w filename=20260905194558_01.jpg
+2026-09-05 08:16:38 [info     ] drive_file_uploaded            file_id=1jgf9SMk1VTfbIElA4E3aONUpg0gE_ul6 filename=20260905194545_01.jpg
+2026-09-05 08:16:41 [info     ] drive_file_uploaded            file_id=1903zPN1Kk8CYtnAXHm55RjUNUXXQCku_ filename=20260905194604_01.jpg
+2026-09-05 08:16:41 [info     ] drive_file_uploaded            file_id=11GiHlCimWERSoK3WCgfjAXMn_XLuiYu_ filename=20260905194608_01.jpg
+2026-09-05 08:17:38 [error    ] drive_file_upload_error        error="HTTPSConnectionPool(host='www.googleapis.com', port=443): Read timed out. (read timeout=60)" filename=A9BC8BE0.JPG
+2026-09-05 08:17:38 [info     ] drive_batch_complete           failed=1 skipped=0 uploaded=7
+2026-09-05 08:17:39 [info     ] media_registered               count=7 job_id=05483df6-328a-4d10-ba08-ea3b8e99cece
+2026-09-05 08:17:39 [debug    ] azure_blob_deleted             key=2fb4c053-1995-4337-8112-699355e07638
+2026-09-05 08:17:40 [info     ] request_completed              duration_ms=15.63 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35464 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:40 [info     ] request_completed              duration_ms=5.13 method=GET path=/api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35470 - "GET /api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:40 [info     ] request_completed              duration_ms=5.64 method=GET path=/api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35474 - "GET /api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:40 [info     ] request_completed              duration_ms=6.49 method=GET path=/api/media/90bf5866-b645-4d38-a694-085a6e793840/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35484 - "GET /api/media/90bf5866-b645-4d38-a694-085a6e793840/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:40 [info     ] request_completed              duration_ms=6.35 method=GET path=/api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35496 - "GET /api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:40 [info     ] request_completed              duration_ms=4.1 method=GET path=/api/media/cc5a5b6c-2dd1-4827-a237-3013bd2858ad/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35512 - "GET /api/media/cc5a5b6c-2dd1-4827-a237-3013bd2858ad/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:40 [info     ] request_completed              duration_ms=3.87 method=GET path=/api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35504 - "GET /api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:40 [debug    ] azure_blob_deleted             key=2e379dc7-0205-44b8-acc0-a9b81ce49781
+2026-09-05 08:17:40 [debug    ] azure_blob_deleted             key=44b51ed6-ec5e-4542-8553-b4cd35ddfecd
+2026-09-05 08:17:41 [debug    ] azure_blob_deleted             key=661317e1-65f6-4594-a6f1-379842ef90a9
+2026-09-05 08:17:41 [debug    ] azure_blob_deleted             key=0c13dc07-c7a4-489d-9331-4b44bdd1276c
+2026-09-05 08:17:41 [debug    ] azure_blob_deleted             key=059d5f16-0a02-4960-8a94-300f01845578
+2026-09-05 08:17:42 [debug    ] azure_blob_deleted             key=ec7e9989-b4c5-484a-9742-235ea3342c78
+2026-09-05 08:17:42 [debug    ] azure_blob_deleted             key=c1fe2ef2-f0e3-41a3-a484-fc62f3929bee
+2026-09-05 08:17:42 [info     ] drive_upload_intermediate_files_cleaned count=8
+redis connection error localhost:6379 ConnectionError Error 111 connecting to localhost:6379. Connection refused., 5 retries remaining...
+redis connection error localhost:6379 ConnectionError Error 111 connecting to localhost:6379. Connection refused., 4 retries remaining...
+2026-09-05 08:17:44 [info     ] request_completed              duration_ms=7.84 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35530 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:44 [info     ] request_completed              duration_ms=4.98 method=GET path=/api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35532 - "GET /api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:44 [info     ] request_completed              duration_ms=5.92 method=GET path=/api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35534 - "GET /api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:44 [info     ] request_completed              duration_ms=6.19 method=GET path=/api/media/90bf5866-b645-4d38-a694-085a6e793840/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35538 - "GET /api/media/90bf5866-b645-4d38-a694-085a6e793840/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:44 [info     ] request_completed              duration_ms=6.0 method=GET path=/api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35546 - "GET /api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:44 [info     ] request_completed              duration_ms=7.53 method=GET path=/api/media/cc5a5b6c-2dd1-4827-a237-3013bd2858ad/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35548 - "GET /api/media/cc5a5b6c-2dd1-4827-a237-3013bd2858ad/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:44 [info     ] request_completed              duration_ms=3.64 method=GET path=/api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:35560 - "GET /api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+redis connection error localhost:6379 ConnectionError Error 111 connecting to localhost:6379. Connection refused., 3 retries remaining...
+redis connection error localhost:6379 ConnectionError Error 111 connecting to localhost:6379. Connection refused., 2 retries remaining...
+redis connection error localhost:6379 ConnectionError Error 111 connecting to localhost:6379. Connection refused., 1 retries remaining...
+2026-09-05 08:17:48 [info     ] request_completed              duration_ms=6.46 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:57940 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:48 [info     ] request_completed              duration_ms=6.99 method=GET path=/api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:57950 - "GET /api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:48 [info     ] request_completed              duration_ms=8.18 method=GET path=/api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:57956 - "GET /api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:48 [info     ] request_completed              duration_ms=7.01 method=GET path=/api/media/90bf5866-b645-4d38-a694-085a6e793840/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:57970 - "GET /api/media/90bf5866-b645-4d38-a694-085a6e793840/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:48 [info     ] request_completed              duration_ms=7.97 method=GET path=/api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:57972 - "GET /api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:48 [warning  ] arq_enqueue_failed_fallback_local error='Error 111 connecting to localhost:6379. Connection refused.' job=annotate_deployments_job
+2026-09-05 08:17:48 [debug    ] background_job_enqueued        active_tasks=2
+2026-09-05 08:17:48 [info     ] job_enqueued_local             job=annotate_deployments_job
+2026-09-05 08:17:48 [info     ] request_completed              duration_ms=12.64 method=GET path=/api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:57982 - "GET /api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:48 [info     ] auto_annotate_start            deployment_id=01e03d10-b53a-4d95-b60e-3f2ec26b96ee steps=['media_prep', 'speciesnet', 'animal_crop', 'bioclip']
+2026-09-05 08:17:48 [info     ] request_completed              duration_ms=6.32 method=GET path=/api/media/cc5a5b6c-2dd1-4827-a237-3013bd2858ad/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:57990 - "GET /api/media/cc5a5b6c-2dd1-4827-a237-3013bd2858ad/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:48 [info     ] job_complete                   failed=1 files=[{'file_id': '1KX-Ll5i_cRB98NncTwF698UdekcdblYa', 'media_id': None, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'filename': '20260905194539_01.jpg', 'timestamp': '2026:09:05 07:45:39', 'file_hash': 'b21faddf20da70a4d54177c6ecea52351355a58cad22b69508ce5a1058cd209b', 'was_new': True, 'exif': {'Make': 'Wildlife.ai', 'Model': 'WW500 HM0360', 'Datetime_Original': '2026:09:05 07:45:39', 'Datetime_Create': '2026:09:05 07:45:39', 'Flash': 0, 'Custom_Data': '023cc4', 'Software': 'WW500_C02 01:42:34 Sep  5 2026', 'MakerNote': '376, 0, 114, 75, Y, 286, 326, 0', 'UserComment': 'ASCIIno person: 62%; person: 38%; ', 'Deployment_ID': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'GPSInfoIFDPointer': 182, 'GPS_Latitude_Reference': 'N', 'GPS_Latitude': [0.0, 0.0, 0.0], 'GPS_Longitude_Reference': 'E', 'GPS_Longitude': [0.0, 0.0, 0.0], 'GPS_Altitude_Reference': '00', 'GPS_Altitude': 0.0, 'latitude': 0.0, 'longitude': 0.0, 'date': '2026:09:05 07:45:39', 'user_comment_fields': {'no person': '62%', 'person': '38%'}, 'camera_variant': 'HM0360', 'integration_lines': 376, 'analog_gain': 0, 'digital_gain': 114, 'ae_mean': 75, 'ae_converged': True, 'wb_red_gain': 286, 'wb_blue_gain': 326, 'flash_fired': False, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'deployment_id_source': 'exif_tag'}}, {'file_id': '1BRCagqdSxho94qSON7b1GdU0EJx_x_Pa', 'media_id': None, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'filename': '20260905194554_01.jpg', 'timestamp': '2026:09:05 07:45:54', 'file_hash': '9bf3166d907438cc47a87c426b54fee0cbb3a69a60b080436a7192176db08092', 'was_new': True, 'exif': {'Make': 'Wildlife.ai', 'Model': 'WW500 HM0360', 'Datetime_Original': '2026:09:05 07:45:54', 'Datetime_Create': '2026:09:05 07:45:54', 'Flash': 0, 'Custom_Data': '\x02J', 'Software': 'WW500_C02 01:42:34 Sep  5 2026', 'MakerNote': '376, 0, 114, 69, Y, 286, 326, 0', 'UserComment': 'ASCIIno person: 64%; person: 36%; ', 'Deployment_ID': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'GPSInfoIFDPointer': 182, 'GPS_Latitude_Reference': 'N', 'GPS_Latitude': [0.0, 0.0, 0.0], 'GPS_Longitude_Reference': 'E', 'GPS_Longitude': [0.0, 0.0, 0.0], 'GPS_Altitude_Reference': '00', 'GPS_Altitude': 0.0, 'latitude': 0.0, 'longitude': 0.0, 'date': '2026:09:05 07:45:54', 'user_comment_fields': {'no person': '64%', 'person': '36%'}, 'camera_variant': 'HM0360', 'integration_lines': 376, 'analog_gain': 0, 'digital_gain': 114, 'ae_mean': 69, 'ae_converged': True, 'wb_red_gain': 286, 'wb_blue_gain': 326, 'flash_fired': False, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'deployment_id_source': 'exif_tag'}}, {'file_id': '1GelokqBzL72mrv5qxWFH-zxl88zdXskm', 'media_id': None, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'filename': '20260905194556_01.jpg', 'timestamp': '2026:09:05 07:45:56', 'file_hash': '8bcda589a52b078dd08c93793860ccbbf69bc65f9700f143aa8ef2f10093ccd7', 'was_new': True, 'exif': {'Make': 'Wildlife.ai', 'Model': 'WW500 HM0360', 'Datetime_Original': '2026:09:05 07:45:56', 'Datetime_Create': '2026:09:05 07:45:56', 'Flash': 0, 'Custom_Data': '025ca4', 'Software': 'WW500_C02 01:42:34 Sep  5 2026', 'MakerNote': '376, 0, 114, 70, Y, 286, 326, 0', 'UserComment': 'ASCIIno person: 67%; person: 33%; ', 'Deployment_ID': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'GPSInfoIFDPointer': 182, 'GPS_Latitude_Reference': 'N', 'GPS_Latitude': [0.0, 0.0, 0.0], 'GPS_Longitude_Reference': 'E', 'GPS_Longitude': [0.0, 0.0, 0.0], 'GPS_Altitude_Reference': '00', 'GPS_Altitude': 0.0, 'latitude': 0.0, 'longitude': 0.0, 'date': '2026:09:05 07:45:56', 'user_comment_fields': {'no person': '67%', 'person': '33%'}, 'camera_variant': 'HM0360', 'integration_lines': 376, 'analog_gain': 0, 'digital_gain': 114, 'ae_mean': 70, 'ae_converged': True, 'wb_red_gain': 286, 'wb_blue_gain': 326, 'flash_fired': False, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'deployment_id_source': 'exif_tag'}}, {'file_id': '12_GfIT9eI9Au0fnudN5lZV8WsnWL8G0w', 'media_id': None, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'filename': '20260905194558_01.jpg', 'timestamp': '2026:09:05 07:45:58', 'file_hash': '5fbf277aea4e8986ad4e624bb1ed543678c74417ffdeb3c85e018c7b97bcf8fb', 'was_new': True, 'exif': {'Make': 'Wildlife.ai', 'Model': 'WW500 HM0360', 'Datetime_Original': '2026:09:05 07:45:58', 'Datetime_Create': '2026:09:05 07:45:58', 'Flash': 0, 'Custom_Data': '021fe1', 'Software': 'WW500_C02 01:42:34 Sep  5 2026', 'MakerNote': '376, 0, 114, 72, Y, 286, 326, 0', 'UserComment': 'ASCIIno person: 56%; person: 44%; ', 'Deployment_ID': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'GPSInfoIFDPointer': 182, 'GPS_Latitude_Reference': 'N', 'GPS_Latitude': [0.0, 0.0, 0.0], 'GPS_Longitude_Reference': 'E', 'GPS_Longitude': [0.0, 0.0, 0.0], 'GPS_Altitude_Reference': '00', 'GPS_Altitude': 0.0, 'latitude': 0.0, 'longitude': 0.0, 'date': '2026:09:05 07:45:58', 'user_comment_fields': {'no person': '56%', 'person': '44%'}, 'camera_variant': 'HM0360', 'integration_lines': 376, 'analog_gain': 0, 'digital_gain': 114, 'ae_mean': 72, 'ae_converged': True, 'wb_red_gain': 286, 'wb_blue_gain': 326, 'flash_fired': False, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'deployment_id_source': 'exif_tag'}}, {'file_id': '1jgf9SMk1VTfbIElA4E3aONUpg0gE_ul6', 'media_id': None, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'filename': '20260905194545_01.jpg', 'timestamp': '2026:09:05 07:45:45', 'file_hash': '369e2f1dbee0f377be8cebd75783c62c638890b45d0aa0b5d6af8afe3bf0240a', 'was_new': True, 'exif': {'Make': 'Wildlife.ai', 'Model': 'WW500 HM0360', 'Datetime_Original': '2026:09:05 07:45:45', 'Datetime_Create': '2026:09:05 07:45:45', 'Flash': 0, 'Custom_Data': '023bc5', 'Software': 'WW500_C02 01:42:34 Sep  5 2026', 'MakerNote': '376, 0, 114, 71, Y, 286, 326, 0', 'UserComment': 'ASCIIno person: 61%; person: 39%; ', 'Deployment_ID': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'GPSInfoIFDPointer': 182, 'GPS_Latitude_Reference': 'N', 'GPS_Latitude': [0.0, 0.0, 0.0], 'GPS_Longitude_Reference': 'E', 'GPS_Longitude': [0.0, 0.0, 0.0], 'GPS_Altitude_Reference': '00', 'GPS_Altitude': 0.0, 'latitude': 0.0, 'longitude': 0.0, 'date': '2026:09:05 07:45:45', 'user_comment_fields': {'no person': '61%', 'person': '39%'}, 'camera_variant': 'HM0360', 'integration_lines': 376, 'analog_gain': 0, 'digital_gain': 114, 'ae_mean': 71, 'ae_converged': True, 'wb_red_gain': 286, 'wb_blue_gain': 326, 'flash_fired': False, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'deployment_id_source': 'exif_tag'}}, {'file_id': '1903zPN1Kk8CYtnAXHm55RjUNUXXQCku_', 'media_id': None, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'filename': '20260905194604_01.jpg', 'timestamp': '2026:09:05 07:46:04', 'file_hash': 'fe42f72cd3e87d1369bab8642e99b5abcd7ba9af675de55dde805c6150f68599', 'was_new': True, 'exif': {'Make': 'Wildlife.ai', 'Model': 'WW500 HM0360', 'Datetime_Original': '2026:09:05 07:46:04', 'Datetime_Create': '2026:09:05 07:46:04', 'Flash': 0, 'Custom_Data': '\x029', 'Software': 'WW500_C02 01:42:34 Sep  5 2026', 'MakerNote': '376, 0, 114, 72, Y, 286, 326, 0', 'UserComment': 'ASCIIno person: 61%; person: 39%; ', 'Deployment_ID': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'GPSInfoIFDPointer': 182, 'GPS_Latitude_Reference': 'N', 'GPS_Latitude': [0.0, 0.0, 0.0], 'GPS_Longitude_Reference': 'E', 'GPS_Longitude': [0.0, 0.0, 0.0], 'GPS_Altitude_Reference': '00', 'GPS_Altitude': 0.0, 'latitude': 0.0, 'longitude': 0.0, 'date': '2026:09:05 07:46:04', 'user_comment_fields': {'no person': '61%', 'person': '39%'}, 'camera_variant': 'HM0360', 'integration_lines': 376, 'analog_gain': 0, 'digital_gain': 114, 'ae_mean': 72, 'ae_converged': True, 'wb_red_gain': 286, 'wb_blue_gain': 326, 'flash_fired': False, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'deployment_id_source': 'exif_tag'}}, {'file_id': '11GiHlCimWERSoK3WCgfjAXMn_XLuiYu_', 'media_id': None, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'filename': '20260905194608_01.jpg', 'timestamp': '2026:09:05 07:46:08', 'file_hash': '53caa01a18a03f1f6f782607de6be03154673198a5e9b7721fb1daa79d405eb0', 'was_new': True, 'exif': {'Make': 'Wildlife.ai', 'Model': 'WW500 HM0360', 'Datetime_Original': '2026:09:05 07:46:08', 'Datetime_Create': '2026:09:05 07:46:08', 'Flash': 0, 'Custom_Data': '02ec14', 'Software': 'WW500_C02 01:42:34 Sep  5 2026', 'MakerNote': '376, 1, 102, 65, Y, 286, 326, 0', 'UserComment': 'ASCIIno person: 46%; person: 54%; ', 'Deployment_ID': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'GPSInfoIFDPointer': 182, 'GPS_Latitude_Reference': 'N', 'GPS_Latitude': [0.0, 0.0, 0.0], 'GPS_Longitude_Reference': 'E', 'GPS_Longitude': [0.0, 0.0, 0.0], 'GPS_Altitude_Reference': '00', 'GPS_Altitude': 0.0, 'latitude': 0.0, 'longitude': 0.0, 'date': '2026:09:05 07:46:08', 'user_comment_fields': {'no person': '46%', 'person': '54%'}, 'camera_variant': 'HM0360', 'integration_lines': 376, 'analog_gain': 1, 'digital_gain': 102, 'ae_mean': 65, 'ae_converged': True, 'wb_red_gain': 286, 'wb_blue_gain': 326, 'flash_fired': False, 'deployment_id': '01e03d10-b53a-4d95-b60e-3f2ec26b96ee', 'deployment_id_source': 'exif_tag'}}] job_id=05483df6-328a-4d10-ba08-ea3b8e99cece job_type=upload_drive_images skipped=0 uploaded=7
+2026-09-05 08:17:49 [info     ] pipeline_step_start            deployment_id=01e03d10-b53a-4d95-b60e-3f2ec26b96ee step=media_prep
+2026-09-05 08:17:52 [info     ] request_completed              duration_ms=3.49 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:58004 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:52 [info     ] request_completed              duration_ms=8.46 method=GET path=/api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:58006 - "GET /api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:52 [info     ] request_completed              duration_ms=10.86 method=GET path=/api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:58008 - "GET /api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:52 [info     ] request_completed              duration_ms=8.74 method=GET path=/api/media/90bf5866-b645-4d38-a694-085a6e793840/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:58010 - "GET /api/media/90bf5866-b645-4d38-a694-085a6e793840/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:52 [info     ] request_completed              duration_ms=9.0 method=GET path=/api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:58022 - "GET /api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:52 [info     ] request_completed              duration_ms=7.86 method=GET path=/api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:58038 - "GET /api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:52 [info     ] request_completed              duration_ms=5.09 method=GET path=/api/media/cc5a5b6c-2dd1-4827-a237-3013bd2858ad/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:58052 - "GET /api/media/cc5a5b6c-2dd1-4827-a237-3013bd2858ad/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:56 [info     ] request_completed              duration_ms=1.43 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:60968 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:56 [info     ] request_completed              duration_ms=4.67 method=GET path=/api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:60982 - "GET /api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:56 [info     ] request_completed              duration_ms=7.92 method=GET path=/api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:60986 - "GET /api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:56 [info     ] request_completed              duration_ms=7.8 method=GET path=/api/media/90bf5866-b645-4d38-a694-085a6e793840/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:60998 - "GET /api/media/90bf5866-b645-4d38-a694-085a6e793840/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:56 [info     ] request_completed              duration_ms=8.83 method=GET path=/api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32780 - "GET /api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:17:56 [info     ] request_completed              duration_ms=4.3 method=GET path=/api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32788 - "GET /api/media/d2ed93aa-8d6a-4242-a109-46950067be50/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:00 [info     ] request_completed              duration_ms=2.43 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32812 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:00 [info     ] request_completed              duration_ms=5.03 method=GET path=/api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32824 - "GET /api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:00 [info     ] request_completed              duration_ms=6.13 method=GET path=/api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32836 - "GET /api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:00 [info     ] request_completed              duration_ms=6.8 method=GET path=/api/media/90bf5866-b645-4d38-a694-085a6e793840/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32850 - "GET /api/media/90bf5866-b645-4d38-a694-085a6e793840/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:00 [info     ] request_completed              duration_ms=6.74 method=GET path=/api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32852 - "GET /api/media/f27ec5a4-3c04-4eaa-9b06-3ee1b3b463bd/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:04 [info     ] request_completed              duration_ms=2.77 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32860 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:04 [info     ] request_completed              duration_ms=2.17 method=GET path=/api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32870 - "GET /api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:04 [info     ] request_completed              duration_ms=3.18 method=GET path=/api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32882 - "GET /api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:04 [info     ] request_completed              duration_ms=2.29 method=GET path=/api/media/90bf5866-b645-4d38-a694-085a6e793840/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:32888 - "GET /api/media/90bf5866-b645-4d38-a694-085a6e793840/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:08 [info     ] request_completed              duration_ms=4.4 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:52174 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:08 [info     ] request_completed              duration_ms=4.09 method=GET path=/api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:52186 - "GET /api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:08 [info     ] request_completed              duration_ms=2.16 method=GET path=/api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:52190 - "GET /api/media/2ef27b63-9320-4bb3-9e24-9613aac1cd34/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:12 [info     ] request_completed              duration_ms=1.26 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:52196 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:12 [info     ] request_completed              duration_ms=1.4 method=GET path=/api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:52210 - "GET /api/media/e041fc7a-3724-4506-abff-d43cc120b1a1/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:16 [info     ] request_completed              duration_ms=1.18 method=GET path=/api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image request_id=unknown status=422 user_id=None
+INFO:     172.19.0.1:59834 - "GET /api/media/b5cf7ea8-4f5e-4687-aaca-903b218ecc5a/image?size=thumb HTTP/1.1" 422 Unprocessable Entity
+2026-09-05 08:18:17 [info     ] pipeline_step_start            deployment_id=01e03d10-b53a-4d95-b60e-3f2ec26b96ee step=speciesnet
+2026-09-05 08:18:44 [info     ] speciesnet_loading             model=kaggle:google/speciesnet/pyTorch/v4.0.1a
+Downloading to /root/.cache/kagglehub/models/google/speciesnet/pyTorch/v4.0.1a/1/README.md...
+Downloading 6 files:   0%|          | 0/6 [00:00<?, ?it/s]
+  0%|          | 0.00/119 [00:00<?, ?B/s][A100%|██████████| 119/119 [00:00<00:00, 271kB/s]
+Downloading to /root/.cache/kagglehub/models/google/speciesnet/pyTorch/v4.0.1a/1/taxonomy_release.txt...
+Downloading 6 files:  17%|█▋        | 1/6 [00:01<00:06,  1.27s/it]
+Downloading to /root/.cache/kagglehub/models/google/speciesnet/pyTorch/v4.0.1a/1/always_crop_99710272_22x8_v12_epoch_00148.labels.txt...
+  0%|          | 0.00/343k [00:00<?, ?B/s][A
+
+Downloading to /root/.cache/kagglehub/models/google/speciesnet/pyTorch/v4.0.1a/1/always_crop_99710272_22x8_v12_epoch_00148.pt...
+  0%|          | 0.00/250k [00:00<?, ?B/s][A[A
+
+
+Downloading to /root/.cache/kagglehub/models/google/speciesnet/pyTorch/v4.0.1a/1/info.json...
+  0%|          | 0.00/214M [00:00<?, ?B/s][A[A[A
+
+
+
+  0%|          | 0.00/399 [00:00<?, ?B/s][A[A[A[A100%|██████████| 399/399 [00:00<00:00, 559kB/s]
+Downloading 6 files:  33%|███▎      | 2/6 [00:01<00:03,  1.07it/s]
+
+100%|██████████| 250k/250k [00:01<00:00, 254kB/s][A[A100%|██████████| 250k/250k [00:01<00:00, 254kB/s]
+Downloading 6 files:  50%|█████     | 3/6 [00:02<00:02,  1.26it/s]
+100%|██████████| 343k/343k [00:01<00:00, 319kB/s][A100%|██████████| 343k/343k [00:01<00:00, 319kB/s]
+
+
+
+  0%|          | 1.00M/214M [00:01<05:19, 699kB/s][A[A[A
+
+
+  1%|          | 2.00M/214M [00:01<02:48, 1.32MB/s][A[A[A
+
+
+  1%|▏         | 3.00M/214M [00:01<01:49, 2.02MB/s][A[A[A
+
+
+  2%|▏         | 4.00M/214M [00:02<01:47, 2.05MB/s][A[A[A
+
+
+  3%|▎         | 6.00M/214M [00:02<01:05, 3.33MB/s][A[A[A
+
+
+  3%|▎         | 7.00M/214M [00:02<00:56, 3.86MB/s][A[A[A
+
+
+  4%|▎         | 8.00M/214M [00:03<00:54, 3.96MB/s][A[A[A
+
+
+  4%|▍         | 9.00M/214M [00:03<00:51, 4.17MB/s][A[A[A
+
+
+  5%|▍         | 10.0M/214M [00:03<00:48, 4.41MB/s][A[A[A
+
+
+  5%|▌         | 11.0M/214M [00:03<00:50, 4.19MB/s][A[A[A
+
+
+  6%|▌         | 12.0M/214M [00:04<00:48, 4.38MB/s][A[A[A
+
+
+  6%|▌         | 13.0M/214M [00:04<00:50, 4.13MB/s][A[A[A
+
+
+Downloading to /root/.cache/kagglehub/models/google/speciesnet/pyTorch/v4.0.1a/1/geofence_release.2025.02.27.0702.json...
+  7%|▋         | 14.0M/214M [00:04<00:54, 3.86MB/s][A[A[A
+  0%|          | 0.00/5.03M [00:00<?, ?B/s][A
+
+
+  7%|▋         | 16.0M/214M [00:05<00:50, 4.09MB/s][A[A[A100%|██████████| 5.03M/5.03M [00:00<00:00, 278MB/s]
+Downloading 6 files:  83%|████████▎ | 5/6 [00:06<00:01,  1.31s/it]
+
+
+  9%|▉         | 19.0M/214M [00:05<00:29, 6.86MB/s][A[A[A
+
+
+  9%|▉         | 20.0M/214M [00:05<00:35, 5.74MB/s][A[A[A
+
+
+ 10%|█         | 22.0M/214M [00:05<00:26, 7.62MB/s][A[A[A
+
+
+ 11%|█         | 24.0M/214M [00:06<00:36, 5.40MB/s][A[A[A
+
+
+ 12%|█▏        | 25.0M/214M [00:06<00:40, 4.86MB/s][A[A[A
+
+
+ 13%|█▎        | 27.0M/214M [00:06<00:33, 5.92MB/s][A[A[A
+
+
+ 13%|█▎        | 28.0M/214M [00:07<00:33, 5.83MB/s][A[A[A
+
+
+ 14%|█▎        | 29.0M/214M [00:07<00:30, 6.41MB/s][A[A[A
+
+
+ 14%|█▍        | 30.0M/214M [00:07<00:34, 5.55MB/s][A[A[A
+
+
+ 15%|█▍        | 32.0M/214M [00:07<00:30, 6.23MB/s][A[A[A
+
+
+ 15%|█▌        | 33.0M/214M [00:07<00:31, 5.97MB/s][A[A[A
+
+
+ 16%|█▌        | 34.0M/214M [00:08<00:31, 5.94MB/s][A[A[A
+
+
+ 16%|█▋        | 35.0M/214M [00:08<00:32, 5.72MB/s][A[A[A
+
+
+ 17%|█▋        | 36.0M/214M [00:08<00:37, 4.93MB/s][A[A[A
+
+
+ 18%|█▊        | 38.0M/214M [00:08<00:29, 6.27MB/s][A[A[A
+
+
+ 18%|█▊        | 39.0M/214M [00:08<00:26, 6.92MB/s][A[A[A
+
+
+ 19%|█▊        | 40.0M/214M [00:09<00:24, 7.50MB/s][A[A[A
+
+
+ 19%|█▉        | 41.0M/214M [00:09<00:23, 7.83MB/s][A[A[A
+
+
+ 20%|█▉        | 42.0M/214M [00:09<00:31, 5.82MB/s][A[A[A
+
+
+ 21%|██        | 45.0M/214M [00:09<00:26, 6.68MB/s][A[A[A
+
+
+ 22%|██▏       | 47.0M/214M [00:10<00:22, 7.84MB/s][A[A[A
+
+
+ 22%|██▏       | 48.0M/214M [00:10<00:21, 8.12MB/s][A[A[A
+
+
+ 23%|██▎       | 49.0M/214M [00:10<00:20, 8.49MB/s][A[A[A
+
+
+ 23%|██▎       | 50.0M/214M [00:10<00:19, 8.72MB/s][A[A[A
+
+
+ 24%|██▍       | 51.0M/214M [00:10<00:19, 8.94MB/s][A[A[A
+
+
+ 24%|██▍       | 52.0M/214M [00:10<00:22, 7.56MB/s][A[A[A
+
+
+ 25%|██▌       | 54.0M/214M [00:10<00:16, 10.1MB/s][A[A[A
+
+
+ 26%|██▌       | 56.0M/214M [00:11<00:18, 8.82MB/s][A[A[A
+
+
+ 27%|██▋       | 57.0M/214M [00:11<00:18, 9.03MB/s][A[A[A
+
+
+ 27%|██▋       | 58.0M/214M [00:11<00:22, 7.39MB/s][A[A[A
+
+
+ 28%|██▊       | 60.0M/214M [00:11<00:21, 7.53MB/s][A[A[A
+
+
+ 29%|██▊       | 61.0M/214M [00:11<00:20, 7.92MB/s][A[A[A
+
+
+ 29%|██▉       | 62.0M/214M [00:11<00:23, 6.70MB/s][A[A[A
+
+
+ 30%|██▉       | 64.0M/214M [00:12<00:17, 9.17MB/s][A[A[A
+
+
+ 31%|███       | 66.0M/214M [00:12<00:20, 7.65MB/s][A[A[A
+
+
+ 31%|███▏      | 67.0M/214M [00:12<00:20, 7.43MB/s][A[A[A
+
+
+ 33%|███▎      | 70.0M/214M [00:12<00:19, 7.78MB/s][A[A[A
+
+
+ 34%|███▍      | 73.0M/214M [00:13<00:15, 9.81MB/s][A[A[A
+
+
+ 35%|███▌      | 75.0M/214M [00:13<00:21, 6.78MB/s][A[A[A
+
+
+ 36%|███▌      | 76.0M/214M [00:14<00:23, 6.14MB/s][A[A[A
+
+
+ 36%|███▋      | 78.0M/214M [00:14<00:20, 7.02MB/s][A[A[A
+
+
+ 37%|███▋      | 79.0M/214M [00:14<00:21, 6.67MB/s][A[A[A
+
+
+ 38%|███▊      | 81.0M/214M [00:14<00:19, 7.02MB/s][A[A[A
+
+
+ 38%|███▊      | 82.0M/214M [00:14<00:18, 7.34MB/s][A[A[A
+
+
+ 39%|███▉      | 83.0M/214M [00:14<00:17, 7.76MB/s][A[A[A
+
+
+ 39%|███▉      | 84.0M/214M [00:15<00:18, 7.33MB/s][A[A[A
+
+
+ 40%|███▉      | 85.0M/214M [00:15<00:17, 7.76MB/s][A[A[A
+
+
+ 40%|████      | 86.0M/214M [00:15<00:18, 7.13MB/s][A[A[A
+
+
+ 41%|████      | 87.0M/214M [00:15<00:20, 6.37MB/s][A[A[A
+
+
+ 41%|████      | 88.0M/214M [00:15<00:21, 6.06MB/s][A[A[A
+
+
+ 42%|████▏     | 89.0M/214M [00:15<00:22, 5.76MB/s][A[A[A
+
+
+ 42%|████▏     | 90.0M/214M [00:16<00:24, 5.36MB/s][A[A[A
+
+
+ 43%|████▎     | 91.0M/214M [00:16<00:24, 5.34MB/s][A[A[A
+
+
+ 43%|████▎     | 92.0M/214M [00:16<00:28, 4.51MB/s][A[A[A
+
+
+ 43%|████▎     | 93.0M/214M [00:16<00:24, 5.25MB/s][A[A[A
+
+
+ 45%|████▍     | 96.0M/214M [00:17<00:19, 6.43MB/s][A[A[A
+
+
+ 46%|████▌     | 98.0M/214M [00:17<00:16, 7.50MB/s][A[A[A
+
+
+ 46%|████▋     | 99.0M/214M [00:17<00:15, 7.85MB/s][A[A[A
+
+
+ 47%|████▋     | 100M/214M [00:17<00:17, 6.98MB/s] [A[A[A
+
+
+ 48%|████▊     | 102M/214M [00:17<00:14, 8.14MB/s][A[A[A
+
+
+ 49%|████▊     | 104M/214M [00:18<00:11, 10.1MB/s][A[A[A
+
+
+ 50%|████▉     | 106M/214M [00:18<00:12, 8.87MB/s][A[A[ADownloading 6 files:  83%|████████▎ | 5/6 [00:19<00:03,  4.00s/it]
+
+
+ 50%|█████     | 108M/214M [00:18<00:13, 8.13MB/s][A[A[A
+
+
+ 51%|█████▏    | 110M/214M [00:19<00:16, 6.65MB/s][A[A[A
+
+
+ 52%|█████▏    | 111M/214M [00:19<00:16, 6.36MB/s][A[A[A
+
+
+ 53%|█████▎    | 113M/214M [00:19<00:18, 5.82MB/s][A[A[A
+
+
+ 54%|█████▎    | 115M/214M [00:19<00:16, 6.25MB/s][A[A[A
+
+
+ 54%|█████▍    | 116M/214M [00:20<00:18, 5.45MB/s][A[A[A
+
+
+ 55%|█████▍    | 117M/214M [00:20<00:17, 5.97MB/s][A[A[A
+
+
+ 55%|█████▌    | 118M/214M [00:20<00:21, 4.63MB/s][A[A[A
+
+
+ 56%|█████▌    | 119M/214M [00:21<00:25, 3.87MB/s][A[A[A
+
+
+ 57%|█████▋    | 121M/214M [00:21<00:16, 5.76MB/s][A[A[A
+
+
+ 57%|█████▋    | 122M/214M [00:21<00:17, 5.64MB/s][A[A[A
+
+
+ 57%|█████▋    | 123M/214M [00:21<00:16, 5.67MB/s][A[A[A
+
+
+ 58%|█████▊    | 124M/214M [00:21<00:14, 6.38MB/s][A[A[A
+
+
+ 58%|█████▊    | 125M/214M [00:21<00:13, 6.90MB/s][A[A[A
+
+
+ 59%|█████▉    | 126M/214M [00:22<00:19, 4.75MB/s][A[A[A
+
+
+ 59%|█████▉    | 127M/214M [00:22<00:16, 5.57MB/s][A[A[A
+
+
+ 60%|█████▉    | 128M/214M [00:22<00:16, 5.43MB/s][A[A[A
+
+
+ 60%|██████    | 129M/214M [00:22<00:14, 6.16MB/s][A[A[A
+
+
+ 61%|██████    | 131M/214M [00:23<00:13, 6.62MB/s][A[A[A
+
+
+ 62%|██████▏   | 132M/214M [00:23<00:14, 5.91MB/s][A[A[A
+
+
+ 62%|██████▏   | 133M/214M [00:23<00:14, 5.93MB/s][A[A[A
+
+
+ 63%|██████▎   | 134M/214M [00:23<00:14, 5.75MB/s][A[A[A
+
+
+ 63%|██████▎   | 135M/214M [00:23<00:17, 4.73MB/s][A[A[A
+
+
+ 64%|██████▎   | 136M/214M [00:24<00:14, 5.60MB/s][A[A[A
+
+
+ 64%|██████▍   | 137M/214M [00:24<00:14, 5.42MB/s][A[A[A
+
+
+ 64%|██████▍   | 138M/214M [00:24<00:12, 6.17MB/s][A[A[A
+
+
+ 65%|██████▌   | 140M/214M [00:24<00:11, 6.56MB/s][A[A[A
+
+
+ 67%|██████▋   | 143M/214M [00:24<00:09, 7.98MB/s][A[A[A
+
+
+ 68%|██████▊   | 145M/214M [00:25<00:08, 8.38MB/s][A[A[A
+
+
+ 69%|██████▊   | 147M/214M [00:25<00:07, 9.23MB/s][A[A[A
+
+
+ 69%|██████▉   | 148M/214M [00:25<00:07, 8.83MB/s][A[A[A
+
+
+ 70%|██████▉   | 149M/214M [00:25<00:09, 6.96MB/s][A[A[A
+
+
+ 71%|███████   | 151M/214M [00:25<00:08, 8.04MB/s][A[A[A
+
+
+ 71%|███████   | 152M/214M [00:26<00:07, 8.24MB/s][A[A[A
+
+
+ 71%|███████▏  | 153M/214M [00:26<00:08, 7.39MB/s][A[A[A
+
+
+ 72%|███████▏  | 154M/214M [00:26<00:09, 6.45MB/s][A[A[A
+
+
+ 72%|███████▏  | 155M/214M [00:26<00:08, 7.15MB/s][A[A[A
+
+
+ 73%|███████▎  | 157M/214M [00:27<00:10, 5.49MB/s][A[A[A
+
+
+ 74%|███████▍  | 159M/214M [00:27<00:08, 6.53MB/s][A[A[A
+
+
+ 75%|███████▌  | 161M/214M [00:27<00:08, 6.88MB/s][A[A[A
+
+
+ 76%|███████▌  | 163M/214M [00:27<00:07, 6.88MB/s][A[A[A
+
+
+ 77%|███████▋  | 165M/214M [00:28<00:06, 8.01MB/s][A[A[A
+
+
+ 79%|███████▊  | 168M/214M [00:28<00:06, 7.90MB/s][A[A[A
+
+
+ 79%|███████▉  | 169M/214M [00:28<00:06, 7.54MB/s][A[A[A
+
+
+ 80%|███████▉  | 171M/214M [00:28<00:06, 7.43MB/s][A[A[A
+
+
+ 80%|████████  | 172M/214M [00:29<00:05, 7.41MB/s][A[A[A
+
+
+ 81%|████████  | 173M/214M [00:29<00:06, 7.01MB/s][A[A[A
+
+
+ 81%|████████▏ | 174M/214M [00:29<00:06, 6.83MB/s][A[A[A
+
+
+ 82%|████████▏ | 175M/214M [00:29<00:06, 6.21MB/s][A[A[A
+
+
+ 82%|████████▏ | 176M/214M [00:29<00:05, 6.92MB/s][A[A[A
+
+
+ 83%|████████▎ | 177M/214M [00:29<00:05, 6.57MB/s][A[A[A
+
+
+ 83%|████████▎ | 178M/214M [00:30<00:05, 7.17MB/s][A[A[A
+
+
+ 84%|████████▎ | 179M/214M [00:30<00:04, 7.64MB/s][A[A[A
+
+
+ 84%|████████▍ | 180M/214M [00:30<00:06, 5.57MB/s][A[A[A
+
+
+ 85%|████████▍ | 181M/214M [00:30<00:06, 5.04MB/s][A[A[A
+
+
+ 86%|████████▌ | 183M/214M [00:30<00:04, 7.35MB/s][A[A[A
+
+
+ 86%|████████▋ | 185M/214M [00:31<00:04, 7.48MB/s][A[A[A
+
+
+ 87%|████████▋ | 187M/214M [00:31<00:03, 8.66MB/s][A[A[A
+
+
+ 88%|████████▊ | 188M/214M [00:31<00:03, 7.62MB/s][A[A[A
+
+
+ 88%|████████▊ | 189M/214M [00:31<00:03, 7.81MB/s][A[A[A
+
+
+ 89%|████████▉ | 190M/214M [00:31<00:03, 7.21MB/s][A[A[A
+
+
+ 89%|████████▉ | 191M/214M [00:32<00:03, 6.45MB/s][A[A[A
+
+
+ 90%|████████▉ | 192M/214M [00:32<00:03, 7.14MB/s][A[A[A
+
+
+ 90%|█████████ | 193M/214M [00:32<00:03, 5.59MB/s][A[A[A
+
+
+ 91%|█████████ | 194M/214M [00:32<00:03, 6.42MB/s][A[A[A
+
+
+ 91%|█████████ | 195M/214M [00:32<00:03, 6.01MB/s][A[A[A
+
+
+ 92%|█████████▏| 196M/214M [00:32<00:03, 5.64MB/s][A[A[A
+
+
+ 92%|█████████▏| 197M/214M [00:33<00:02, 6.52MB/s][A[A[A
+
+
+ 93%|█████████▎| 198M/214M [00:33<00:02, 6.84MB/s][A[A[A
+
+
+ 93%|█████████▎| 200M/214M [00:33<00:01, 8.36MB/s][A[A[A
+
+
+ 94%|█████████▍| 201M/214M [00:33<00:01, 7.07MB/s][A[A[A
+
+
+ 94%|█████████▍| 202M/214M [00:33<00:01, 7.67MB/s][A[A[A
+
+
+ 95%|█████████▌| 204M/214M [00:33<00:01, 8.35MB/s][A[A[A
+
+
+ 96%|█████████▌| 205M/214M [00:34<00:01, 7.67MB/s][A[A[A
+
+
+ 97%|█████████▋| 208M/214M [00:34<00:00, 10.0MB/s][A[A[A
+
+
+ 98%|█████████▊| 209M/214M [00:34<00:00, 7.25MB/s][A[A[A
+
+
+ 98%|█████████▊| 210M/214M [00:34<00:00, 7.73MB/s][A[A[A
+
+
+100%|█████████▉| 213M/214M [00:35<00:00, 8.99MB/s][A[A[A
+
+
+100%|██████████| 214M/214M [00:35<00:00, 7.67MB/s][A[A[A100%|██████████| 214M/214M [00:35<00:00, 6.37MB/s]
+Downloading 6 files: 100%|██████████| 6/6 [00:36<00:00,  6.10s/it]Downloading 6 files: 100%|██████████| 6/6 [00:36<00:00,  6.10s/it]
+2026-09-05 08:28:54 [info     ] speciesnet_step_complete       deployment_id=01e03d10-b53a-4d95-b60e-3f2ec26b96ee duration_seconds=637.1 errors=0 media_processed=7 observations_created=7
+2026-09-05 08:28:54 [info     ] pipeline_step_start            deployment_id=01e03d10-b53a-4d95-b60e-3f2ec26b96ee step=animal_crop
+2026-09-05 08:28:58 [info     ] pipeline_step_start            deployment_id=01e03d10-b53a-4d95-b60e-3f2ec26b96ee step=bioclip
+2026-09-05 08:29:21 [info     ] bioclip_loading                device=cpu model=tree_of_life
+2026-09-05 08:33:34 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:33:34 [info     ] request_completed              duration_ms=1054.29 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:58624 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:33:53 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:33:53 [info     ] request_completed              duration_ms=584.91 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:41004 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:33:56 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:33:56 [info     ] request_completed              duration_ms=473.96 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:41034 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:33:57 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:33:57 [info     ] request_completed              duration_ms=586.83 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:43814 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:33:59 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:33:59 [info     ] request_completed              duration_ms=402.81 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:43830 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:34:01 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:34:01 [info     ] request_completed              duration_ms=585.13 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:43830 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:34:02 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:34:02 [info     ] request_completed              duration_ms=621.27 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:43830 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:34:06 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:34:06 [info     ] request_completed              duration_ms=352.88 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:43830 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:34:09 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:34:09 [info     ] request_completed              duration_ms=570.71 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:41034 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK
+2026-09-05 08:40:12 [info     ] managed_orgs_query             email=weka@ww.org roles_count=0 user_id=a0000000-0000-0000-0000-000000000011
+2026-09-05 08:40:12 [info     ] request_completed              duration_ms=802.55 method=GET path=/api/models/managed-orgs request_id=unknown status=200 user_id=None
+INFO:     172.19.0.1:50260 - "GET /api/models/managed-orgs HTTP/1.1" 200 OK

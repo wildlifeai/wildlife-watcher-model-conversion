@@ -1,11 +1,13 @@
 # Person detection, end to end
 
-> **Status:** 🔧 Active — steps 1 to 3 done on dev and real hardware, 2026-09-05. Step 4
-> (upload and verify on the website) is blocked on a fresh capture set: the phone never
-> pushed its deployment, so the first set's frames name a deployment the cloud does not
-> have. See [2026-09-05_bench-run-from-the-mobile-app.md](2026-09-05_bench-run-from-the-mobile-app.md)
+> **Status:** 🔧 Active. Steps 1 to 3 done on dev and real hardware, 2026-09-05. Step 4 ran
+> the same day with a second capture set and got as far as media rows and Cloud AI labels,
+> but **no Camera AI row**: the deployment's project points at the *seeded* Person Detection
+> (`1V1`), whose `label_map` is `{}`, so `reflect_edge_deployment` skips the deployment
+> entirely. See [§5](#5-step-4-first-run-2026-09-05) for that run and what it exposed. See
+> [2026-09-05_bench-run-from-the-mobile-app.md](2026-09-05_bench-run-from-the-mobile-app.md)
 > for the device side and [#140](https://github.com/wildlifeai/ww-website/issues/140) for
-> what the upload should do with the EXIF deployment id.
+> what the upload does with the EXIF deployment id.
 
 The first model to travel the whole embedded path on purpose, with every stage checked:
 upload through the pretrained path → `label_map` → transfer to the device from the mobile
@@ -172,11 +174,56 @@ What each failure looks like, and where to look:
 | `UserComment` fine, no edge observation | `projects.model_id` unset, or `label_map` empty, or flag off | step 2.1; `edge_reflect_skipped` in backend logs |
 | edge row present, `observation_type: animal` | expected until #135 | nothing to do here |
 
+## 5. Step 4, first run (2026-09-05)
+
+A second capture set (`C:\Users\ww\person-test-images-run2\MEDIA\`, 18 frames) was uploaded
+through the new `/upload-data` page ([#142](https://github.com/wildlifeai/ww-website/pull/142))
+against cloud dev. The set claims three deployments: `01e03d10…` (10 frames, on the server,
+project *Personal test*), `ceb77c85…` (7 frames) and `16bed409…` (1 frame), neither of the
+last two on the server. The two unknown ones were skipped at triage, so only `01e03d10…`
+was uploaded.
+
+| | |
+|---|---|
+| media rows created | 7 of 10 |
+| Cloud AI observations | 7, `speciesnet-v4.0.1a`, `observation_type: human` |
+| **Camera AI observations** | **0** |
+| camera scores present in EXIF | yes, all 7 frames, e.g. `person: 38%; no person: 62%` |
+
+**Why no Camera AI row.** `projects.model_id` for *Personal test* is the **seeded** Person
+Detection (`43a87b0d…`, family firmware id 1, so `1V1`), and its `label_map` is `{}`.
+`reflect_edge_deployment` returns early on an empty `label_map`
+(`edge_reflect_skipped, reason="no project model or empty label_map"`), so nothing is
+reflected regardless of the scores. This is step 2.1 of the runbook not having been done for
+this project: point it at the registry model `a3c7c373…` (`20V1`), which does carry a
+`label_map`, or give the seeded row one.
+
+**Second reason, independent of the first.** Six of the seven frames score `person` below the
+50 % reflection threshold (33 % to 44 %); only `20260905194608_01.jpg` at 54 % would produce a
+row even with a correct `label_map`. The camera genuinely judged those frames "no person"
+while SpeciesNet called all seven `human`. That disagreement is the interesting result of the
+run, and it was invisible in the UI because a below-threshold score creates no observation:
+hence the raw per-class *📟 Camera AI on the device* line added to the annotation panel in
+#142, which shows the camera's verdict whether or not it crosses the threshold.
+
+**Three frames lost.** One to a 60 s read timeout against `googleapis.com` with no retry, two
+to an HTTP/2 `ConnectionTerminated` on the shared Supabase client that killed the second
+batch's Drive job while the request still returned 200. Both now retry, and a batch with no
+Drive job is counted as failed in the dock (#142). Evidence:
+[`logs/step4_api_2026-09-05.log`](logs/step4_api_2026-09-05.log).
+
 ## Open items
 
-- **Steps 2 and 3 are now done on hardware** (5 September 2026): 11 images with per-class
-  person scores are waiting at `C:\Users\ww\person-test-images\MEDIA\E10F7C43\`, and the
-  device confirmed `There are 2 classes (2)` at model load. Step 4 has not been run. Read
+- **Step 4 needs a rerun** once the deployment's project points at a model with a real
+  `label_map`, and with the #142 backend live (the API container bind-mounts the main
+  checkout, so the retries and the reflect-at-upload-time change need that branch merged and
+  the container recreated). Expect one Camera AI row from the 54 % frame, and the raw-score
+  line on all of them.
+- **The seeded Person Detection has an empty `label_map`** (`43a87b0d…`, `1V1`). The same
+  class of seed gap as [ww-backend #175](https://github.com/wildlifeai/ww-backend/issues/175);
+  worth raising there so a freshly seeded dev can reflect edge scores without a manual fix.
+- **Steps 2 and 3 are done on hardware** (5 September 2026): the device confirmed
+  `There are 2 classes (2)` at model load. Read
   [2026-09-05_bench-run-from-the-mobile-app.md](2026-09-05_bench-run-from-the-mobile-app.md)
   first: the model that ran is `1V1`, not the `20V1` this runbook names, so the pass
   condition's `source_model_version` differs, and `FF_EDGE_REFLECT_ENABLED` was never

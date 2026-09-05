@@ -288,6 +288,21 @@ Rules:
 
 The application should fail fast when required configuration is missing.
 
+## Docker trap: a bind-mount source that does not exist
+
+`docker-compose.dev.yml` bind-mounts `./service-account.json` and points
+`GOOGLE_SERVICE_ACCOUNT_JSON` at it, overriding the inline JSON in `.env`. If that file is
+missing when the container is first created, Docker silently creates an empty **directory**
+in its place and every Drive job then fails with "points to a file that does not exist",
+while the upload request itself still returns 200. Write the credential from `.env` to that
+path (it is gitignored), then recreate the container:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate api
+```
+
+A restart is not enough: the mount is resolved at container creation.
+
 ---
 
 # 6. Feature Flag Rules
