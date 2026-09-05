@@ -28,7 +28,7 @@ from fastapi.responses import JSONResponse
 from app.authz import assert_access, classify_deployment_access, deployment_id_prefix_bounds
 from app.config import settings
 from app.dependencies import get_optional_user, is_email_confirmed
-from app.domain.exif import parse_exif_from_bytes
+from app.domain.exif import parse_exif_from_bytes, resolve_deployment_source
 from app.jobs.definitions import upload_drive_images_job
 from app.jobs.runner import enqueue_local_job
 from app.jobs.store import create_job
@@ -232,19 +232,20 @@ async def parse_exif(
 
         file_contents.append(content)
 
-        # Enrich with folder-path deployment ID if available
+        # The card folder holds only an 8-hex prefix of the deployment id; the EXIF
+        # tag holds the whole thing and is what the device was actually configured
+        # with. EXIF wins; the folder fills in only when there is no tag (a BMP
+        # frame, or an image from something other than a WW500). ww-website#140.
         folder_dep_id = None
         if rel_path:
             m = _FOLDER_DEP_RE.search(rel_path)
             if m:
                 folder_dep_id = m.group(1).upper()
 
-        # Priority: folder path → EXIF tag
-        effective_dep_id = folder_dep_id or parsed.get("deployment_id")
-        if effective_dep_id and not parsed.get("deployment_id"):
-            parsed["deployment_id"] = effective_dep_id
-        if folder_dep_id:
-            parsed["deployment_id_source"] = "folder_path"
+        dep_id, source = resolve_deployment_source(parsed.get("deployment_id"), folder_dep_id)
+        if dep_id:
+            parsed["deployment_id"] = dep_id
+            parsed["deployment_id_source"] = source
 
         # Decode hex filename to timestamp if EXIF datetime is missing (the BMP's
         # original .bmp stem still decodes — extension is irrelevant).

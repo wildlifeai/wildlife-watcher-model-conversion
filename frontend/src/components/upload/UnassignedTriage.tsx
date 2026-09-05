@@ -21,7 +21,9 @@ import type { TriageDeployment, TriageSession } from './unassignedSessions'
 interface Props {
   files: File[]
   filePaths: string[]
-  /** Indices of files that have no deployment from the card's folder structure. */
+  /** Deployment UUID each file carries in EXIF (0xF200), aligned to `files`; null where absent. */
+  exifIds?: (string | null)[]
+  /** Indices of files that resolve to no deployment from their EXIF id or the card's folder structure. */
   unresolved: number[]
   deployments: TriageDeployment[]
   projects: { id: string; name: string }[]
@@ -68,7 +70,11 @@ function SessionCard({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [name, setName] = useState(
-    session.cardFolder ? `Card ${session.cardFolder}` : `Photos from ${fmt(session.firstMs)}`,
+    session.exifDeploymentId
+      ? `Camera deployment ${session.exifDeploymentId.slice(0, 8)}`
+      : session.cardFolder
+        ? `Card ${session.cardFolder}`
+        : `Photos from ${fmt(session.firstMs)}`,
   )
   // Projects can still be loading when this card first renders, so the initial
   // value would stick at '' while the <select> visually shows the first option
@@ -89,7 +95,14 @@ function SessionCard({
     setBusy(true)
     setError(null)
     try {
-      const dep = await apiClient.post('/api/deployments', { project_id: projectId, name: name.trim() })
+      // When the camera stamped a deployment id, create the row under that id: the
+      // phone that configured the device holds the same id locally, so its later
+      // sync converges on this row instead of producing a second deployment.
+      const dep = await apiClient.post('/api/deployments', {
+        project_id: projectId,
+        name: name.trim(),
+        ...(session.exifDeploymentId ? { id: session.exifDeploymentId } : {}),
+      })
       onAssign(dep.id)
       setCreating(false)
     } catch (e) {
@@ -115,6 +128,14 @@ function SessionCard({
         <div><dt>First → last</dt><dd>{fmt(session.firstMs)} → {fmt(session.lastMs)}</dd></div>
         <div><dt>Duration</dt><dd>{span(session.firstMs, session.lastMs)}</dd></div>
         <div><dt>On the card</dt><dd className="triage-path">{session.cardFolder ? `MEDIA/${session.cardFolder}` : samplePath || 'loose files'}</dd></div>
+        {session.exifDeploymentId && (
+          <div>
+            <dt>Camera says</dt>
+            <dd className="triage-path" title={session.exifDeploymentId}>
+              deployment {session.exifDeploymentId.slice(0, 8)}… (not in the database)
+            </dd>
+          </div>
+        )}
       </dl>
 
       {resolved ? (
@@ -175,10 +196,10 @@ function SessionCard({
 }
 
 export function UnassignedTriage({
-  files, filePaths, unresolved, deployments, projects, onCancel, onDone,
+  files, filePaths, exifIds, unresolved, deployments, projects, onCancel, onDone,
 }: Props) {
   const [sessions, setSessions] = useState<TriageSession[]>(
-    () => buildSessions(files, filePaths, unresolved),
+    () => buildSessions(files, filePaths, unresolved, exifIds),
   )
 
   const update = (key: string, patch: Partial<TriageSession>) =>
@@ -201,9 +222,9 @@ export function UnassignedTriage({
         <div>
           <h3>Some photos aren&apos;t linked to a deployment</h3>
           <p>
-            We grouped them into capture sessions by card folder and by gaps between photos.
-            Photos left unassigned are <strong>not uploaded</strong> — they would not appear in
-            Annotations afterwards.
+            We grouped them into capture sessions by the deployment id the camera wrote into
+            each photo, else by card folder, and by gaps between photos. Photos left unassigned
+            are <strong>not uploaded</strong> — they would not appear in Annotations afterwards.
           </p>
         </div>
         <div className="triage-tally">

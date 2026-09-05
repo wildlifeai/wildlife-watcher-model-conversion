@@ -107,3 +107,61 @@ def test_create_deployment_succeeds_for_member(verified_client, monkeypatch):
     assert body["project_id"] == "proj-1"
     assert body["name"] == "North Ridge"
     assert "id" in body
+
+
+# ── POST /api/deployments with a caller-supplied id (ww-website#140) ─────────
+#
+# The camera stamps the configured deployment's UUID into every frame (EXIF 0xF200).
+# When that deployment never reached the cloud (the phone's push was rejected), the
+# upload triage creates it under the same id, so the phone's later sync converges on
+# the row instead of producing a duplicate.
+
+STAMPED_ID = "e10f7c43-9b90-4f59-bef5-f35b8e698517"
+
+
+def _tables_with_existing_deployments(existing: list[dict]):
+    inserted: list[dict] = []
+
+    def make_table(name):
+        t = MagicMock()
+        for m in ("select", "eq", "limit"):
+            getattr(t, m).return_value = t
+        rows = {"projects": [{"id": "proj-1", "organisation_id": "org-1"}], "deployments": existing}.get(name, [])
+        t.execute.return_value = _Result(rows)
+        ins = MagicMock()
+        ins.execute.return_value = _Result([])
+        t.insert.side_effect = lambda row: (inserted.append((name, row)), ins)[1]
+        return t
+
+    client = MagicMock()
+    client.table.side_effect = make_table
+    return client, inserted
+
+
+def test_create_deployment_uses_the_supplied_id(verified_client, monkeypatch):
+    monkeypatch.setattr("app.routers.deployments.assert_access", AsyncMock(return_value=None))
+    client, inserted = _tables_with_existing_deployments(existing=[])
+    monkeypatch.setattr("app.routers.deployments.create_service_client", lambda: client)
+
+    resp = verified_client.post("/api/deployments", json={"project_id": "proj-1", "name": "Bench", "id": STAMPED_ID.upper()})
+    assert resp.status_code == 200
+    assert resp.json()["id"] == STAMPED_ID  # normalised to canonical lower-case
+    dep_rows = [row for name, row in inserted if name == "deployments"]
+    assert dep_rows and dep_rows[0]["id"] == STAMPED_ID
+
+
+def test_create_deployment_refuses_an_existing_id(verified_client, monkeypatch):
+    """A duplicate is a 409, never a silent reuse of a row that may belong to someone else."""
+    monkeypatch.setattr("app.routers.deployments.assert_access", AsyncMock(return_value=None))
+    client, inserted = _tables_with_existing_deployments(existing=[{"id": STAMPED_ID}])
+    monkeypatch.setattr("app.routers.deployments.create_service_client", lambda: client)
+
+    resp = verified_client.post("/api/deployments", json={"project_id": "proj-1", "name": "Bench", "id": STAMPED_ID})
+    assert resp.status_code == 409
+    assert not [row for name, row in inserted if name == "deployments"]
+
+
+def test_create_deployment_rejects_a_non_uuid_id(verified_client, monkeypatch):
+    monkeypatch.setattr("app.routers.deployments.assert_access", AsyncMock(return_value=None))
+    resp = verified_client.post("/api/deployments", json={"project_id": "proj-1", "name": "Bench", "id": "E10F7C43"})
+    assert resp.status_code == 400

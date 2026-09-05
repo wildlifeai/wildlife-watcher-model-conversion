@@ -17,7 +17,8 @@ import { Modal } from '../ui/Modal'
 import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { apiClient } from '../../lib/apiClient'
 import { UnassignedTriage } from './UnassignedTriage'
-import { buildSessions } from './unassignedSessions'
+import { buildSessions, cardFolderOf } from './unassignedSessions'
+import { readDeploymentIds } from '../../lib/exifDeploymentId'
 import { supabase } from '../../config/supabase'
 import { useNavigate } from 'react-router-dom'
 import { useUploadStore, type UploadDeployment, type PendingUpload } from '../../contexts/UploadContext'
@@ -59,6 +60,10 @@ export function UploadModal() {
   // ── File selection state (local — lives only for modal lifetime) ───────────
   const [files, setFiles] = useState<File[]>([])
   const [filePaths, setFilePaths] = useState<string[]>([])
+  // The deployment UUID each frame carries in EXIF (0xF200), aligned to `files`.
+  // Authoritative over the card folder, which only holds a prefix and can lag the
+  // configured id (ww-website#140). Filled asynchronously after selection.
+  const [exifIds, setExifIds] = useState<(string | null)[]>([])
   const [zipFile, setZipFile] = useState<File | null>(null)
   const [selectionError, setSelectionError] = useState<string | null>(null)
 
@@ -101,6 +106,7 @@ export function UploadModal() {
     if (!modalOpen) {
       setFiles([])
       setFilePaths([])
+      setExifIds([])
       setZipFile(null)
       setSelectionError(null)
       setInvalidDeployments({})
@@ -150,6 +156,7 @@ export function UploadModal() {
       setSelectionError('No images or zip files found in the selected folder.')
       setFiles([])
       setFilePaths([])
+      setExifIds([])
       setZipFile(null)
       setInvalidDeployments({})
       setCamtrapResult(null)
@@ -161,6 +168,7 @@ export function UploadModal() {
       setZipFile(zips[0])
       setFiles([])
       setFilePaths([])
+      setExifIds([])
       setInvalidDeployments({})
       setCamtrapResult(null)
       setCamtrapError(null)
@@ -172,30 +180,32 @@ export function UploadModal() {
     )
     setFiles(images)
     setFilePaths(paths)
+    setExifIds([])
     setZipFile(null)
     setCamtrapResult(null)
     setCamtrapError(null)
     setInvalidDeployments({})
 
-    // Validate unknown deployment prefixes from folder structure
-    const folderPrefixes = Array.from(
-      new Set(
-        paths
-          .map((p) => {
-            const m = p.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
-            return m ? m[1].toUpperCase() : null
-          })
-          .filter(Boolean) as string[],
-      ),
-    )
+    // Read the deployment id the camera stamped into each frame. Reads only the
+    // file heads; a card of a few thousand frames takes a moment, and the modal
+    // resolves by folder alone until this lands.
+    const ids = await readDeploymentIds(images)
+    setExifIds(ids)
+
+    // Validate what the files claim: full EXIF ids and card-folder prefixes that
+    // match none of the user's deployments. /validate accepts both forms.
+    const known = new Set(deployments.map((d) => d.id.toLowerCase()))
+    const unknownExifIds = Array.from(new Set(ids.filter((id): id is string => !!id && !known.has(id))))
+    const folderPrefixes = Array.from(new Set(paths.map(cardFolderOf).filter(Boolean) as string[]))
     const unknownPrefixes = folderPrefixes.filter(
       (id) => !deployments.some((d) => d.id.toUpperCase().startsWith(id)),
     )
+    const unknown = [...unknownExifIds, ...unknownPrefixes]
 
-    if (unknownPrefixes.length > 0) {
+    if (unknown.length > 0) {
       try {
         const res = await apiClient.post('/api/deployments/validate', {
-          deployment_ids: unknownPrefixes,
+          deployment_ids: unknown,
         })
         // /validate returns the {prefix: status} map inside the standard {data,...}
         // envelope; tolerate a bare map too (defensive across the split frontend/backend
@@ -301,21 +311,11 @@ export function UploadModal() {
       setAssigning(false)
     }
 
-    // Resolve which deployment each file belongs to: folder-prefix match against the fetched
-    // deployments, else the manual assignment. Powers the annotations redirect + optimistic grid.
-    const prefixToDep = new Map<string, string>()
-    for (const pfx of detectedPrefixes) {
-      const match = deployments.find((d) => d.id.toUpperCase().startsWith(pfx as string))
-      if (match) prefixToDep.set(pfx as string, match.id)
-    }
-    const depForFile = (path: string): string | undefined => {
-      const m = path.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
-      const pfx = m ? m[1].toUpperCase() : null
-      return (pfx && prefixToDep.get(pfx)) || assignedDeploymentId
-    }
+    // Resolve which deployment each file belongs to: the EXIF id, else the folder prefix,
+    // else the manual assignment. Powers the annotations redirect + optimistic grid.
     const pending: PendingUpload[] = files
       .map((f, i) => {
-        const deploymentId = depForFile(filePaths[i] ?? f.name)
+        const deploymentId = resolveDeploymentId(i) || assignedDeploymentId
         return deploymentId ? { fileName: f.name, deploymentId } : null
       })
       .filter((p): p is PendingUpload => p !== null)
@@ -353,6 +353,7 @@ export function UploadModal() {
   const clearSelection = () => {
     setFiles([])
     setFilePaths([])
+    setExifIds([])
     setZipFile(null)
     setSelectionError(null)
     setInvalidDeployments({})
@@ -367,17 +368,30 @@ export function UploadModal() {
   const uploadMode: 'idle' | 'images' | 'camtrapdp' =
     zipFile ? 'camtrapdp' : files.length > 0 ? 'images' : 'idle'
 
-  const detectedPrefixes = Array.from(
-    new Set(
-      filePaths
-        .map((p) => {
-          const m = p.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
-          return m ? m[1].toUpperCase() : null
-        })
-        .filter(Boolean),
-    ),
-  )
-  const deploymentCount = detectedPrefixes.length
+  // Per-file deployment resolution, EXIF first (exact id), folder prefix second.
+  // Returns undefined when neither names a deployment the user can see.
+  const resolveDeploymentId = (i: number): string | undefined => {
+    const exifId = exifIds[i]
+    if (exifId) {
+      const hit = deployments.find((d) => d.id.toLowerCase() === exifId)
+      if (hit) return hit.id
+    }
+    const pfx = cardFolderOf(filePaths[i] ?? files[i]?.name ?? '')
+    if (pfx) {
+      const hit = deployments.find((d) => d.id.toUpperCase().startsWith(pfx))
+      if (hit) return hit.id
+    }
+    return undefined
+  }
+
+  // What the selection claims to belong to, for the summary tile and the assignment
+  // panel's wording: every distinct EXIF id, plus the folder prefix of frames that carry none.
+  const claimedDeployments = new Set<string>()
+  files.forEach((f, i) => {
+    const claim = exifIds[i] ?? cardFolderOf(filePaths[i] ?? f.name)
+    if (claim) claimedDeployments.add(claim.toUpperCase().slice(0, 8))
+  })
+  const deploymentCount = claimedDeployments.size
   const totalMB = (files.reduce((acc, f) => acc + f.size, 0) / 1024 / 1024).toFixed(1)
 
   const notFound = Object.entries(invalidDeployments)
@@ -391,25 +405,27 @@ export function UploadModal() {
   // prefixes aren't in the DB. (no_access photos are excluded server-side and don't gate upload.)
   const needsAssignment = uploadMode === 'images' && (deploymentCount === 0 || notFound.length > 0)
 
-  // Files whose deployment cannot be resolved from the card's folder structure.
-  // These are the ones the backend would silently drop (no deployment_id -> not
-  // stored -> no media row), so they go through triage instead.
+  // Files whose deployment cannot be resolved from their EXIF id or the card's
+  // folder structure. These are the ones the backend would silently drop (no
+  // deployment_id -> not stored -> no media row), so they go through triage instead.
   const unresolvedIndices = useMemo(() => {
     if (uploadMode !== 'images') return []
-    const known = new Set(deployments.map((d) => d.id.slice(0, 8).toUpperCase()))
+    const knownFull = new Set(deployments.map((d) => d.id.toLowerCase()))
+    const knownPrefix = new Set(deployments.map((d) => d.id.slice(0, 8).toUpperCase()))
     return files
       .map((f, i) => {
-        const path = filePaths[i] ?? f.name
-        const m = path.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
-        return m && known.has(m[1].toUpperCase()) ? -1 : i
+        const exifId = exifIds[i]
+        if (exifId && knownFull.has(exifId)) return -1
+        const pfx = cardFolderOf(filePaths[i] ?? f.name)
+        return pfx && knownPrefix.has(pfx) ? -1 : i
       })
       .filter((i) => i >= 0)
-  }, [files, filePaths, deployments, uploadMode])
+  }, [files, filePaths, exifIds, deployments, uploadMode])
 
   const [showTriage, setShowTriage] = useState(false)
   const triageSessions = useMemo(
-    () => (unresolvedIndices.length ? buildSessions(files, filePaths, unresolvedIndices) : []),
-    [files, filePaths, unresolvedIndices],
+    () => (unresolvedIndices.length ? buildSessions(files, filePaths, unresolvedIndices, exifIds) : []),
+    [files, filePaths, unresolvedIndices, exifIds],
   )
   const depsInProject = deployments.filter((d) => d.project_id === assignProjectId)
   const projectReady = !!assignProjectId && (assignProjectId !== '__new__' || !!newProjectName.trim())
@@ -463,6 +479,7 @@ export function UploadModal() {
         <UnassignedTriage
           files={files}
           filePaths={filePaths}
+          exifIds={exifIds}
           unresolved={unresolvedIndices}
           deployments={deployments}
           projects={projects}
