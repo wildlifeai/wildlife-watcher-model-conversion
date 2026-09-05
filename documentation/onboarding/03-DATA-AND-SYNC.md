@@ -95,9 +95,14 @@ create_job() → queued → processing → completed
 
 ## Image upload pipeline
 
-Dragging camera images into the website (Upload Data page → `AnalyseImages`, or the global Upload
-modal) runs this end-to-end. **Images always sync to Google Drive** — the old "Sync to Google Drive"
-toggle was removed; Drive is the default long-term store.
+Dragging camera images into the website runs this end-to-end. There is one upload surface: the
+`/upload-data` page (`UploadDataPage` → `components/upload/UploadFlow.tsx`). The header **Upload**
+button, Home and the three-step guide all link there. (Until Sep 2026 two uploaders coexisted, a
+modal opened from the header and the older `AnalyseImages` page behind `/upload-data`; they had
+drifted, and the modal was too small for the triage step, so both were folded into the page.)
+**Images always sync to Google Drive**, the old "Sync to Google Drive" toggle was removed; Drive is
+the default long-term store. AI analysis runs after upload by default and can be switched off per
+upload (`run_ai`); for CamtrapDP imports it is opt-in.
 
 > [!IMPORTANT]
 > Media rows are created **inside the Drive job, only for files bound to a deployment**. Two
@@ -106,7 +111,13 @@ toggle was removed; Drive is the default long-term store.
 > [decoupled-upload-pipeline-spec](../development%20reports/decoupled-upload-pipeline-spec.md)
 > (media rows at ingest + resumable backup sync).
 
-### In the browser (`UploadModal` → `UploadContext`)
+### In the browser (`UploadFlow` → `UploadContext`)
+
+The staged selection (files, card paths, EXIF ids) is page state: it lives in `UploadFlow` until
+`startUpload` takes it, so leaving or reloading the page drops it. A `beforeunload` guard warns
+before a reload does, and **Change selection** is the explicit way out. Reading the EXIF heads of a
+large card takes a moment; the page shows a "Reading photos… N of M" count under the summary tiles
+and the Upload button waits for it (the deployment count resolves by card folder until then).
 
 1. **Deployment resolution, EXIF first.** Every WW500 frame carries the full deployment UUID in
    EXIF tag `0xF200`; the browser reads it from each file's head (`lib/exifDeploymentId.ts`) and
@@ -123,7 +134,9 @@ toggle was removed; Drive is the default long-term store.
    syncs), or skips it. **Skipped photos are not uploaded** and the screen says so; before triage
    existed they were silently dropped (Jul 2026). The older single "assign everything to one
    deployment" form remains only for the residual case where triage has nothing to show (e.g. no
-   deployments exist at all).
+   deployments exist at all). On the page the sessions render as a responsive grid of cards
+   (`components/upload/upload.css`, 96 px thumbnails, one card per session) rather than a single
+   scrolling column.
 3. **Batch planning** (`UploadContext.startUpload`). Files are ordered by deployment and cut into
    batches of ≤ 10 that **never span two deployments**, so a batch's `assigned_deployment_id`
    cannot mislabel a mixed batch. Triaged photos join the optimistic Annotations grid and the

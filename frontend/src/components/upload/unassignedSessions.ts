@@ -1,7 +1,7 @@
 /**
  * Capture-session grouping for photos that arrive without a deployment.
  *
- * Kept apart from the component so both the modal (which needs to know whether
+ * Kept apart from the component so both UploadFlow (which needs to know whether
  * triage is required) and the triage screen itself can use it without breaking
  * fast refresh.
  */

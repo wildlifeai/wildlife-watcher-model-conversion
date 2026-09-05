@@ -1,13 +1,13 @@
 /* eslint-disable react-refresh/only-export-components */
 /**
- * UploadContext — global upload pipeline state.
+ * UploadContext, the global upload pipeline state.
  *
- * Lifts all upload state (multi-batch API loop, Drive-job polling,
- * modal open/close, progress dock visibility) out of the AnalyseImages
- * page component so it persists while the user navigates away.
+ * Holds everything that must outlive the /upload-data page (UploadFlow):
+ * the multi-batch API loop, Drive-job polling and the progress dock, so an
+ * upload keeps going while the user navigates away.
  *
  * Usage:
- *   const { openModal, dockState, pipelineState, phase } = useUploadStore()
+ *   const { startUpload, dockState, pipelineState, phase } = useUploadStore()
  */
 import React, {
   createContext,
@@ -51,11 +51,6 @@ export interface UploadDeployment {
 }
 
 interface UploadContextValue {
-  // ── Modal ──────────────────────────────────────────────────────────────────
-  modalOpen: boolean
-  openModal: () => void
-  closeModal: () => void
-
   // ── Pipeline ───────────────────────────────────────────────────────────────
   pipelineState: PipelineState
   phase: UploadPhase
@@ -63,13 +58,13 @@ interface UploadContextValue {
   isActive: boolean
 
   // ── Actions ────────────────────────────────────────────────────────────────
-  /** Kick off a multi-batch image upload. Closes the modal and shows the dock. */
+  /** Kick off a multi-batch image upload and show the dock. */
   startUpload: (
     files: File[],
     paths: string[],
     uploadToDrive: boolean,
     deployments: UploadDeployment[],
-    /** Deployment the user manually assigned unresolved/no-id photos to (see UploadModal). */
+    /** Deployment the user manually assigned unresolved/no-id photos to (see UploadFlow). */
     assignedDeploymentId?: string,
     /** Precise deployment ids the images belong to (for the annotations filter/redirect). */
     resolvedDeploymentIds?: string[],
@@ -77,6 +72,8 @@ interface UploadContextValue {
     pending?: PendingUpload[],
     /** Capture-session bindings from the triage step, one deployment per group of files. */
     sessionAssignments?: { deploymentId: string; indices: number[] }[],
+    /** Run the AI pipeline + Wildlife Brain after upload (the server's default is true). */
+    runAi?: boolean,
   ) => Promise<void>
   clearUpload: () => void
 
@@ -119,7 +116,6 @@ const UploadContext = createContext<UploadContextValue | null>(null)
 const BATCH_SIZE = 10
 
 export function UploadProvider({ children }: { children: React.ReactNode }) {
-  const [modalOpen, setModalOpen] = useState(false)
   const [pipelineState, setPipelineState] = useState<PipelineState>(EMPTY_PIPELINE)
   const [dockState, setDockState] = useState<DockState>('hidden')
   const [uploadedDeploymentIds, setUploadedDeploymentIds] = useState<string[]>([])
@@ -132,10 +128,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const phase = derivePhase(pipelineState)
   const isActive =
     phase === 'uploading' || phase === 'processing' || phase === 'stalled'
-
-  // ── Modal helpers ──────────────────────────────────────────────────────────
-  const openModal = useCallback(() => setModalOpen(true), [])
-  const closeModal = useCallback(() => setModalOpen(false), [])
 
   // ── Clear ──────────────────────────────────────────────────────────────────
   const clearUpload = useCallback(() => {
@@ -320,6 +312,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
        *  Files are ordered so each batch carries a single deployment, because
        *  assigned_deployment_id is one value per request. */
       sessionAssignments?: { deploymentId: string; indices: number[] }[],
+      runAi = true,
     ): Promise<void> => {
       if (busyRef.current) return
       busyRef.current = true
@@ -333,7 +326,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Deployment IDs for the post-upload annotations filter/redirect: prefer the precise set
-      // the modal resolved (folder-prefix matches ∪ manual assignment); fall back to all.
+      // the page resolved (folder-prefix matches ∪ manual assignment); fall back to all.
       setUploadedDeploymentIds(
         resolvedDeploymentIds && resolvedDeploymentIds.length ? resolvedDeploymentIds : deployments.map(d => d.id),
       )
@@ -348,7 +341,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       const totalBatches = batchPlan.length
       lastSeenSeqRef.current = {}
 
-      // Initialise state, close modal, show dock
+      // Initialise state, show dock
       setPipelineState({
         totalFiles: files.length,
         uploadedFiles: 0,
@@ -364,7 +357,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ],
         lastUpdateTs: Date.now(),
       })
-      setModalOpen(false)
       setDockState('medium')
 
       try {
@@ -392,8 +384,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           for (const f of chunk) formData.append('files', f)
           for (const p of chunkPaths) formData.append('paths', p)
           if (uploadToDrive) formData.append('upload_to_drive', 'true')
+          formData.append('run_ai', String(runAi))
           // Every file in this batch shares one deployment by construction
-          // (see batchPlan); fall back to the single modal-level assignment.
+          // (see batchPlan); fall back to the single page-level assignment.
           const batchAssigned = plan.assigned ?? assignedDeploymentId
           if (batchAssigned) formData.append('assigned_deployment_id', batchAssigned)
 
@@ -556,9 +549,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   return (
     <UploadContext.Provider
       value={{
-        modalOpen,
-        openModal,
-        closeModal,
         pipelineState,
         phase,
         isActive,

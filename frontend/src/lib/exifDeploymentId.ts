@@ -118,11 +118,17 @@ export function findDeploymentIdInJpeg(buf: ArrayBuffer): string | null {
 /**
  * Deployment ids for a batch of files, aligned by index (null where absent or
  * unreadable). Reads the file heads a few at a time so a whole card does not
- * open every file at once.
+ * open every file at once. `onProgress` is called after each file with the
+ * number read so far, so a page can show how far through a large card it is.
  */
-export async function readDeploymentIds(files: File[], concurrency = 8): Promise<(string | null)[]> {
+export async function readDeploymentIds(
+  files: File[],
+  concurrency = 8,
+  onProgress?: (done: number, total: number) => void,
+): Promise<(string | null)[]> {
   const out: (string | null)[] = new Array(files.length).fill(null)
   let next = 0
+  let done = 0
   const worker = async () => {
     while (next < files.length) {
       const i = next++
@@ -132,6 +138,7 @@ export async function readDeploymentIds(files: File[], concurrency = 8): Promise
       } catch {
         out[i] = null
       }
+      onProgress?.(++done, files.length)
     }
   }
   await Promise.all(Array.from({ length: Math.min(concurrency, files.length) }, worker))
