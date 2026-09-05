@@ -260,7 +260,7 @@ HF model — put a token in `HF_TOKEN` (SpeciesNet/BioCLIP need none). Architect
 
 ```bash
 cd backend && python -m pytest tests/ -v          # backend unit/domain tests
-cd frontend && npm run lint && npx tsc --noEmit    # frontend lint + type check
+cd frontend && npm run lint && npx tsc -b --noEmit # frontend lint + type check (-b: the root tsconfig is references-only)
 ```
 
 See the [Testing Guide](./documentation/resources/testing-with-seed-users.md) for seed users and role-based validation.
@@ -309,7 +309,7 @@ Submit a [pull request](https://github.com/wildlifeai/ww-website/pulls). Use
 [Conventional Commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:`, …).
 Backend changes follow the **router → domain → service** layering (see
 [02-CODEBASE-GUIDE.md](./documentation/onboarding/02-CODEBASE-GUIDE.md)); frontend changes must pass
-`npm run lint` and `tsc --noEmit`.
+`npm run lint` and `tsc -b --noEmit`.
 
 ## Maintainers
 

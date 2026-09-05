@@ -33,8 +33,11 @@ Setup detail, env reference and a verification checklist:
 
 ```bash
 cd backend  && ruff check . && ruff format --check . && pytest
-cd frontend && npm run lint && npx tsc --noEmit && npm run build
+cd frontend && npm run lint && npx tsc -b --noEmit && npm run build
 ```
+
+`tsc -b`, not `tsc`: the root `tsconfig.json` is references-only, so plain `tsc --noEmit`
+checks nothing and exits 0 with errors present.
 
 ## Non-negotiables
 

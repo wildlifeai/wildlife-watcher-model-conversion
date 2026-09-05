@@ -10,7 +10,7 @@ The exact dependencies the web app runs on. Versions are the source of truth in
 |------|---------|---------|-------|
 | Framework | `react` / `react-dom` | 19.2 | Function components + hooks only |
 | Build | `vite` | 8 | Dev server + `tsc -b && vite build` |
-| Language | `typescript` | ~6.0 | `strict` mode; `tsc --noEmit` gate |
+| Language | `typescript` | ~6.0 | `strict` mode; `tsc -b --noEmit` gate (plain `tsc --noEmit` checks nothing here) |
 | Routing | `react-router-dom` | 7.14 | `useSearchParams`, `NavLink`, nested routes |
 | Server state | `@tanstack/react-query` | 5 | All backend/API reads (`useQuery`/`useMutation`) |
 | Auth/data | `@supabase/supabase-js` | 2 | Direct DB reads/writes (RLS-scoped) + Auth |
