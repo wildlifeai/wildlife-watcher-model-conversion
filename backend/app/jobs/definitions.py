@@ -1017,6 +1017,32 @@ async def upload_drive_images_job(job_id: str, payload: dict):
                 ),
             )
 
+            # Reflect the camera's own verdict (the EXIF UserComment scores) as Camera AI
+            # observations now that the rows exist: the camera decided in the field, so
+            # its result should not wait for the cloud pipeline (minutes on CPU) and must
+            # not depend on the run_ai opt-out. Idempotent, so the post-pipeline call in
+            # auto_annotate_deployments stays harmless. Best-effort (never raises).
+            from app.domain.edge_reflection import reflect_edge_deployment  # noqa: PLC0415
+
+            reflected = 0
+            for dep_id in sorted(
+                {
+                    entry["deployment"]["id"]
+                    for entry in file_entries
+                    if isinstance(entry.get("deployment"), dict) and _is_uuid(entry["deployment"].get("id"))
+                }
+            ):
+                reflected += await reflect_edge_deployment(dep_id)
+            if reflected:
+                await emit_event(
+                    job_id,
+                    ProgressEvent(
+                        type=EventType.PROGRESS,
+                        phase=ProgressPhase.DRIVE_UPLOAD,
+                        message=f"📟 Camera AI results recorded for {reflected} image(s)",
+                    ),
+                )
+
             # NOTE: the AI pipeline is NOT triggered here. It runs once, inline, in the
             # dedicated AI_PIPELINE phase below (after cleanup) so it has proper progress
             # events and the job's final status reflects it. Triggering it here as well
