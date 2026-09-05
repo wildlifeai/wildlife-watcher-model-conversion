@@ -18,6 +18,29 @@ Repos: **website** (`ww-website`), **backend** (`ww-backend`, canonical schema),
    beside SpeciesNet     UserComment parse       write EXIF UserComment      SD-card manifest
 ```
 
+## What the device can run
+
+The `ww500_md` firmware is a **classifier pipeline**, and every stage below assumes it:
+
+- It reads the output tensor as a `[1, C]` vector, softmaxes it into per-class percentages,
+  and copies the first `C` bytes into a result buffer of `MAX_CLASSES = 16`
+  (`cvapp.cpp`, `image_task.c`). So **`C` must be at most 16**.
+- It reports **class index 1 as the target** (`processNNOutput`, with its own
+  `// TODO This only works for the person detection`). So a two-class model is
+  `[background, target]` in that order: `no person` / `person`, `not rat` / `rat`.
+- It has no box decoding or NMS. A detection head (`[1, 84, 756]` and the like) is
+  read as a class vector and overflows the buffer
+  ([firmware #225](https://github.com/wildlifeai/Seeed_Grove_Vision_AI_Module_V2/issues/225)).
+- The labels file has **one line per class, in class order, LF-terminated**; the device
+  names a class with no line as an empty string.
+
+The website enforces the parts it can see: LM-1 compares the labels list to a classifier's
+output shape at upload (stage 2), and the pretrained registry marks the detection models
+`blocked` so they cannot be selected or packaged. **Detection models are future work**,
+gated on the two classifiers, person detection and rat detection, running end to end
+first. The firmware side of the same contract (refusing to load, rather than warning, on a
+class/label mismatch) is #225.
+
 ## 1. Train & export (user · Edge Impulse)
 A **fully int8-quantized** TFLite classifier. The Edge Impulse "TensorFlow Lite
 (int8 quantized)" export contains `trained.tflite` + label metadata. Float or
@@ -85,14 +108,10 @@ and writes three things into each JPEG's EXIF:
 - **AE telemetry** → `MakerNote` (`0x927C`), `"integration, analogGain, digitalGain, aeMean, converged"`
 - **NN class scores** → `UserComment` (`0x9286`), `"<label>: <pct>%; …"`
 
-> ⚠️ **Known gap:** UserComment percentages are currently **not written** because the
-> firmware `USE_PERCENTAGE` flag is disabled (the confidence producer is compiled out;
-> the fallback writes raw int8 logits, which ingestion does not treat as scores).
-> **Fix staged** on firmware branch `feat/exif-confidence-enable` (flag enabled + a
-> compile-time guard coupling the two flags); device build/verification pending. Detail lives in the
-> firmware repo (`Seeed_Grove_Vision_AI_Module_V2`, `ww500_md` — the write-up is on that branch, not on
-> `main`; see `cvapp.h` `USE_PERCENTAGE` / `ENABLE_EXIF_CONFIDENCE`).
-> Until that ships, stages 7–8 have no embedded prediction to ingest.
+> `USE_PERCENTAGE` is **enabled** on firmware `dev` (`cvapp.h:36`), so percentages are
+> written today. Whether the contract stays percentages or moves to logits is being
+> decided in [firmware #189](https://github.com/wildlifeai/Seeed_Grove_Vision_AI_Module_V2/issues/189);
+> the website's ingest (stage 7) reads percentages, so a change there needs a change here.
 
 ## 7. Ingest EXIF (website)
 On SD-card upload, [`backend/app/domain/exif.py`](../../backend/app/domain/exif.py)
@@ -120,16 +139,22 @@ Gated on `FF_EDGE_REFLECT_ENABLED`. The ww-backend `dual_ai_v0` migration
 **on dev**; real end-to-end value still depends on the firmware fix (stage 6).
 
 ## Open items
-- **Firmware:** merge + verify the `USE_PERCENTAGE` fix (branch
-  `feat/exif-confidence-enable`) so the device emits percentage NN scores (stage 6).
-  **This is the gating item** — until it ships, edge reflection has no real device data.
-- **Data:** the existing "Person Detection (96x96)" v1.0.0 row on dev
-  (`b24428cc-e7a2-46f1-9e75-715144ae0043`) still carries the one-line labels file and an
-  empty `label_map`, so it is stored in the state LM-1 now rejects. Its `20V1.TXT` needs
-  two lines in class order and a `label_map` for both classes, then a redeploy that
-  actually retransfers the file (the card sync only sends files it is missing, so the old
-  `20V1.TXT` has to be deleted from `/MANIFEST/` or the card reformatted)
+- **End to end, person detection first.** Nothing has yet travelled the whole path on a
+  real device with a correctly labelled model: the run is upload via the pretrained path →
+  `label_map` → deploy over BLE from the mobile app (website SD-card prep as the backup) →
+  capture → upload → edge observation beside the Cloud AI one. Rat detection follows once
+  [ww-backend #175](https://github.com/wildlifeai/ww-backend/issues/175) gives it its own
+  labels file (its seeded `7V1.txt` is a person-detection leftover).
+- **Firmware:** [#225](https://github.com/wildlifeai/Seeed_Grove_Vision_AI_Module_V2/issues/225)
+  (refuse to load on class/label mismatch; clamp the result copy) and
+  [#189](https://github.com/wildlifeai/Seeed_Grove_Vision_AI_Module_V2/issues/189) (percentages
+  vs logits in `UserComment`, which stage 7 depends on).
+- **Redeploying a corrected labels file** needs the card sync to actually retransfer it:
+  the sync only sends files the card is missing, so the old `.TXT` has to be deleted from
+  `/MANIFEST/` or the card reformatted
   ([#134](https://github.com/wildlifeai/ww-website/issues/134)).
+- **Detection models** (YOLOv8/YOLOv11 OD, YOLOv8 Pose) stay `blocked` in the registry until
+  the firmware can run a detection head; see *What the device can run* above.
 - **Rollout:** promote schema (ww-backend `main`) + app (staging) + enable the flag per
   [dual-ai-production-rollout](./dual-ai-production-rollout.md); coordinate `ai_origin`
   with mobile.
