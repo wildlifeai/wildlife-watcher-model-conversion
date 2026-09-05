@@ -680,7 +680,12 @@ async def convert_github_pretrained_model(architecture: str, resolution: str) ->
         Tuple of (tfl_bytes, txt_bytes, labels_list, model_metadata).
     """
 
-    config = get_model_config(architecture, resolution)
+    try:
+        config = get_model_config(architecture, resolution)
+    except ValueError as e:
+        # Unknown, or blocked: the message names the reason (e.g. the device
+        # cannot run a detection head), so surface it as the job error as is.
+        raise ModelDomainError(str(e)) from e
     url = config["url"]
     file_type = config["type"]
     firmware_model_id = config.get("firmware_model_id")

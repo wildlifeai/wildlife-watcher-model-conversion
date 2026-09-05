@@ -123,12 +123,22 @@ All uploads are **async jobs**. The API returns a `job_id` immediately, and the 
 
 **Available models** are defined in `backend/app/registries/model_registry.py`:
 
-| Architecture | Firmware ID | Resolutions | Type |
-|---|---|---|---|
-| Person Detection | 20 | 96×96 | `cc_array` |
-| YOLOv8 Object Detection | 1 | 192×192 | `tflite` |
-| YOLOv11 Object Detection | 1 | 192×192, 224×224 | `tflite` |
-| YOLOv8 Pose Estimation | 3 | 256×256 | `tflite` |
+| Architecture | Firmware ID | Resolutions | Type | Output | Status |
+|---|---|---|---|---|---|
+| Person Detection | 20 | 96×96 | `cc_array` | `[1, 2]` | offered |
+| YOLOv8 Object Detection | 1 | 192×192 | `tflite` | `[1, 4, 756]` + `[1, 756, 80]` | **blocked** |
+| YOLOv11 Object Detection | 1 | 192×192, 224×224 | `tflite` | `[1, 84, 756]` / 3-scale raw head | **blocked** |
+| YOLOv8 Pose Estimation | 3 | 256×256 | `tflite` | 7 tensors, first `[1, 256, 64]` | **blocked** |
+
+Only classifiers are deployable. The `ww500_md` firmware reads the output tensor as a
+`[1, C]` vector with `C <= 16`, softmaxes it and reports class 1 as the target; it has no
+box decoding, and a detection head overflows its 16-byte result buffer
+([firmware #225](https://github.com/wildlifeai/Seeed_Grove_Vision_AI_Module_V2/issues/225)).
+The blocked entries stay in the registry so their URLs and shapes are recorded, but
+`supported_models()` keeps them out of `GET /api/models/pretrained/catalog` and
+`get_model_config()` refuses them, so neither the upload nor the manifest path can package
+one. They are future work, gated on person and rat detection running end to end first; see
+[Embedded Model Lifecycle: what the device can run](./embedded-model-lifecycle.md#what-the-device-can-run).
 
 ### SenseCap Model (SSCMA Zoo)
 

@@ -377,9 +377,9 @@ class TestPretrainedRegistryLabels:
     """
 
     def test_config_carries_the_architecture_labels(self):
-        from app.registries.model_registry import MODEL_REGISTRY, get_model_config
+        from app.registries.model_registry import get_model_config, supported_models
 
-        for arch, data in MODEL_REGISTRY.items():
+        for arch, data in supported_models().items():
             for resolution in data["resolutions"]:
                 config = get_model_config(arch, resolution)
                 assert config["labels"] == data["labels"], f"{arch} {resolution}"
@@ -390,17 +390,79 @@ class TestPretrainedRegistryLabels:
 
         for arch, data in MODEL_REGISTRY.items():
             for resolution in data["resolutions"]:
-                labels = get_model_config(arch, resolution).get("labels") or ["unknown"]
+                labels = get_model_config(arch, resolution, include_blocked=True).get("labels") or ["unknown"]
                 assert labels != ["unknown"], f"{arch} {resolution} would ship an 'unknown' labels file"
 
     def test_catalog_and_packaging_agree(self):
         """The catalogue endpoint advertised the real names while storage got 'unknown'."""
-        from app.registries.model_registry import MODEL_REGISTRY, get_model_config
+        from app.registries.model_registry import get_model_config, supported_models
 
-        for arch, data in MODEL_REGISTRY.items():
+        for arch, data in supported_models().items():
             advertised = data.get("labels", [])
             for resolution in data["resolutions"]:
                 assert get_model_config(arch, resolution)["labels"] == advertised
+
+    def test_every_supported_model_fits_the_device_contract(self):
+        """ww500_md reads the output as [1, C] with C <= MAX_CLASSES (16).
+
+        The shape itself needs the binary, which is a network fetch; the label
+        count is the half of the contract that is checkable offline.
+        """
+        from app.registries.model_registry import supported_models
+
+        for arch, data in supported_models().items():
+            assert 1 <= len(data["labels"]) <= 16, f"{arch} declares {len(data['labels'])} labels"
+
+
+class TestBlockedRegistryEntries:
+    """Detection models are registered but not deployable.
+
+    The ww500_md firmware copies the output tensor into a 16-byte buffer sized
+    for a classifier and has no box decoding, so a YOLO head overflows the stack
+    (Seeed_Grove_Vision_AI_Module_V2#225). The entries stay in the registry so
+    the URLs and the reason are in one place, and ``blocked`` keeps them out of
+    the catalogue and out of packaging.
+    """
+
+    BLOCKED = ("YOLOv8 Object Detection", "YOLOv11 Object Detection", "YOLOv8 Pose Estimation")
+
+    def test_detection_models_are_blocked_and_person_detection_is_not(self):
+        from app.registries.model_registry import MODEL_REGISTRY, supported_models
+
+        for arch in self.BLOCKED:
+            assert MODEL_REGISTRY[arch].get("blocked"), f"{arch} must be blocked"
+        assert set(supported_models()) == {"Person Detection"}
+
+    def test_blocked_entry_is_refused_with_the_reason(self):
+        from app.registries.model_registry import get_model_config
+
+        with pytest.raises(ValueError, match="cannot be deployed.*#225"):
+            get_model_config("YOLOv11 Object Detection", "192x192")
+
+    def test_blocked_entry_is_still_readable_for_tooling(self):
+        from app.registries.model_registry import get_model_config
+
+        config = get_model_config("YOLOv11 Object Detection", "192x192", include_blocked=True)
+        assert config["url"].endswith(".tflite")
+        assert config["labels"] == ["object"]
+
+    @pytest.mark.asyncio
+    async def test_packaging_a_blocked_model_fails_as_a_domain_error(self):
+        """The job path turns the refusal into the job's error message, not a traceback."""
+        from app.domain.model import convert_github_pretrained_model
+
+        with pytest.raises(ModelDomainError, match="cannot be deployed"):
+            await convert_github_pretrained_model("YOLOv8 Pose Estimation", "256x256")
+
+    def test_catalog_endpoint_omits_blocked_entries(self):
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        res = TestClient(app).get("/api/models/pretrained/catalog")
+        assert res.status_code == 200
+        names = {row["architecture"] for row in res.json()["data"]}
+        assert names == {"Person Detection"}
 
     @pytest.mark.asyncio
     async def test_registry_entry_without_labels_is_refused(self, monkeypatch):

@@ -108,15 +108,22 @@ toggle was removed; Drive is the default long-term store.
 
 ### In the browser (`UploadModal` → `UploadContext`)
 
-1. **Deployment resolution from the card layout.** Each file path is matched for a card folder
-   (`MEDIA/<8-hex>/`); the 8-hex prefix is matched against the user's deployment ids.
+1. **Deployment resolution, EXIF first.** Every WW500 frame carries the full deployment UUID in
+   EXIF tag `0xF200`; the browser reads it from each file's head (`lib/exifDeploymentId.ts`) and
+   matches it exactly against the user's deployments. Only when a frame carries no tag does the
+   card folder (`MEDIA/<8-hex>/`, a prefix of the same id) decide. The folder can be wrong: it is
+   created at boot, before the deployment id is configured, so a frame under `MEDIA/00000000/`
+   can carry the real id in its EXIF (ww-website#140).
 2. **Triage of unassigned photos** (`UnassignedTriage`). Files that resolve to no deployment are
-   grouped into **capture sessions** — same card folder, gaps under 6 h (`unassignedSessions.ts`) —
-   and shown with sample thumbnails and time-span stats. Per session the user assigns an existing
-   deployment, creates one from the photos (`POST /api/deployments`), or skips it. **Skipped photos
-   are not uploaded** and the screen says so; before triage existed they were silently dropped
-   (Jul 2026). The older single "assign everything to one deployment" form remains only for the
-   residual case where triage has nothing to show (e.g. no deployments exist at all).
+   grouped into **capture sessions** — same EXIF id, else same card folder, gaps under 6 h
+   (`unassignedSessions.ts`) — and shown with sample thumbnails, time-span stats and, when the
+   camera stamped one, the deployment id it named. Per session the user assigns an existing
+   deployment, creates one from the photos (`POST /api/deployments`, **under the stamped id**
+   when there is one, so the phone that configured the camera converges on the same row when it
+   syncs), or skips it. **Skipped photos are not uploaded** and the screen says so; before triage
+   existed they were silently dropped (Jul 2026). The older single "assign everything to one
+   deployment" form remains only for the residual case where triage has nothing to show (e.g. no
+   deployments exist at all).
 3. **Batch planning** (`UploadContext.startUpload`). Files are ordered by deployment and cut into
    batches of ≤ 10 that **never span two deployments**, so a batch's `assigned_deployment_id`
    cannot mislabel a mixed batch. Triaged photos join the optimistic Annotations grid and the
@@ -136,8 +143,9 @@ toggle was removed; Drive is the default long-term store.
 ### On the server
 
 ```
-POST /api/exif/parse  → parse EXIF, match deployment (EXIF Deployment_ID → UserComment → GPS),
-                        buffer bytes to Azure blob store, enqueue upload_drive_images_job
+POST /api/exif/parse  → parse EXIF, bind deployment (EXIF Deployment_ID, else card-folder prefix;
+                        `deployment_id_source` says which), buffer bytes to Azure blob store,
+                        enqueue upload_drive_images_job
 upload_drive_images_job:
   DOWNLOAD → PREPROCESS (rename/sort into project/deployment folders)
   → DRIVE_UPLOAD     google_drive.upload_analysis_images — hash-dedup skips files already in Drive

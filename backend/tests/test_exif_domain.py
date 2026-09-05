@@ -14,6 +14,7 @@ from app.domain.exif import (
     parse_exif_from_bytes,
     parse_maker_note_fields,
     parse_user_comment_fields,
+    resolve_deployment_source,
 )
 
 NUL = chr(0)
@@ -272,3 +273,27 @@ class TestMatchDeployment:
     def test_empty_deployments(self):
         exif = {"deployment_id": "some-id"}
         assert match_deployment(exif, []) is None
+
+
+class TestResolveDeploymentSource:
+    """EXIF 0xF200 wins over the card folder, and the source label says which (ww-website#140).
+
+    The router used to keep the EXIF id but label the source ``folder_path`` whenever a
+    folder prefix existed, so provenance was wrong exactly when the two disagreed.
+    """
+
+    STAMPED = "e10f7c43-9b90-4f59-bef5-f35b8e698517"
+
+    def test_exif_wins_when_both_present(self):
+        assert resolve_deployment_source(self.STAMPED, "E10F7C43") == (self.STAMPED, "exif_tag")
+
+    def test_exif_wins_when_the_folder_disagrees(self):
+        """The bench frame under MEDIA/00000000/ whose EXIF named the real deployment."""
+        assert resolve_deployment_source(self.STAMPED, "00000000") == (self.STAMPED, "exif_tag")
+
+    def test_folder_fills_in_when_there_is_no_tag(self):
+        assert resolve_deployment_source(None, "7785fabb") == ("7785FABB", "folder_path")
+
+    def test_neither(self):
+        assert resolve_deployment_source(None, None) == (None, None)
+        assert resolve_deployment_source("", "") == (None, None)

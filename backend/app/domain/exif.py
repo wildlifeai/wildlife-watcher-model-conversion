@@ -9,7 +9,7 @@ fallback for custom EXIF tags produced by the camera firmware.
 import io
 import re
 import struct
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 import structlog
 
@@ -479,3 +479,26 @@ def match_deployment(
             return best_match
 
     return None
+
+
+def resolve_deployment_source(exif_deployment_id: Optional[str], folder_prefix: Optional[str]) -> Tuple[Optional[str], Optional[str]]:
+    """Which deployment id a frame binds to, and where it came from.
+
+    The camera stamps the configured deployment's full UUID into EXIF tag 0xF200
+    (``Deployment_ID``). The card folder ``MEDIA/<8-hex>/`` holds only a prefix
+    of the same id and is created at boot, before the id is configured, so a
+    frame can sit under ``MEDIA/00000000/`` while its EXIF names the real
+    deployment. The tag therefore wins; the folder fills in only when there is
+    no tag (a BMP frame, or an image from something other than a WW500).
+
+    Returns ``(id, source)`` with ``source`` one of ``"exif_tag"``,
+    ``"folder_path"`` or ``None`` when neither is present. The id keeps the
+    caller's form: a full UUID from EXIF, an upper-cased 8-hex prefix from the
+    folder, so downstream can still tell them apart by length.
+    (ww-website#140)
+    """
+    if exif_deployment_id:
+        return exif_deployment_id, "exif_tag"
+    if folder_prefix:
+        return folder_prefix.upper(), "folder_path"
+    return None, None

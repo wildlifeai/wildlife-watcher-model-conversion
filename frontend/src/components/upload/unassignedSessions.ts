@@ -23,6 +23,12 @@ export interface TriageSession {
   lastMs: number
   /** MEDIA/<prefix> folder on the card, when the path carries one. */
   cardFolder: string | null
+  /**
+   * The deployment UUID the camera stamped into these frames' EXIF (0xF200),
+   * when present. Authoritative over the folder: it names the deployment the
+   * device was configured with, and the folder can lag it (ww-website#140).
+   */
+  exifDeploymentId: string | null
   /** Chosen deployment id, or null while unresolved. */
   deploymentId: string | null
   skipped: boolean
@@ -41,37 +47,54 @@ export function span(a: number, b: number): string {
   return `${h} h ${mins % 60} m`
 }
 
-/** Group unresolved files into capture sessions by card folder + time gaps. */
+/** The MEDIA/<8-hex>/ folder in a card path, upper-cased, or null. */
+export function cardFolderOf(path: string): string | null {
+  const m = path.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
+  return m ? m[1].toUpperCase() : null
+}
+
+/**
+ * Group unresolved files into capture sessions, by the EXIF deployment id when
+ * the frames carry one, else by card folder, then by time gaps within a group.
+ *
+ * Grouping by the EXIF id first is what puts a frame that landed in the wrong
+ * folder (MEDIA/00000000/, created before the id was set) back with its run.
+ */
 export function buildSessions(
   files: File[],
   filePaths: string[],
   unresolved: number[],
+  exifIds: (string | null)[] = [],
 ): TriageSession[] {
   const rows = unresolved.map((i) => {
     const path = filePaths[i] ?? files[i].name
-    const m = path.match(/MEDIA[/\\]([A-Fa-f0-9]{8})[/\\]/i)
-    return { i, ms: files[i].lastModified || 0, folder: m ? m[1].toUpperCase() : null }
+    return { i, ms: files[i].lastModified || 0, folder: cardFolderOf(path), exifId: exifIds[i] ?? null }
   })
 
-  const byFolder = new Map<string, typeof rows>()
+  const byGroup = new Map<string, typeof rows>()
   for (const r of rows) {
-    const k = r.folder ?? '—'
-    if (!byFolder.has(k)) byFolder.set(k, [])
-    byFolder.get(k)!.push(r)
+    const k = r.exifId ? `exif:${r.exifId}` : r.folder ? `folder:${r.folder}` : '—'
+    if (!byGroup.has(k)) byGroup.set(k, [])
+    byGroup.get(k)!.push(r)
   }
 
   const out: TriageSession[] = []
-  for (const [folder, list] of byFolder) {
+  for (const [group, list] of byGroup) {
     list.sort((a, b) => a.ms - b.ms)
     let cur: typeof list = []
     const flush = () => {
       if (!cur.length) return
+      const exifDeploymentId = group.startsWith('exif:') ? group.slice(5) : null
+      // With an EXIF id the folder is informational and may be mixed; show the
+      // first one the run was written to.
+      const cardFolder = cur.find((r) => r.folder)?.folder ?? null
       out.push({
-        key: `${folder}-${out.length}`,
+        key: `${group}-${out.length}`,
         indices: cur.map((r) => r.i),
         firstMs: cur[0].ms,
         lastMs: cur[cur.length - 1].ms,
-        cardFolder: folder === '—' ? null : folder,
+        cardFolder,
+        exifDeploymentId,
         deploymentId: null,
         skipped: false,
       })
