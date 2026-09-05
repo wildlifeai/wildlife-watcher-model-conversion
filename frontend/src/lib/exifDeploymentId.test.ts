@@ -125,4 +125,13 @@ describe('readDeploymentIds', () => {
   it('handles an empty batch', async () => {
     expect(await readDeploymentIds([])).toEqual([])
   })
+
+  it('reports progress once per file, ending at the total', async () => {
+    const file = new File([jpegWith([{ tag: 0xf200, value: UUID }])], 'a.jpg', { type: 'image/jpeg' })
+    const seen: [number, number][] = []
+    await readDeploymentIds([file, file, file, file, file], 2, (done, total) => seen.push([done, total]))
+    expect(seen.map(([done]) => done).sort((a, b) => a - b)).toEqual([1, 2, 3, 4, 5])
+    expect(seen.every(([, total]) => total === 5)).toBe(true)
+    expect(seen[seen.length - 1]).toEqual([5, 5])
+  })
 })

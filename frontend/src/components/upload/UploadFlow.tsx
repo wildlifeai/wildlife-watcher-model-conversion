@@ -1,28 +1,32 @@
 /**
- * UploadModal — step-by-step upload flow rendered inside the Modal primitive.
+ * UploadFlow, the upload surface rendered by /upload-data.
  *
- * Step 1 (idle):       File-picker / drag-drop zone.
- * Step 2 (selected):   Summary stats + Drive toggle + "Upload" button.
+ * Step 1 (idle):       Folder picker / drag-drop zone.
+ * Step 2 (images):     Summary tiles, deployment resolution, optional
+ *                      assignment panel, optional per-session triage, Upload.
  * Step 2b (camtrapdp): ZIP package summary + inline import progress.
  *
- * When the user clicks "Upload" (image mode) the modal closes immediately
- * and the ProgressDock takes over in the bottom-right corner.
+ * Clicking "Upload" hands the files to UploadContext.startUpload, which owns
+ * the batch loop and the ProgressDock, then lands the user on Annotations
+ * filtered to the uploaded deployment. Everything before that moment lives in
+ * this component's state, so leaving the page (or reloading it) drops the
+ * staged selection; a beforeunload guard warns before that happens.
  *
- * CamtrapDP import is a synchronous single-API-call; progress is shown
- * inline in the modal, which stays open until success/failure is confirmed.
+ * CamtrapDP import is a single synchronous API call; its progress is shown
+ * inline and the selection stays until the result is confirmed.
  */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
-import { Modal } from '../ui/Modal'
+import { Link, useNavigate } from 'react-router-dom'
 import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { apiClient } from '../../lib/apiClient'
 import { UnassignedTriage } from './UnassignedTriage'
-import { buildSessions, cardFolderOf } from './unassignedSessions'
+import { buildSessions, cardFolderOf, resolutionBreakdown, unresolvedFileIndices } from './unassignedSessions'
+import type { ResolutionStatus } from './unassignedSessions'
 import { readDeploymentIds } from '../../lib/exifDeploymentId'
 import { supabase } from '../../config/supabase'
-import { useNavigate } from 'react-router-dom'
 import { useUploadStore, type UploadDeployment, type PendingUpload } from '../../contexts/UploadContext'
 import { useProjectSelection } from '../../hooks/useProjectSelection'
+import './upload.css'
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Types
@@ -34,6 +38,8 @@ interface CamtrapImportResult {
   media_imported: number
   observations_imported: number
   warnings: string[]
+  /** Set when run_ai enqueued a SpeciesNet + Wildlife Brain job for the bundled images. */
+  ai_job_id?: string | null
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -49,24 +55,55 @@ const CAMTRAP_STAGES: { label: string; pct: number; after: number }[] = [
   { label: 'Finalising import…', pct: 92, after: 30000 },
 ]
 
+/**
+ * Files the image path accepts. Folder drops often leave `type` empty, so the
+ * extensions are matched explicitly. Raw .bmp frames are admitted because the
+ * backend re-compresses them to JPEG when FF_BMP_INGEST_ENABLED (and ignores
+ * them otherwise); they carry no EXIF, so they bind via the card folder.
+ */
+/** What happens to each line of the breakdown, in the user's terms. */
+const STATUS_TEXT: Record<ResolutionStatus, string> = {
+  matched: 'matched, uploads as it is',
+  not_found: 'not in the database, you decide where it goes next',
+  no_access: 'in a project you cannot access, will be skipped',
+  unknown: 'no deployment info, you decide where it goes next',
+}
+
+function isUploadableImage(f: File): boolean {
+  const name = f.name.toLowerCase()
+  return (
+    f.type.startsWith('image/') ||
+    name.endsWith('.jpg') ||
+    name.endsWith('.jpeg') ||
+    name.endsWith('.bmp')
+  )
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
 
-export function UploadModal() {
-  const { modalOpen, closeModal, startUpload, isActive } = useUploadStore()
+export function UploadFlow() {
+  const { startUpload, phase } = useUploadStore()
   const navigate = useNavigate()
 
-  // ── File selection state (local — lives only for modal lifetime) ───────────
+  // ── File selection state (lives for as long as the page is mounted) ────────
   const [files, setFiles] = useState<File[]>([])
   const [filePaths, setFilePaths] = useState<string[]>([])
   // The deployment UUID each frame carries in EXIF (0xF200), aligned to `files`.
   // Authoritative over the card folder, which only holds a prefix and can lag the
   // configured id (ww-website#140). Filled asynchronously after selection.
   const [exifIds, setExifIds] = useState<(string | null)[]>([])
+  // Progress of that read, or null once it has landed (or nothing is staged).
+  const [exifRead, setExifRead] = useState<{ done: number; total: number } | null>(null)
+  // Bumped on every new selection so a read still running for the previous
+  // selection cannot write its ids over the new one.
+  const selectionRef = useRef(0)
   const [zipFile, setZipFile] = useState<File | null>(null)
   const [selectionError, setSelectionError] = useState<string | null>(null)
-
+  const [showTriage, setShowTriage] = useState(false)
+  // Whether to run SpeciesNet + Wildlife Brain after upload (server default: on).
+  const [runAi, setRunAi] = useState(true)
 
   // Deployment data (fetched once for stats + validation)
   const [deployments, setDeployments] = useState<UploadDeployment[]>([])
@@ -74,22 +111,8 @@ export function UploadModal() {
     Record<string, 'no_access' | 'not_found'>
   >({})
 
-  // ── Manual deployment assignment (for photos with no / unknown deployment) ──
+  // Projects the user can file a new deployment under, offered by the triage cards.
   const { projects } = useProjectSelection()
-  const [assignProjectId, setAssignProjectId] = useState('')       // '' | project id | '__new__'
-  const [newProjectName, setNewProjectName] = useState('')
-  const [assignDeploymentId, setAssignDeploymentId] = useState('') // '' | deployment id | '__new__'
-  const [newDepName, setNewDepName] = useState('')
-  const [newDepLat, setNewDepLat] = useState('')
-  const [newDepLng, setNewDepLng] = useState('')
-  const [assigning, setAssigning] = useState(false)
-  const [assignError, setAssignError] = useState<string | null>(null)
-
-  const resetAssignment = () => {
-    setAssignProjectId(''); setNewProjectName('')
-    setAssignDeploymentId(''); setNewDepName(''); setNewDepLat(''); setNewDepLng('')
-    setAssigning(false); setAssignError(null)
-  }
 
   // CamtrapDP import state
   const [camtrapImporting, setCamtrapImporting] = useState(false)
@@ -98,27 +121,21 @@ export function UploadModal() {
   const [camtrapElapsed, setCamtrapElapsed] = useState(0)
   const [camtrapStage, setCamtrapStage] = useState(0)
   const [showAllWarnings, setShowAllWarnings] = useState(false)
+  // CamtrapDP data usually arrives labelled, so AI is opt-in there.
+  const [camtrapRunAi, setCamtrapRunAi] = useState(false)
 
   const folderInputRef = useRef<HTMLInputElement>(null)
 
-  // ── Reset local state when modal opens / closes ────────────────────────────
+  // ── Guard the staged selection against an accidental reload / tab close ───
+  // Only while something would actually be lost: staged images not yet handed
+  // to startUpload, or a ZIP whose import has not finished.
+  const staged = files.length > 0 || camtrapImporting || (zipFile !== null && camtrapResult === null)
   useEffect(() => {
-    if (!modalOpen) {
-      setFiles([])
-      setFilePaths([])
-      setExifIds([])
-      setZipFile(null)
-      setSelectionError(null)
-      setInvalidDeployments({})
-      setCamtrapResult(null)
-      setCamtrapError(null)
-      setCamtrapImporting(false)
-      setCamtrapStage(0)
-      setCamtrapElapsed(0)
-      setShowAllWarnings(false)
-      resetAssignment()
-    }
-  }, [modalOpen])
+    if (!staged) return
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault() }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [staged])
 
   // ── CamtrapDP stage timer ──────────────────────────────────────────────────
   useEffect(() => {
@@ -136,42 +153,39 @@ export function UploadModal() {
   useEffect(() => {
     supabase
       .from('deployments')
-      .select('id, project_id, location_name, latitude, longitude, deployment_start')
+      .select('id, project_id, name, location_name, latitude, longitude, deployment_start')
       .is('deleted_at', null)
       .then(({ data }) => { if (data) setDeployments(data) })
   }, [])
 
+  const clearSelection = () => {
+    selectionRef.current += 1
+    setFiles([])
+    setFilePaths([])
+    setExifIds([])
+    setExifRead(null)
+    setZipFile(null)
+    setSelectionError(null)
+    setInvalidDeployments({})
+    setCamtrapResult(null)
+    setCamtrapError(null)
+    setShowTriage(false)
+  }
+
   // ── File processing (routing image vs ZIP) ─────────────────────────────────
   const processFiles = async (incoming: File[]) => {
-    setSelectionError(null)
+    clearSelection()
+    const token = selectionRef.current
     const zips = incoming.filter((f) => f.name.toLowerCase().endsWith('.zip'))
-    const images = incoming.filter(
-      (f) =>
-        f.type.startsWith('image/') ||
-        f.name.toLowerCase().endsWith('.jpg') ||
-        f.name.toLowerCase().endsWith('.jpeg'),
-    )
+    const images = incoming.filter(isUploadableImage)
 
     if (incoming.length > 0 && zips.length === 0 && images.length === 0) {
       setSelectionError('No images or zip files found in the selected folder.')
-      setFiles([])
-      setFilePaths([])
-      setExifIds([])
-      setZipFile(null)
-      setInvalidDeployments({})
-      setCamtrapResult(null)
-      setCamtrapError(null)
       return
     }
 
     if (zips.length > 0 && images.length === 0) {
       setZipFile(zips[0])
-      setFiles([])
-      setFilePaths([])
-      setExifIds([])
-      setInvalidDeployments({})
-      setCamtrapResult(null)
-      setCamtrapError(null)
       return
     }
 
@@ -180,17 +194,18 @@ export function UploadModal() {
     )
     setFiles(images)
     setFilePaths(paths)
-    setExifIds([])
-    setZipFile(null)
-    setCamtrapResult(null)
-    setCamtrapError(null)
-    setInvalidDeployments({})
 
     // Read the deployment id the camera stamped into each frame. Reads only the
-    // file heads; a card of a few thousand frames takes a moment, and the modal
-    // resolves by folder alone until this lands.
-    const ids = await readDeploymentIds(images)
+    // file heads, but a card of a few thousand frames still takes a moment, so
+    // the page shows progress and resolves by folder alone until this lands.
+    setExifRead({ done: 0, total: images.length })
+    const ids = await readDeploymentIds(images, 8, (done, total) => {
+      if (selectionRef.current !== token) return
+      if (done === total || done % 25 === 0) setExifRead({ done, total })
+    })
+    if (selectionRef.current !== token) return
     setExifIds(ids)
+    setExifRead(null)
 
     // Validate what the files claim: full EXIF ids and card-folder prefixes that
     // match none of the user's deployments. /validate accepts both forms.
@@ -207,9 +222,10 @@ export function UploadModal() {
         const res = await apiClient.post('/api/deployments/validate', {
           deployment_ids: unknown,
         })
+        if (selectionRef.current !== token) return
         // /validate returns the {prefix: status} map inside the standard {data,...}
         // envelope; tolerate a bare map too (defensive across the split frontend/backend
-        // deploy — an old backend still returns it bare).
+        // deploy, an old backend still returns it bare).
         const validation: Record<string, 'valid' | 'no_access' | 'not_found'> = res?.data ?? res ?? {}
         const invalid: Record<string, 'no_access' | 'not_found'> = {}
         for (const [id, status] of Object.entries(validation)) {
@@ -217,13 +233,15 @@ export function UploadModal() {
         }
         setInvalidDeployments(invalid)
       } catch {
-        // Non-fatal — proceed without validation feedback
+        // Non-fatal: proceed without validation feedback
       }
     }
   }
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files) processFiles(Array.from(e.target.files))
+    // Let the same folder be picked again after "Change selection".
+    e.target.value = ''
   }
 
   const handleCamtrapImport = async () => {
@@ -234,6 +252,7 @@ export function UploadModal() {
     try {
       const form = new FormData()
       form.append('file', zipFile)
+      form.append('run_ai', String(camtrapRunAi))
       const res = await apiClient.upload('/api/camtrapdp/import', form) as {
         data: CamtrapImportResult
       }
@@ -255,73 +274,27 @@ export function UploadModal() {
     sessionAssignments?: { deploymentId: string; indices: number[] }[],
   ) => {
     if (files.length === 0) return
-    setAssignError(null)
 
     // Photos with no resolvable deployment are dropped server-side (the drive
     // job only stores files that have one), so resolve them before uploading.
+    // Triage covers every such photo, grouped into capture sessions, which is
+    // why there is no blanket "assign everything to one deployment" form.
     if (!sessionAssignments && triageSessions.length > 0) {
       setShowTriage(true)
       return
     }
 
-    // Resolve a manual deployment assignment (create project/deployment as needed) for photos
-    // that have no recognised deployment. Photos that already resolve to a valid deployment keep
-    // it; no-access ones are excluded server-side.
-    let assignedDeploymentId: string | undefined
-    if (needsAssignment) {
-      setAssigning(true)
-      try {
-        let projectId = assignProjectId
-        if (projectId === '__new__') {
-          const proj = await apiClient.post('/api/projects', { name: newProjectName.trim() })
-          projectId = proj.id
-        }
-        if (assignDeploymentId === '__new__') {
-          // Validate coords client-side so an out-of-range value doesn't hit the DB CHECK
-          // constraint as a confusing 500.
-          let latitude: number | undefined
-          let longitude: number | undefined
-          if (newDepLat.trim()) {
-            latitude = Number(newDepLat)
-            if (Number.isNaN(latitude) || latitude < -90 || latitude > 90) {
-              throw new Error('Latitude must be a number between -90 and 90.')
-            }
-          }
-          if (newDepLng.trim()) {
-            longitude = Number(newDepLng)
-            if (Number.isNaN(longitude) || longitude < -180 || longitude > 180) {
-              throw new Error('Longitude must be a number between -180 and 180.')
-            }
-          }
-          const dep = await apiClient.post('/api/deployments', {
-            project_id: projectId,
-            name: newDepName.trim(),
-            latitude,
-            longitude,
-          })
-          assignedDeploymentId = dep.id
-        } else {
-          assignedDeploymentId = assignDeploymentId
-        }
-      } catch (e) {
-        setAssignError(e instanceof Error ? e.message : 'Could not create the deployment.')
-        setAssigning(false)
-        return
-      }
-      setAssigning(false)
-    }
-
-    // Resolve which deployment each file belongs to: the EXIF id, else the folder prefix,
-    // else the manual assignment. Powers the annotations redirect + optimistic grid.
+    // Resolve which deployment each file belongs to: the EXIF id, else the folder
+    // prefix. Powers the annotations redirect + optimistic grid.
     const pending: PendingUpload[] = files
       .map((f, i) => {
-        const deploymentId = resolveDeploymentId(i) || assignedDeploymentId
+        const deploymentId = resolveDeploymentId(i)
         return deploymentId ? { fileName: f.name, deploymentId } : null
       })
       .filter((p): p is PendingUpload => p !== null)
 
     // Triaged photos resolve through their session, not the folder prefix, so
-    // fold them in too — otherwise they'd be missing from the optimistic grid
+    // fold them in too, otherwise they'd be missing from the optimistic grid
     // and the post-upload redirect would filter to the wrong deployments.
     const triaged: PendingUpload[] = []
     if (sessionAssignments?.length) {
@@ -336,30 +309,20 @@ export function UploadModal() {
     const resolvedDeploymentIds = [...new Set(allPending.map((p) => p.deploymentId))]
 
     // Images always sync to Google Drive (long-term storage is the default).
+    // startUpload copies what it needs before its first await, so the page can
+    // drop its staged selection straight away (and with it the unload guard).
     startUpload(
       files, filePaths, true, deployments,
-      assignedDeploymentId, resolvedDeploymentIds, allPending, sessionAssignments,
+      undefined, resolvedDeploymentIds, allPending, sessionAssignments, runAi,
     )
-    // Modal closes inside startUpload → no explicit closeModal needed
+    clearSelection()
 
-    // Land the user on Annotations, filtered to the just-uploaded deployment, so they watch their
-    // images + AI progress fill in live (banner + optimistic cards). One deployment is the common
-    // case; for several, focus the first — the banner/refetch cover the rest.
+    // Land the user on Annotations, filtered to every deployment this upload touched, so they
+    // watch their images + AI progress fill in live (banner + optimistic cards). With several the
+    // deployment pill reads "N deployments" rather than silently focusing the first.
     if (resolvedDeploymentIds.length > 0) {
-      navigate(`/annotations?deployment=${resolvedDeploymentIds[0]}`)
+      navigate(`/annotations?deployment=${resolvedDeploymentIds.join(',')}`)
     }
-  }
-
-  const clearSelection = () => {
-    setFiles([])
-    setFilePaths([])
-    setExifIds([])
-    setZipFile(null)
-    setSelectionError(null)
-    setInvalidDeployments({})
-    setCamtrapResult(null)
-    setCamtrapError(null)
-    resetAssignment()
   }
 
   // ── Derived stats ──────────────────────────────────────────────────────────
@@ -394,59 +357,42 @@ export function UploadModal() {
   const deploymentCount = claimedDeployments.size
   const totalMB = (files.reduce((acc, f) => acc + f.size, 0) / 1024 / 1024).toFixed(1)
 
-  const notFound = Object.entries(invalidDeployments)
-    .filter(([, s]) => s === 'not_found')
-    .map(([id]) => id)
   const noAccess = Object.entries(invalidDeployments)
     .filter(([, s]) => s === 'no_access')
     .map(([id]) => id)
 
-  // Manual assignment is required when photos carry no deployment prefix at all, or when some
-  // prefixes aren't in the DB. (no_access photos are excluded server-side and don't gate upload.)
-  const needsAssignment = uploadMode === 'images' && (deploymentCount === 0 || notFound.length > 0)
-
   // Files whose deployment cannot be resolved from their EXIF id or the card's
   // folder structure. These are the ones the backend would silently drop (no
-  // deployment_id -> not stored -> no media row), so they go through triage instead.
-  const unresolvedIndices = useMemo(() => {
-    if (uploadMode !== 'images') return []
-    const knownFull = new Set(deployments.map((d) => d.id.toLowerCase()))
-    const knownPrefix = new Set(deployments.map((d) => d.id.slice(0, 8).toUpperCase()))
-    return files
-      .map((f, i) => {
-        const exifId = exifIds[i]
-        if (exifId && knownFull.has(exifId)) return -1
-        const pfx = cardFolderOf(filePaths[i] ?? f.name)
-        return pfx && knownPrefix.has(pfx) ? -1 : i
-      })
-      .filter((i) => i >= 0)
-  }, [files, filePaths, exifIds, deployments, uploadMode])
+  // deployment_id -> not stored -> no media row), so they go through triage.
+  const unresolvedIndices = useMemo(
+    () => (uploadMode === 'images' ? unresolvedFileIndices(files, filePaths, exifIds, deployments) : []),
+    [files, filePaths, exifIds, deployments, uploadMode],
+  )
 
-  const [showTriage, setShowTriage] = useState(false)
   const triageSessions = useMemo(
     () => (unresolvedIndices.length ? buildSessions(files, filePaths, unresolvedIndices, exifIds) : []),
     [files, filePaths, unresolvedIndices, exifIds],
   )
-  const depsInProject = deployments.filter((d) => d.project_id === assignProjectId)
-  const projectReady = !!assignProjectId && (assignProjectId !== '__new__' || !!newProjectName.trim())
-  const deploymentReady = !!assignDeploymentId && (assignDeploymentId !== '__new__' || !!newDepName.trim())
-  // When triage will run it collects the deployment per capture session, so the
-  // single blanket assignment form is redundant - showing both asked the user
-  // the same question twice.
-  const assignmentReady = !needsAssignment || triageSessions.length > 0 || (projectReady && deploymentReady)
+  // Per-deployment fate of the selection, shown before Upload and carried into
+  // triage so the photos that already matched are named there too.
+  const breakdown = useMemo(
+    () => (uploadMode === 'images' ? resolutionBreakdown(files, filePaths, exifIds, deployments, invalidDeployments) : []),
+    [uploadMode, files, filePaths, exifIds, deployments, invalidDeployments],
+  )
+  const matchedRows = breakdown.filter((r) => r.status === 'matched').map((r) => ({ label: r.label, count: r.count }))
+
+  // startUpload refuses to start while a previous batch loop is still sending
+  // (busyRef), so say so instead of letting the click do nothing.
+  const sending = phase === 'uploading'
+  const reading = exifRead !== null
+  const uploadDisabled = reading || sending
+  const uploadLabel = reading
+    ? 'Reading photos…'
+    : sending
+      ? 'Previous upload still sending…'
+      : `⬆ Upload ${files.length} image${files.length !== 1 ? 's' : ''}`
 
   // ─────────────────────────────────────────────────────────────────────────
-  const ZONE_STYLE: React.CSSProperties = {
-    border: '2px dashed var(--border)',
-    borderRadius: 'var(--radius)',
-    padding: '2rem 1.5rem',
-    textAlign: 'center',
-    cursor: 'pointer',
-    transition: 'border-color 0.2s, background-color 0.2s',
-    borderColor: isDragging ? 'var(--primary)' : undefined,
-    backgroundColor: isDragging ? 'rgba(59,130,246,0.05)' : undefined,
-  }
-
   const BTN_SECONDARY: React.CSSProperties = {
     padding: '0.375rem 0.875rem',
     fontSize: '0.8125rem',
@@ -457,30 +403,20 @@ export function UploadModal() {
     cursor: 'pointer',
   }
 
-  const FIELD: React.CSSProperties = {
-    width: '100%', padding: '0.45rem 0.55rem', fontSize: '0.8125rem',
-    border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-    background: 'var(--surface)', color: 'var(--text-color)',
-  }
-  const FIELD_LABEL: React.CSSProperties = {
-    display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', opacity: 0.85,
+  const CHECK_LABEL: React.CSSProperties = {
+    display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.8125rem', cursor: 'pointer',
   }
 
-  return (
-    <Modal
-      open={modalOpen}
-      onClose={closeModal}
-      title="Upload Data"
-      size="md"
-      persistent={isActive || camtrapImporting}
-    >
-      {/* ── Deployment triage (photos the backend would otherwise drop) ──── */}
-      {showTriage ? (
+  // ── Deployment triage (photos the backend would otherwise drop) ──────────
+  if (showTriage) {
+    return (
+      <div className="upload-flow">
         <UnassignedTriage
           files={files}
           filePaths={filePaths}
           exifIds={exifIds}
           unresolved={unresolvedIndices}
+          matched={matchedRows}
           deployments={deployments}
           projects={projects}
           onCancel={() => setShowTriage(false)}
@@ -489,24 +425,26 @@ export function UploadModal() {
             handleUpload(assignments)
           }}
         />
-      ) : (
-      <>
+      </div>
+    )
+  }
+
+  return (
+    <div className="upload-flow">
       {/* ── Drop zone (idle) ─────────────────────────────────────────────── */}
       {uploadMode === 'idle' && (
         <>
           <div
             {...bind}
-            style={ZONE_STYLE}
+            className={`upload-zone${isDragging ? ' is-dragging' : ''}`}
             onClick={() => folderInputRef.current?.click()}
           >
             <div style={{ pointerEvents: 'none' }}>
-              <div style={{ fontSize: '2.5rem', marginBottom: '0.75rem', opacity: 0.7 }}>
-                {isDragging ? '📥' : '📂'}
-              </div>
+              <div className="upload-zone-icon">{isDragging ? '📥' : '📂'}</div>
               <p style={{ fontWeight: 500, marginBottom: '0.25rem', fontSize: '0.9375rem' }}>
-                {isDragging ? 'Drop to select' : 'Click to select folder or drag & drop here'}
+                {isDragging ? 'Drop to select' : 'Click to select a folder or drag & drop it here'}
               </p>
-              <p style={{ fontSize: '0.75rem', opacity: 0.55, margin: 0 }}>
+              <p style={{ fontSize: '0.75rem', opacity: 0.55 }}>
                 Wildlife Watcher SD card folder (MEDIA/…) or CamtrapDP .zip package
               </p>
             </div>
@@ -521,7 +459,6 @@ export function UploadModal() {
           </div>
           {selectionError && (
             <div style={{
-              marginTop: '1rem',
               padding: '0.75rem',
               borderRadius: 'var(--radius)',
               backgroundColor: 'rgba(244,67,54,0.08)',
@@ -537,28 +474,15 @@ export function UploadModal() {
 
       {/* ── Image mode: stats + options ──────────────────────────────────── */}
       {uploadMode === 'images' && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
-          {/* Summary card */}
-          <div style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(3, 1fr)',
-            gap: '0.75rem',
-          }}>
+        <>
+          {/* Summary tiles */}
+          <div className="upload-tiles">
             {[
               ['🖼', files.length, 'images'],
               ['📍', deploymentCount || '?', 'deployments'],
               ['💾', `${totalMB} MB`, 'total size'],
             ].map(([icon, value, label]) => (
-              <div
-                key={label as string}
-                style={{
-                  padding: '0.75rem',
-                  textAlign: 'center',
-                  borderRadius: 'var(--radius)',
-                  border: '1px solid var(--border)',
-                  backgroundColor: 'var(--surface)',
-                }}
-              >
+              <div key={label as string} className="upload-tile">
                 <div style={{ fontSize: '1.25rem', marginBottom: '0.25rem' }}>{icon}</div>
                 <div style={{ fontWeight: 700, fontSize: '1.125rem' }}>{value}</div>
                 <div style={{ fontSize: '0.75rem', opacity: 0.6 }}>{label}</div>
@@ -566,7 +490,31 @@ export function UploadModal() {
             ))}
           </div>
 
-          {/* Drive storage note — images always sync to Google Drive by default */}
+          {/* EXIF read in progress: the deployment count above settles when it lands */}
+          {exifRead && (
+            <div className="upload-reading" role="status">
+              Reading photos… {exifRead.done.toLocaleString()} of {exifRead.total.toLocaleString()}
+              {' '}(the deployment count may change once every photo has been read)
+            </div>
+          )}
+
+          {/* Where each group of photos will go, so nothing is a surprise at the triage step */}
+          {breakdown.length > 0 && (
+            <div className="upload-breakdown">
+              <div className="upload-breakdown-title">Where these photos will go</div>
+              <ul>
+                {breakdown.map((row) => (
+                  <li key={row.claim ?? 'none'} className={`is-${row.status}`}>
+                    <span className="upload-breakdown-count">{row.count}</span>
+                    <span className="upload-breakdown-label" title={row.claim ?? undefined}>{row.label}</span>
+                    <span className="upload-breakdown-status">{STATUS_TEXT[row.status]}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {/* Drive storage note: images always sync to Google Drive by default */}
           <div style={{
             padding: '0.75rem 1rem',
             border: '1px solid var(--border)',
@@ -580,7 +528,7 @@ export function UploadModal() {
             </span>
           </div>
 
-          {/* No-access notice — these photos are blocked server-side and excluded from the upload */}
+          {/* No-access notice: these photos are blocked server-side and excluded from the upload */}
           {noAccess.length > 0 && (
             <div style={{
               padding: '0.75rem',
@@ -600,96 +548,35 @@ export function UploadModal() {
             </div>
           )}
 
-          {/* Assignment panel — for photos with no / unrecognised deployment */}
-          {needsAssignment && triageSessions.length === 0 && (
-            <div style={{
-              padding: '0.85rem',
-              borderRadius: 'var(--radius)',
-              border: '1px solid var(--primary)',
-              backgroundColor: 'rgba(59,130,246,0.05)',
-              display: 'flex', flexDirection: 'column', gap: '0.6rem',
-            }}>
-              <div>
-                <strong style={{ fontSize: '0.875rem' }}>📍 Assign a deployment</strong>
-                <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', opacity: 0.75 }}>
-                  {deploymentCount === 0
-                    ? "These photos don't include deployment info. Choose which project and deployment they belong to."
-                    : "Some photos have a deployment that isn't in the database. Choose where they belong."}
-                </p>
-              </div>
-
-              <label style={FIELD_LABEL}>Project
-                <select
-                  style={FIELD}
-                  value={assignProjectId}
-                  onChange={(e) => { setAssignProjectId(e.target.value); setAssignDeploymentId(''); setNewDepName('') }}
-                >
-                  <option value="">Select project…</option>
-                  {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                  <option value="__new__">➕ Create new project…</option>
-                </select>
-              </label>
-              {assignProjectId === '__new__' && (
-                <input
-                  style={FIELD}
-                  placeholder="New project name"
-                  value={newProjectName}
-                  onChange={(e) => setNewProjectName(e.target.value)}
-                />
-              )}
-
-              {projectReady && (
-                <label style={FIELD_LABEL}>Deployment
-                  <select style={FIELD} value={assignDeploymentId} onChange={(e) => setAssignDeploymentId(e.target.value)}>
-                    <option value="">Select deployment…</option>
-                    {assignProjectId !== '__new__' && depsInProject.map((d) => (
-                      <option key={d.id} value={d.id}>{d.location_name || d.id.slice(0, 8)}</option>
-                    ))}
-                    <option value="__new__">➕ Create new deployment…</option>
-                  </select>
-                </label>
-              )}
-              {assignDeploymentId === '__new__' && (
-                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-                  <input
-                    style={FIELD}
-                    placeholder="New deployment name (e.g. North Ridge — Cam 1)"
-                    value={newDepName}
-                    onChange={(e) => setNewDepName(e.target.value)}
-                  />
-                  <div style={{ display: 'flex', gap: '0.4rem' }}>
-                    <input style={{ ...FIELD, flex: 1 }} placeholder="Latitude (optional)" inputMode="decimal" value={newDepLat} onChange={(e) => setNewDepLat(e.target.value)} />
-                    <input style={{ ...FIELD, flex: 1 }} placeholder="Longitude (optional)" inputMode="decimal" value={newDepLng} onChange={(e) => setNewDepLng(e.target.value)} />
-                  </div>
-                </div>
-              )}
-
-              {assignError && (
-                <div style={{ color: 'var(--error, #f44336)', fontSize: '0.8rem' }}>⚠ {assignError}</div>
-              )}
-            </div>
-          )}
+          {/* AI opt-out: the server runs the pipeline unless told not to */}
+          <label style={CHECK_LABEL}>
+            <input type="checkbox" checked={runAi} onChange={(e) => setRunAi(e.target.checked)} style={{ marginTop: '0.15rem' }} />
+            <span>
+              <strong>Run AI analysis after upload</strong>
+              <span style={{ opacity: 0.65 }}> (SpeciesNet detection, species ID and clustering)</span>
+            </span>
+          </label>
 
           {/* Action row */}
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', paddingTop: '0.25rem' }}>
-            <button style={BTN_SECONDARY} onClick={clearSelection} disabled={assigning}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', paddingTop: '0.25rem' }}>
+            <button style={BTN_SECONDARY} onClick={clearSelection}>
               ← Change selection
             </button>
             <button
               className="btn"
               onClick={() => handleUpload()}
-              disabled={assigning || !assignmentReady}
-              style={{ padding: '0.5rem 1.5rem', fontWeight: 600, opacity: assigning || !assignmentReady ? 0.6 : 1 }}
+              disabled={uploadDisabled}
+              style={{ padding: '0.5rem 1.5rem', fontWeight: 600, opacity: uploadDisabled ? 0.6 : 1 }}
             >
-              {assigning ? 'Preparing…' : `⬆ Upload ${files.length} image${files.length !== 1 ? 's' : ''}`}
+              {uploadLabel}
             </button>
           </div>
-        </div>
+        </>
       )}
 
       {/* ── CamtrapDP mode ───────────────────────────────────────────────── */}
       {uploadMode === 'camtrapdp' && zipFile && (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1rem' }}>
+        <>
           {/* Package summary */}
           <div style={{
             display: 'flex', alignItems: 'center', justifyContent: 'space-between',
@@ -700,7 +587,7 @@ export function UploadModal() {
             <div>
               <div style={{ fontWeight: 600 }}>📦 CamtrapDP Package</div>
               <div style={{ fontSize: '0.8125rem', opacity: 0.6, marginTop: '0.2rem' }}>
-                {zipFile.name} — {(zipFile.size / 1024).toFixed(1)} KB
+                {zipFile.name} · {(zipFile.size / 1024).toFixed(1)} KB
               </div>
             </div>
             {!camtrapImporting && !camtrapResult && (
@@ -715,9 +602,18 @@ export function UploadModal() {
 
           {/* Import button */}
           {!camtrapResult && !camtrapImporting && !camtrapError && (
-            <button className="btn" onClick={handleCamtrapImport} style={{ alignSelf: 'flex-start', padding: '0.5rem 1.5rem' }}>
-              ⬆ Import CamtrapDP Package
-            </button>
+            <>
+              <label style={CHECK_LABEL}>
+                <input type="checkbox" checked={camtrapRunAi} onChange={(e) => setCamtrapRunAi(e.target.checked)} style={{ marginTop: '0.15rem' }} />
+                <span>
+                  <strong>Run AI analysis after import</strong>
+                  <span style={{ opacity: 0.65 }}> (off by default: CamtrapDP data usually arrives already labelled)</span>
+                </span>
+              </label>
+              <button className="btn" onClick={handleCamtrapImport} style={{ alignSelf: 'flex-start', padding: '0.5rem 1.5rem' }}>
+                ⬆ Import CamtrapDP Package
+              </button>
+            </>
           )}
 
           {/* In-progress */}
@@ -744,7 +640,7 @@ export function UploadModal() {
                 }} />
               </div>
               <p style={{ fontSize: '0.75rem', opacity: 0.5, margin: '0.5rem 0 0 0' }}>
-                Large packages can take 30–60 s. Please keep this tab open.
+                Large packages can take 30 to 60 s. Please keep this tab open.
               </p>
             </div>
           )}
@@ -812,22 +708,25 @@ export function UploadModal() {
                   )}
                 </div>
               )}
+              {camtrapResult.ai_job_id && (
+                <div style={{ marginBottom: '0.5rem', opacity: 0.85 }}>
+                  🧠 AI analysis queued for the bundled images. Track it in{' '}
+                  <Link to="/processing" style={{ color: 'var(--primary)' }}>Processing history</Link>.
+                </div>
+              )}
               <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'center', marginTop: '0.25rem' }}>
                 <Link
                   to="/annotations"
-                  onClick={closeModal}
                   style={{ color: 'var(--primary)', fontWeight: 500, textDecoration: 'none' }}
                 >
                   View in Annotations →
                 </Link>
-                <button style={BTN_SECONDARY} onClick={closeModal}>Close</button>
+                <button style={BTN_SECONDARY} onClick={clearSelection}>Import another</button>
               </div>
             </div>
           )}
-        </div>
+        </>
       )}
-      </>
-      )}
-    </Modal>
+    </div>
   )
 }

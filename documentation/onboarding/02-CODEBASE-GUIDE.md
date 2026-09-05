@@ -28,8 +28,8 @@ src/
 │   │                       #   FilterSelect, StatusBadge, VegaChart) — see resources/ui-components.md
 │   ├── data/               # feature components (MediaBrowser, MediaDetail, SpeciesPicker,
 │   │                       #   DeploymentMap, ObservationReports, ChartBuilder, …)
-│   ├── upload/             # UploadModal, ProgressDock (global upload UX)
-│   ├── toolkit/            # AnalyseImages, GenerateManifest, UploadModel, PipelineStatusBox
+│   ├── upload/             # UploadFlow (+ UnassignedTriage, upload.css), ProgressDock
+│   ├── toolkit/            # GenerateManifest, UploadModel, PipelineStatusBox
 │   └── common/             # nav/shared bits
 ├── contexts/UploadContext.tsx  # global upload store (survives navigation)
 ├── hooks/                  # useAuth, useJob, useBrain, useIntelligence, usePipeline, …
@@ -64,7 +64,7 @@ when the user has an active deployment.
 | `/annotations` | `AnnotationsPage` | Filter/browse media; click a photo → full-screen labeling modal |
 | `/insights` | `InsightsPage` | Projects/Deployments, charts, maps |
 | `/field` | `FieldPage` | Active-deployment view (LoRaWAN heartbeats) |
-| `/upload-data`, `/upload/logs` | `UploadDataPage`, `UploadLogsPage` | Image upload + log view |
+| `/upload-data`, `/upload/logs` | `UploadDataPage` (→ `UploadFlow`), `UploadLogsPage` | The single upload surface (the header **Upload** button, Home and the guide link here; demo users get `RequireNotDemo`) + log view |
 | `/manifest` | `ManifestPage` | Firmware `MANIFEST.zip` builder |
 | `/upload-model` | `UploadModelPage` | Edge Impulse → Vela model upload (org managers) |
 | `/clusters/:id` | `ClusterReviewPage` | Bulk-confirm HDBSCAN clusters |

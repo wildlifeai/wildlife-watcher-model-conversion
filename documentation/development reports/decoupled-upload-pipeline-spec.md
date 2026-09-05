@@ -252,7 +252,7 @@ is unavailable: skip precheck and send everything — the server upsert
 dedups anyway, so precheck is purely a bandwidth optimisation, never a
 correctness requirement.
 
-### 7.2 UploadModal UX
+### 7.2 Upload page UX (`UploadFlow`)
 
 After selection (and triage), one summary line replaces guesswork:
 

@@ -74,7 +74,8 @@ it cannot carry is the EXIF payload (NN scores, telemetry, Make/Model).
 
 ## Implemented (shipped)
 
-- **Frontend** `AnalyseImages.tsx`: admit `.bmp`.
+- **Frontend** `isUploadableImage` in `components/upload/UploadFlow.tsx` admits `.bmp` (ported from
+  `AnalyseImages.tsx` when that page was retired, Sep 2026).
 - **Backend** `routers/exif.py`: `_is_bmp()` magic-byte sniff → when `FF_BMP_INGEST_ENABLED`,
   `to_jpeg()` (`services/image_processing.py`) re-compresses at `BMP_JPEG_QUALITY`, swaps the name to
   `.jpg`, binds via folder prefix + hex-filename timestamp; when disabled, BMPs are ignored (not
