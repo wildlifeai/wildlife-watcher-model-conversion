@@ -13,6 +13,12 @@ export interface TriageDeployment {
   id: string
   project_id: string
   location_name: string | null
+  name?: string | null
+}
+
+/** A deployment's display name: the location, else the row name, else the id prefix. */
+export function deploymentLabel(d: TriageDeployment): string {
+  return d.location_name || d.name || d.id.slice(0, 8)
 }
 
 export interface TriageSession {
@@ -21,8 +27,10 @@ export interface TriageSession {
   indices: number[]
   firstMs: number
   lastMs: number
-  /** MEDIA/<prefix> folder on the card, when the path carries one. */
+  /** The MEDIA/<prefix> folder most of the session's frames sit in, when any path carries one. */
   cardFolder: string | null
+  /** How many distinct card folders the session spans (a run regrouped by EXIF id can span two). */
+  folderCount: number
   /**
    * The deployment UUID the camera stamped into these frames' EXIF (0xF200),
    * when present. Authoritative over the folder: it names the deployment the
@@ -85,15 +93,22 @@ export function buildSessions(
     const flush = () => {
       if (!cur.length) return
       const exifDeploymentId = group.startsWith('exif:') ? group.slice(5) : null
-      // With an EXIF id the folder is informational and may be mixed; show the
-      // first one the run was written to.
-      const cardFolder = cur.find((r) => r.folder)?.folder ?? null
+      // With an EXIF id the folder is informational and may be mixed (a frame
+      // written to MEDIA/00000000/ before the id was set sits beside the run's
+      // own folder), so name the folder most of the frames are in.
+      const folderTally = new Map<string, number>()
+      for (const r of cur) if (r.folder) folderTally.set(r.folder, (folderTally.get(r.folder) ?? 0) + 1)
+      let cardFolder: string | null = null
+      for (const [folder, n] of folderTally) {
+        if (cardFolder === null || n > (folderTally.get(cardFolder) ?? 0)) cardFolder = folder
+      }
       out.push({
         key: `${group}-${out.length}`,
         indices: cur.map((r) => r.i),
         firstMs: cur[0].ms,
         lastMs: cur[cur.length - 1].ms,
         cardFolder,
+        folderCount: folderTally.size,
         exifDeploymentId,
         deploymentId: null,
         skipped: false,
@@ -107,4 +122,68 @@ export function buildSessions(
     flush()
   }
   return out.sort((a, b) => a.firstMs - b.firstMs)
+}
+
+export type ResolutionStatus = 'matched' | 'not_found' | 'no_access' | 'unknown'
+
+/** One line of the "where these photos will go" summary: a claimed deployment and its fate. */
+export interface ResolutionRow {
+  /** What the frames claim: the full EXIF id, else the card-folder prefix, else null. */
+  claim: string | null
+  /** The deployment the claim resolved to, when the user can see it. */
+  deploymentId: string | null
+  label: string
+  count: number
+  status: ResolutionStatus
+}
+
+/**
+ * Per-deployment breakdown of a staged selection, so the user sees before
+ * uploading which photos already match a deployment (and upload as they are)
+ * and which will need a decision. Frames are grouped by what they claim (EXIF
+ * id first, folder prefix second, keyed on the shared 8-hex prefix so a run's
+ * EXIF frames and its id-less BMP frames land on one line); `invalid` is the
+ * /api/deployments/validate verdict for claims that matched no visible
+ * deployment. Sorted largest group first.
+ */
+export function resolutionBreakdown(
+  files: File[],
+  filePaths: string[],
+  exifIds: (string | null)[],
+  deployments: TriageDeployment[],
+  invalid: Record<string, 'no_access' | 'not_found'>,
+): ResolutionRow[] {
+  const groups = new Map<string, { claim: string | null; count: number }>()
+  files.forEach((f, i) => {
+    const claim = exifIds[i] ?? cardFolderOf(filePaths[i] ?? f.name) ?? null
+    const key = claim ? claim.toUpperCase().slice(0, 8) : ''
+    const g = groups.get(key)
+    if (g) {
+      g.count += 1
+      // Prefer the full id over a bare prefix when the group has both.
+      if (claim && (!g.claim || claim.length > g.claim.length)) g.claim = claim
+    } else {
+      groups.set(key, { claim, count: 1 })
+    }
+  })
+
+  const rows: ResolutionRow[] = []
+  for (const [key, g] of groups) {
+    const dep = g.claim
+      ? deployments.find((d) => d.id.toLowerCase() === g.claim!.toLowerCase())
+        ?? deployments.find((d) => d.id.toUpperCase().startsWith(key))
+      : undefined
+    let status: ResolutionStatus
+    if (dep) status = 'matched'
+    else if (!g.claim) status = 'unknown'
+    else status = invalid[g.claim] ?? invalid[key] ?? 'unknown'
+    rows.push({
+      claim: g.claim,
+      deploymentId: dep?.id ?? null,
+      label: dep ? deploymentLabel(dep) : g.claim ? `deployment ${key}` : 'no deployment info',
+      count: g.count,
+      status,
+    })
+  }
+  return rows.sort((a, b) => b.count - a.count || a.label.localeCompare(b.label))
 }

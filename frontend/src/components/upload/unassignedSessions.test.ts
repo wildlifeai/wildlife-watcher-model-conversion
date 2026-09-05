@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSessions, SESSION_GAP_MS } from './unassignedSessions'
+import { buildSessions, resolutionBreakdown, SESSION_GAP_MS } from './unassignedSessions'
 
 const T0 = Date.UTC(2026, 6, 20, 8, 0, 0) // 20 Jul 2026 08:00Z
 
@@ -115,7 +115,19 @@ describe('buildSessions', () => {
       expect(sessions).toHaveLength(1)
       expect(sessions[0].indices).toEqual([0, 1, 2])
       expect(sessions[0].exifDeploymentId).toBe(DEP)
-      expect(sessions[0].cardFolder).toBe('00000000') // first folder written to; informational
+      // The folder most of the run sits in, not the first one written to.
+      expect(sessions[0].cardFolder).toBe('E10F7C43')
+      expect(sessions[0].folderCount).toBe(2)
+    })
+
+    it('counts one folder for a run that never strayed', () => {
+      const { files, paths } = fixture([
+        { path: 'MEDIA/AABBCCDD/A0001.JPG', ms: T0 },
+        { path: 'MEDIA/AABBCCDD/A0002.JPG', ms: T0 + 1000 },
+      ])
+      const sessions = buildSessions(files, paths, [0, 1], [DEP, DEP])
+      expect(sessions[0].cardFolder).toBe('AABBCCDD')
+      expect(sessions[0].folderCount).toBe(1)
     })
 
     it('separates different EXIF ids inside one folder', () => {
@@ -161,5 +173,56 @@ describe('buildSessions', () => {
       const { files, paths } = fixture([{ path: 'MEDIA/AABBCCDD/A0001.JPG', ms: T0 }])
       expect(buildSessions(files, paths, [0])[0].exifDeploymentId).toBeNull()
     })
+  })
+})
+
+describe('resolutionBreakdown', () => {
+  // The 2026-09-05 run-2 capture set: one deployment on the server, two not.
+  const KNOWN = '01e03d10-b53a-4d95-b60e-3f2ec26b96ee'
+  const MISSING = 'ceb77c85-08bd-4868-8b3a-0f0dd4fad62b'
+  const STRAY = '16bed409-192e-48b7-9493-07a47540f144'
+  const deployments = [
+    { id: KNOWN, project_id: 'p1', location_name: null, name: 'Automated Deployment' },
+    { id: 'aabbccdd-0000-4000-8000-000000000000', project_id: 'p1', location_name: 'North Ridge' },
+  ]
+
+  it('groups by claim, resolves matched ones and names the rest by prefix, largest first', () => {
+    const { files, paths } = fixture([
+      ...Array.from({ length: 10 }, (_, n) => ({ path: `MEDIA/01E03D10/A${n}.JPG`, ms: T0 + n })),
+      ...Array.from({ length: 6 }, (_, n) => ({ path: `MEDIA/CEB77C85/B${n}.JPG`, ms: T0 + n })),
+      { path: 'MEDIA/00000000/C0.JPG', ms: T0 },
+      { path: 'MEDIA/00000000/C1.JPG', ms: T0 },
+    ])
+    const ids = [...Array(10).fill(KNOWN), ...Array(6).fill(MISSING), MISSING, STRAY]
+    const rows = resolutionBreakdown(files, paths, ids, deployments, { [MISSING]: 'not_found', [STRAY]: 'not_found' })
+    expect(rows.map((r) => [r.label, r.count, r.status])).toEqual([
+      ['Automated Deployment', 10, 'matched'],
+      ['deployment CEB77C85', 7, 'not_found'],
+      ['deployment 16BED409', 1, 'not_found'],
+    ])
+    expect(rows[0].deploymentId).toBe(KNOWN)
+    expect(rows[1].claim).toBe(MISSING)
+  })
+
+  it('matches a folder prefix when frames carry no EXIF id, and folds id-less frames into the run', () => {
+    const { files, paths } = fixture([
+      { path: 'MEDIA/AABBCCDD/A0001.JPG', ms: T0 },
+      { path: 'MEDIA/AABBCCDD/A0002.BMP', ms: T0 + 1 },
+    ])
+    const rows = resolutionBreakdown(files, paths, ['aabbccdd-0000-4000-8000-000000000000', null], deployments, {})
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ label: 'North Ridge', count: 2, status: 'matched' })
+  })
+
+  it('reports no_access from the validate verdict and unknown when nothing is claimed', () => {
+    const { files, paths } = fixture([
+      { path: 'MEDIA/EEFF0011/A0001.JPG', ms: T0 },
+      { path: 'IMG_0001.JPG', ms: T0 },
+    ])
+    const rows = resolutionBreakdown(files, paths, [null, null], deployments, { EEFF0011: 'no_access' })
+    expect(rows.map((r) => [r.label, r.status])).toEqual([
+      ['deployment EEFF0011', 'no_access'],
+      ['no deployment info', 'unknown'],
+    ])
   })
 })

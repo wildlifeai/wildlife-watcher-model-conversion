@@ -140,8 +140,15 @@ and the Upload button waits for it (the deployment count resolves by card folder
 3. **Batch planning** (`UploadContext.startUpload`). Files are ordered by deployment and cut into
    batches of ≤ 10 that **never span two deployments**, so a batch's `assigned_deployment_id`
    cannot mislabel a mixed batch. Triaged photos join the optimistic Annotations grid and the
-   post-upload redirect filter like folder-resolved ones.
+   post-upload redirect filter like folder-resolved ones. The redirect carries every deployment
+   the upload touched (`?deployment=a,b,c`), so the deployment pill reads "N deployments" rather
+   than focusing the first.
 4. Each batch → `POST /api/exif/parse`; job polling and the dock live in `UploadContext`.
+5. **Optimistic cards** (`lib/pendingCards.ts`). The Annotations grid shows a local preview per
+   uploaded file until its media row exists. The server renames frames on the way in
+   (`A9BC8A30.JPG` becomes `20260905194608_01.jpg`), so a name match never retires a card;
+   instead each real row created since the upload started retires one card of the same
+   deployment. Cards are not counted as media or as "no image" in the header stats.
 
 ### Failure surfacing (no false success)
 
@@ -151,7 +158,22 @@ and the Upload button waits for it (the deployment count resolves by card folder
 - the server refuses storage → the response's `drive_upload.enabled === false`
   (e.g. `GOOGLE_DRIVE_ENABLED` unset → `reason: "server_disabled"`) is logged as an error and
   fails the run. Production ran exactly this way for weeks while the dock showed a green tick
-  (Jul 2026) — the incident this branch guards against.
+  (Jul 2026), the incident this branch guards against;
+- the server took the batch but could not start its Drive job → `drive_upload.status === "error"`
+  counts the whole batch as failed and surfaces the reason in the dock. On the 2026-09-05 bench
+  run a batch lost its job to a dropped Supabase connection and only a log line said so.
+
+Two server-side retries cover the transient failures seen on that run: a single Drive frame
+upload is retried up to three times on a timeout, dropped connection or HTTP 429/5xx
+(`services/google_drive.py`, `DriveTransientError`), and the Drive job enqueue is retried once
+with a fresh Supabase client after an HTTP/2 `ConnectionTerminated` (`routers/exif.py`).
+
+> [!NOTE]
+> Docker trap: the dev compose bind-mounts `./service-account.json` and points
+> `GOOGLE_SERVICE_ACCOUNT_JSON` at it. If that file does not exist when the container is first
+> created, Docker creates an empty **directory** in its place and every Drive job fails with
+> "points to a file that does not exist". Write the credential from `.env` to that path, then
+> `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate api`.
 
 ### On the server
 

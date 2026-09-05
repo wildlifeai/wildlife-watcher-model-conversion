@@ -20,7 +20,8 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { apiClient } from '../../lib/apiClient'
 import { UnassignedTriage } from './UnassignedTriage'
-import { buildSessions, cardFolderOf } from './unassignedSessions'
+import { buildSessions, cardFolderOf, resolutionBreakdown } from './unassignedSessions'
+import type { ResolutionStatus } from './unassignedSessions'
 import { readDeploymentIds } from '../../lib/exifDeploymentId'
 import { supabase } from '../../config/supabase'
 import { useUploadStore, type UploadDeployment, type PendingUpload } from '../../contexts/UploadContext'
@@ -60,6 +61,14 @@ const CAMTRAP_STAGES: { label: string; pct: number; after: number }[] = [
  * backend re-compresses them to JPEG when FF_BMP_INGEST_ENABLED (and ignores
  * them otherwise); they carry no EXIF, so they bind via the card folder.
  */
+/** What happens to each line of the breakdown, in the user's terms. */
+const STATUS_TEXT: Record<ResolutionStatus, string> = {
+  matched: 'matched, uploads as it is',
+  not_found: 'not in the database, you decide where it goes next',
+  no_access: 'in a project you cannot access, will be skipped',
+  unknown: 'no deployment info, you decide where it goes next',
+}
+
 function isUploadableImage(f: File): boolean {
   const name = f.name.toLowerCase()
   return (
@@ -158,7 +167,7 @@ export function UploadFlow() {
   useEffect(() => {
     supabase
       .from('deployments')
-      .select('id, project_id, location_name, latitude, longitude, deployment_start')
+      .select('id, project_id, name, location_name, latitude, longitude, deployment_start')
       .is('deleted_at', null)
       .then(({ data }) => { if (data) setDeployments(data) })
   }, [])
@@ -369,11 +378,11 @@ export function UploadFlow() {
     )
     clearSelection()
 
-    // Land the user on Annotations, filtered to the just-uploaded deployment, so they watch their
-    // images + AI progress fill in live (banner + optimistic cards). One deployment is the common
-    // case; for several, focus the first, the banner/refetch cover the rest.
+    // Land the user on Annotations, filtered to every deployment this upload touched, so they
+    // watch their images + AI progress fill in live (banner + optimistic cards). With several the
+    // deployment pill reads "N deployments" rather than silently focusing the first.
     if (resolvedDeploymentIds.length > 0) {
-      navigate(`/annotations?deployment=${resolvedDeploymentIds[0]}`)
+      navigate(`/annotations?deployment=${resolvedDeploymentIds.join(',')}`)
     }
   }
 
@@ -441,6 +450,13 @@ export function UploadFlow() {
     () => (unresolvedIndices.length ? buildSessions(files, filePaths, unresolvedIndices, exifIds) : []),
     [files, filePaths, unresolvedIndices, exifIds],
   )
+  // Per-deployment fate of the selection, shown before Upload and carried into
+  // triage so the photos that already matched are named there too.
+  const breakdown = useMemo(
+    () => (uploadMode === 'images' ? resolutionBreakdown(files, filePaths, exifIds, deployments, invalidDeployments) : []),
+    [uploadMode, files, filePaths, exifIds, deployments, invalidDeployments],
+  )
+  const matchedRows = breakdown.filter((r) => r.status === 'matched').map((r) => ({ label: r.label, count: r.count }))
   const depsInProject = deployments.filter((d) => d.project_id === assignProjectId)
   const projectReady = !!assignProjectId && (assignProjectId !== '__new__' || !!newProjectName.trim())
   const deploymentReady = !!assignDeploymentId && (assignDeploymentId !== '__new__' || !!newDepName.trim())
@@ -494,6 +510,7 @@ export function UploadFlow() {
           filePaths={filePaths}
           exifIds={exifIds}
           unresolved={unresolvedIndices}
+          matched={matchedRows}
           deployments={deployments}
           projects={projects}
           onCancel={() => setShowTriage(false)}
@@ -572,6 +589,22 @@ export function UploadFlow() {
             <div className="upload-reading" role="status">
               Reading photos… {exifRead.done.toLocaleString()} of {exifRead.total.toLocaleString()}
               {' '}(the deployment count may change once every photo has been read)
+            </div>
+          )}
+
+          {/* Where each group of photos will go, so nothing is a surprise at the triage step */}
+          {breakdown.length > 0 && (
+            <div className="upload-breakdown">
+              <div className="upload-breakdown-title">Where these photos will go</div>
+              <ul>
+                {breakdown.map((row) => (
+                  <li key={row.claim ?? 'none'} className={`is-${row.status}`}>
+                    <span className="upload-breakdown-count">{row.count}</span>
+                    <span className="upload-breakdown-label" title={row.claim ?? undefined}>{row.label}</span>
+                    <span className="upload-breakdown-status">{STATUS_TEXT[row.status]}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           )}
 

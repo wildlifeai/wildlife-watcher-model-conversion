@@ -44,6 +44,7 @@ export interface PendingUpload {
 export interface UploadDeployment {
   id: string
   project_id: string
+  name: string | null
   location_name: string | null
   latitude: number | null
   longitude: number | null
@@ -83,6 +84,8 @@ interface UploadContextValue {
 
   /** Files still uploading, keyed to their deployment — powers the optimistic Annotations grid. */
   pendingUploads: PendingUpload[]
+  /** When the current upload started (ms since epoch), or null; real rows created after it retire the optimistic cards. */
+  pendingSince: number | null
 
   // ── WS5-T6: deployment IDs from the most recent upload ────────────────────
   /** IDs of deployments included in the last upload batch. */
@@ -120,6 +123,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const [dockState, setDockState] = useState<DockState>('hidden')
   const [uploadedDeploymentIds, setUploadedDeploymentIds] = useState<string[]>([])
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
+  const [pendingSince, setPendingSince] = useState<number | null>(null)
 
   // Guards and tracking refs (don't need re-render)
   const busyRef = useRef(false)
@@ -136,13 +140,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     setDockState('hidden')
     setUploadedDeploymentIds([])
     setPendingUploads([])
+    setPendingSince(null)
     lastSeenSeqRef.current = {}
   }, [])
 
   // Once the pipeline is terminal every batch has registered its media rows, so the optimistic
   // grid cards are redundant (the real rows dedup them out) — drop them.
   useEffect(() => {
-    if (phase === 'completed' || phase === 'failed') setPendingUploads([])
+    if (phase === 'completed' || phase === 'failed') { setPendingUploads([]); setPendingSince(null) }
   }, [phase])
 
   // ── Job polling ────────────────────────────────────────────────────────────
@@ -331,6 +336,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         resolvedDeploymentIds && resolvedDeploymentIds.length ? resolvedDeploymentIds : deployments.map(d => d.id),
       )
       setPendingUploads(pending ?? [])
+      setPendingSince(Date.now())
 
       // Instant thumbnails: mint object URLs from the user's own files now, so the
       // Annotations grid can show them within ~1s (before any server rendition).
@@ -400,6 +406,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               const logs = [...prev.logs]
               const jobs = [...prev.jobs]
               let uploadError = prev.uploadError ?? null
+              // Files in this batch the server accepted but will never store (no Drive job).
+              let failedInBatch = 0
 
               if (driveInfo) {
                 // The server can refuse the whole storage step - Drive not
@@ -456,11 +464,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     })
                   }
                 } else if (driveInfo.status === 'error') {
-                  logs.push({
-                    ts: Date.now(),
-                    level: 'error',
-                    message: `❌ Azure/Drive failed: ${driveInfo.error || 'Unknown error'}`,
-                  })
+                  // The server took the files but could not start their Drive job (on the bench
+                  // run: a dropped database connection while enqueueing). Nothing in this batch
+                  // gets a media row, so count it as failed and say so in the dock; a log line
+                  // alone left "2 photos missing" invisible.
+                  const why = `Batch ${batchNum} was not saved: ${driveInfo.error || 'unknown error'}`
+                  logs.push({ ts: Date.now(), level: 'error', message: `❌ ${why}` })
+                  uploadError = uploadError || why
+                  failedInBatch = batchEnd - i
                 }
               } else if (!uploadToDrive) {
                 logs.push({
@@ -477,7 +488,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               // early and overstating "X of Y photos" in the dock).
               return {
                 ...prev,
-                uploadedFiles: prev.uploadedFiles + (batchEnd - i),
+                uploadedFiles: prev.uploadedFiles + (batchEnd - i) - failedInBatch,
+                failedFiles: (prev.failedFiles ?? 0) + failedInBatch,
                 jobs,
                 logs,
                 uploadError,
@@ -558,6 +570,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         setDockState,
         uploadedDeploymentIds,
         pendingUploads,
+        pendingSince,
       }}
     >
       {children}
