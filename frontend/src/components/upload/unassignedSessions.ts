@@ -124,6 +124,36 @@ export function buildSessions(
   return out.sort((a, b) => a.firstMs - b.firstMs)
 }
 
+/**
+ * Indices of files that resolve to no deployment the user can see, from their
+ * EXIF id (exact) or their card folder (prefix). These are the ones the backend
+ * would silently drop, because the drive-upload job only stores files that carry
+ * a deployment_id, so they are exactly the set triage has to resolve.
+ *
+ * The EXIF id wins, so a frame whose folder prefix matches nothing is still
+ * resolved when its id does: the card folder is created at boot, before the
+ * deployment id is configured, and a run can carry frames from more than one
+ * (ww-website#140).
+ */
+export function unresolvedFileIndices(
+  files: File[],
+  filePaths: string[],
+  exifIds: (string | null)[],
+  deployments: { id: string }[],
+): number[] {
+  const knownFull = new Set(deployments.map((d) => d.id.toLowerCase()))
+  const knownPrefix = new Set(deployments.map((d) => d.id.slice(0, 8).toUpperCase()))
+  const out: number[] = []
+  files.forEach((f, i) => {
+    const exifId = exifIds[i]
+    if (exifId && knownFull.has(exifId.toLowerCase())) return
+    const pfx = cardFolderOf(filePaths[i] ?? f.name)
+    if (pfx && knownPrefix.has(pfx)) return
+    out.push(i)
+  })
+  return out
+}
+
 export type ResolutionStatus = 'matched' | 'not_found' | 'no_access' | 'unknown'
 
 /** One line of the "where these photos will go" summary: a claimed deployment and its fate. */

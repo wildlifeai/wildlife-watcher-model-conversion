@@ -80,12 +80,6 @@
   to { opacity: 1; }
 }
 
-.upload-fields {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-  gap: 0.6rem;
-}
-
 /* ── Where these photos will go ──────────────────────────────────────────── */
 
 .upload-breakdown {

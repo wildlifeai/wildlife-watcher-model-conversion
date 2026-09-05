@@ -20,7 +20,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import { useDragAndDrop } from '../../hooks/useDragAndDrop'
 import { apiClient } from '../../lib/apiClient'
 import { UnassignedTriage } from './UnassignedTriage'
-import { buildSessions, cardFolderOf, resolutionBreakdown } from './unassignedSessions'
+import { buildSessions, cardFolderOf, resolutionBreakdown, unresolvedFileIndices } from './unassignedSessions'
 import type { ResolutionStatus } from './unassignedSessions'
 import { readDeploymentIds } from '../../lib/exifDeploymentId'
 import { supabase } from '../../config/supabase'
@@ -111,22 +111,8 @@ export function UploadFlow() {
     Record<string, 'no_access' | 'not_found'>
   >({})
 
-  // ── Manual deployment assignment (for photos with no / unknown deployment) ──
+  // Projects the user can file a new deployment under, offered by the triage cards.
   const { projects } = useProjectSelection()
-  const [assignProjectId, setAssignProjectId] = useState('')       // '' | project id | '__new__'
-  const [newProjectName, setNewProjectName] = useState('')
-  const [assignDeploymentId, setAssignDeploymentId] = useState('') // '' | deployment id | '__new__'
-  const [newDepName, setNewDepName] = useState('')
-  const [newDepLat, setNewDepLat] = useState('')
-  const [newDepLng, setNewDepLng] = useState('')
-  const [assigning, setAssigning] = useState(false)
-  const [assignError, setAssignError] = useState<string | null>(null)
-
-  const resetAssignment = () => {
-    setAssignProjectId(''); setNewProjectName('')
-    setAssignDeploymentId(''); setNewDepName(''); setNewDepLat(''); setNewDepLng('')
-    setAssigning(false); setAssignError(null)
-  }
 
   // CamtrapDP import state
   const [camtrapImporting, setCamtrapImporting] = useState(false)
@@ -184,7 +170,6 @@ export function UploadFlow() {
     setCamtrapResult(null)
     setCamtrapError(null)
     setShowTriage(false)
-    resetAssignment()
   }
 
   // ── File processing (routing image vs ZIP) ─────────────────────────────────
@@ -289,67 +274,21 @@ export function UploadFlow() {
     sessionAssignments?: { deploymentId: string; indices: number[] }[],
   ) => {
     if (files.length === 0) return
-    setAssignError(null)
 
     // Photos with no resolvable deployment are dropped server-side (the drive
     // job only stores files that have one), so resolve them before uploading.
+    // Triage covers every such photo, grouped into capture sessions, which is
+    // why there is no blanket "assign everything to one deployment" form.
     if (!sessionAssignments && triageSessions.length > 0) {
       setShowTriage(true)
       return
     }
 
-    // Resolve a manual deployment assignment (create project/deployment as needed) for photos
-    // that have no recognised deployment. Photos that already resolve to a valid deployment keep
-    // it; no-access ones are excluded server-side.
-    let assignedDeploymentId: string | undefined
-    if (needsAssignment) {
-      setAssigning(true)
-      try {
-        let projectId = assignProjectId
-        if (projectId === '__new__') {
-          const proj = await apiClient.post('/api/projects', { name: newProjectName.trim() })
-          projectId = proj.id
-        }
-        if (assignDeploymentId === '__new__') {
-          // Validate coords client-side so an out-of-range value doesn't hit the DB CHECK
-          // constraint as a confusing 500.
-          let latitude: number | undefined
-          let longitude: number | undefined
-          if (newDepLat.trim()) {
-            latitude = Number(newDepLat)
-            if (Number.isNaN(latitude) || latitude < -90 || latitude > 90) {
-              throw new Error('Latitude must be a number between -90 and 90.')
-            }
-          }
-          if (newDepLng.trim()) {
-            longitude = Number(newDepLng)
-            if (Number.isNaN(longitude) || longitude < -180 || longitude > 180) {
-              throw new Error('Longitude must be a number between -180 and 180.')
-            }
-          }
-          const dep = await apiClient.post('/api/deployments', {
-            project_id: projectId,
-            name: newDepName.trim(),
-            latitude,
-            longitude,
-          })
-          assignedDeploymentId = dep.id
-        } else {
-          assignedDeploymentId = assignDeploymentId
-        }
-      } catch (e) {
-        setAssignError(e instanceof Error ? e.message : 'Could not create the deployment.')
-        setAssigning(false)
-        return
-      }
-      setAssigning(false)
-    }
-
-    // Resolve which deployment each file belongs to: the EXIF id, else the folder prefix,
-    // else the manual assignment. Powers the annotations redirect + optimistic grid.
+    // Resolve which deployment each file belongs to: the EXIF id, else the folder
+    // prefix. Powers the annotations redirect + optimistic grid.
     const pending: PendingUpload[] = files
       .map((f, i) => {
-        const deploymentId = resolveDeploymentId(i) || assignedDeploymentId
+        const deploymentId = resolveDeploymentId(i)
         return deploymentId ? { fileName: f.name, deploymentId } : null
       })
       .filter((p): p is PendingUpload => p !== null)
@@ -374,7 +313,7 @@ export function UploadFlow() {
     // drop its staged selection straight away (and with it the unload guard).
     startUpload(
       files, filePaths, true, deployments,
-      assignedDeploymentId, resolvedDeploymentIds, allPending, sessionAssignments, runAi,
+      undefined, resolvedDeploymentIds, allPending, sessionAssignments, runAi,
     )
     clearSelection()
 
@@ -418,33 +357,17 @@ export function UploadFlow() {
   const deploymentCount = claimedDeployments.size
   const totalMB = (files.reduce((acc, f) => acc + f.size, 0) / 1024 / 1024).toFixed(1)
 
-  const notFound = Object.entries(invalidDeployments)
-    .filter(([, s]) => s === 'not_found')
-    .map(([id]) => id)
   const noAccess = Object.entries(invalidDeployments)
     .filter(([, s]) => s === 'no_access')
     .map(([id]) => id)
 
-  // Manual assignment is required when photos carry no deployment prefix at all, or when some
-  // prefixes aren't in the DB. (no_access photos are excluded server-side and don't gate upload.)
-  const needsAssignment = uploadMode === 'images' && (deploymentCount === 0 || notFound.length > 0)
-
   // Files whose deployment cannot be resolved from their EXIF id or the card's
   // folder structure. These are the ones the backend would silently drop (no
-  // deployment_id -> not stored -> no media row), so they go through triage instead.
-  const unresolvedIndices = useMemo(() => {
-    if (uploadMode !== 'images') return []
-    const knownFull = new Set(deployments.map((d) => d.id.toLowerCase()))
-    const knownPrefix = new Set(deployments.map((d) => d.id.slice(0, 8).toUpperCase()))
-    return files
-      .map((f, i) => {
-        const exifId = exifIds[i]
-        if (exifId && knownFull.has(exifId)) return -1
-        const pfx = cardFolderOf(filePaths[i] ?? f.name)
-        return pfx && knownPrefix.has(pfx) ? -1 : i
-      })
-      .filter((i) => i >= 0)
-  }, [files, filePaths, exifIds, deployments, uploadMode])
+  // deployment_id -> not stored -> no media row), so they go through triage.
+  const unresolvedIndices = useMemo(
+    () => (uploadMode === 'images' ? unresolvedFileIndices(files, filePaths, exifIds, deployments) : []),
+    [files, filePaths, exifIds, deployments, uploadMode],
+  )
 
   const triageSessions = useMemo(
     () => (unresolvedIndices.length ? buildSessions(files, filePaths, unresolvedIndices, exifIds) : []),
@@ -457,26 +380,17 @@ export function UploadFlow() {
     [uploadMode, files, filePaths, exifIds, deployments, invalidDeployments],
   )
   const matchedRows = breakdown.filter((r) => r.status === 'matched').map((r) => ({ label: r.label, count: r.count }))
-  const depsInProject = deployments.filter((d) => d.project_id === assignProjectId)
-  const projectReady = !!assignProjectId && (assignProjectId !== '__new__' || !!newProjectName.trim())
-  const deploymentReady = !!assignDeploymentId && (assignDeploymentId !== '__new__' || !!newDepName.trim())
-  // When triage will run it collects the deployment per capture session, so the
-  // single blanket assignment form is redundant: showing both asked the user
-  // the same question twice.
-  const assignmentReady = !needsAssignment || triageSessions.length > 0 || (projectReady && deploymentReady)
 
   // startUpload refuses to start while a previous batch loop is still sending
   // (busyRef), so say so instead of letting the click do nothing.
   const sending = phase === 'uploading'
   const reading = exifRead !== null
-  const uploadDisabled = assigning || !assignmentReady || reading || sending
-  const uploadLabel = assigning
-    ? 'Preparing…'
-    : reading
-      ? 'Reading photos…'
-      : sending
-        ? 'Previous upload still sending…'
-        : `⬆ Upload ${files.length} image${files.length !== 1 ? 's' : ''}`
+  const uploadDisabled = reading || sending
+  const uploadLabel = reading
+    ? 'Reading photos…'
+    : sending
+      ? 'Previous upload still sending…'
+      : `⬆ Upload ${files.length} image${files.length !== 1 ? 's' : ''}`
 
   // ─────────────────────────────────────────────────────────────────────────
   const BTN_SECONDARY: React.CSSProperties = {
@@ -489,14 +403,6 @@ export function UploadFlow() {
     cursor: 'pointer',
   }
 
-  const FIELD: React.CSSProperties = {
-    width: '100%', boxSizing: 'border-box', padding: '0.45rem 0.55rem', fontSize: '0.8125rem',
-    border: '1px solid var(--border)', borderRadius: 'var(--radius)',
-    background: 'var(--surface)', color: 'var(--text-color)',
-  }
-  const FIELD_LABEL: React.CSSProperties = {
-    display: 'flex', flexDirection: 'column', gap: '0.25rem', fontSize: '0.75rem', opacity: 0.85,
-  }
   const CHECK_LABEL: React.CSSProperties = {
     display: 'flex', alignItems: 'flex-start', gap: '0.5rem', fontSize: '0.8125rem', cursor: 'pointer',
   }
@@ -642,83 +548,6 @@ export function UploadFlow() {
             </div>
           )}
 
-          {/* Assignment panel: for photos with no / unrecognised deployment */}
-          {needsAssignment && triageSessions.length === 0 && (
-            <div style={{
-              padding: '0.85rem',
-              borderRadius: 'var(--radius)',
-              border: '1px solid var(--primary)',
-              backgroundColor: 'rgba(76,175,80,0.06)',
-              display: 'flex', flexDirection: 'column', gap: '0.6rem',
-            }}>
-              <div>
-                <strong style={{ fontSize: '0.875rem' }}>📍 Assign a deployment</strong>
-                <p style={{ margin: '0.2rem 0 0', fontSize: '0.8rem', opacity: 0.75 }}>
-                  {deploymentCount === 0
-                    ? "These photos don't include deployment info. Choose which project and deployment they belong to."
-                    : "Some photos have a deployment that isn't in the database. Choose where they belong."}
-                </p>
-              </div>
-
-              <div className="upload-fields">
-                <label style={FIELD_LABEL}>Project
-                  <select
-                    style={FIELD}
-                    value={assignProjectId}
-                    onChange={(e) => { setAssignProjectId(e.target.value); setAssignDeploymentId(''); setNewDepName('') }}
-                  >
-                    <option value="">Select project…</option>
-                    {projects.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-                    <option value="__new__">➕ Create new project…</option>
-                  </select>
-                </label>
-                {assignProjectId === '__new__' && (
-                  <label style={FIELD_LABEL}>New project name
-                    <input
-                      style={FIELD}
-                      placeholder="New project name"
-                      value={newProjectName}
-                      onChange={(e) => setNewProjectName(e.target.value)}
-                    />
-                  </label>
-                )}
-                {projectReady && (
-                  <label style={FIELD_LABEL}>Deployment
-                    <select style={FIELD} value={assignDeploymentId} onChange={(e) => setAssignDeploymentId(e.target.value)}>
-                      <option value="">Select deployment…</option>
-                      {assignProjectId !== '__new__' && depsInProject.map((d) => (
-                        <option key={d.id} value={d.id}>{d.location_name || d.id.slice(0, 8)}</option>
-                      ))}
-                      <option value="__new__">➕ Create new deployment…</option>
-                    </select>
-                  </label>
-                )}
-              </div>
-              {assignDeploymentId === '__new__' && (
-                <div className="upload-fields">
-                  <label style={FIELD_LABEL}>New deployment name
-                    <input
-                      style={FIELD}
-                      placeholder="e.g. North Ridge, camera 1"
-                      value={newDepName}
-                      onChange={(e) => setNewDepName(e.target.value)}
-                    />
-                  </label>
-                  <label style={FIELD_LABEL}>Latitude (optional)
-                    <input style={FIELD} inputMode="decimal" value={newDepLat} onChange={(e) => setNewDepLat(e.target.value)} />
-                  </label>
-                  <label style={FIELD_LABEL}>Longitude (optional)
-                    <input style={FIELD} inputMode="decimal" value={newDepLng} onChange={(e) => setNewDepLng(e.target.value)} />
-                  </label>
-                </div>
-              )}
-
-              {assignError && (
-                <div style={{ color: 'var(--error, #f44336)', fontSize: '0.8rem' }}>⚠ {assignError}</div>
-              )}
-            </div>
-          )}
-
           {/* AI opt-out: the server runs the pipeline unless told not to */}
           <label style={CHECK_LABEL}>
             <input type="checkbox" checked={runAi} onChange={(e) => setRunAi(e.target.checked)} style={{ marginTop: '0.15rem' }} />
@@ -730,7 +559,7 @@ export function UploadFlow() {
 
           {/* Action row */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: '1rem', flexWrap: 'wrap', paddingTop: '0.25rem' }}>
-            <button style={BTN_SECONDARY} onClick={clearSelection} disabled={assigning}>
+            <button style={BTN_SECONDARY} onClick={clearSelection}>
               ← Change selection
             </button>
             <button

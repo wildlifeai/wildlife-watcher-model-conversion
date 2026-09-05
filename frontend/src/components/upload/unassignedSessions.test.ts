@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildSessions, resolutionBreakdown, SESSION_GAP_MS } from './unassignedSessions'
+import { buildSessions, resolutionBreakdown, SESSION_GAP_MS, unresolvedFileIndices } from './unassignedSessions'
 
 const T0 = Date.UTC(2026, 6, 20, 8, 0, 0) // 20 Jul 2026 08:00Z
 
@@ -173,6 +173,56 @@ describe('buildSessions', () => {
       const { files, paths } = fixture([{ path: 'MEDIA/AABBCCDD/A0001.JPG', ms: T0 }])
       expect(buildSessions(files, paths, [0])[0].exifDeploymentId).toBeNull()
     })
+  })
+})
+
+describe('unresolvedFileIndices', () => {
+  const KNOWN = '01e03d10-b53a-4d95-b60e-3f2ec26b96ee'
+  const deployments = [{ id: KNOWN }]
+
+  it('resolves a frame by its EXIF id even when the card folder matches nothing', () => {
+    // The bug behind the "Assign a deployment" panel appearing for four already
+    // matched photos: the frames sat in MEDIA/00000000/ (written before the id
+    // was configured) while their EXIF named a deployment that does exist.
+    const { files, paths } = fixture([
+      { path: 'MEDIA/00000000/A0001.JPG', ms: T0 },
+      { path: 'MEDIA/00000000/A0002.JPG', ms: T0 + 1000 },
+    ])
+    expect(unresolvedFileIndices(files, paths, [KNOWN, KNOWN], deployments)).toEqual([])
+  })
+
+  it('resolves by folder prefix when a frame carries no EXIF id', () => {
+    const { files, paths } = fixture([{ path: 'MEDIA/01E03D10/A0001.JPG', ms: T0 }])
+    expect(unresolvedFileIndices(files, paths, [null], deployments)).toEqual([])
+  })
+
+  it('is case insensitive on the EXIF id', () => {
+    const { files, paths } = fixture([{ path: 'MEDIA/00000000/A0001.JPG', ms: T0 }])
+    expect(unresolvedFileIndices(files, paths, [KNOWN.toUpperCase()], deployments)).toEqual([])
+  })
+
+  it('returns the frames that match neither', () => {
+    const { files, paths } = fixture([
+      { path: 'MEDIA/01E03D10/A0001.JPG', ms: T0 },
+      { path: 'MEDIA/CEB77C85/B0001.JPG', ms: T0 },
+      { path: 'IMG_0001.JPG', ms: T0 },
+    ])
+    const other = 'ceb77c85-08bd-4868-8b3a-0f0dd4fad62b'
+    expect(unresolvedFileIndices(files, paths, [KNOWN, other, null], deployments)).toEqual([1, 2])
+  })
+
+  it('treats everything as unresolved when no deployments are loaded', () => {
+    const { files, paths } = fixture([{ path: 'MEDIA/01E03D10/A0001.JPG', ms: T0 }])
+    expect(unresolvedFileIndices(files, paths, [KNOWN], [])).toEqual([0])
+  })
+
+  it('falls back to the folder while the EXIF read is still in flight', () => {
+    // exifIds fills asynchronously, so it can be shorter than files.
+    const { files, paths } = fixture([
+      { path: 'MEDIA/01E03D10/A0001.JPG', ms: T0 },
+      { path: 'MEDIA/CEB77C85/B0001.JPG', ms: T0 },
+    ])
+    expect(unresolvedFileIndices(files, paths, [], deployments)).toEqual([1])
   })
 })
 

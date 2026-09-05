@@ -132,11 +132,17 @@ and the Upload button waits for it (the deployment count resolves by card folder
    deployment, creates one from the photos (`POST /api/deployments`, **under the stamped id**
    when there is one, so the phone that configured the camera converges on the same row when it
    syncs), or skips it. **Skipped photos are not uploaded** and the screen says so; before triage
-   existed they were silently dropped (Jul 2026). The older single "assign everything to one
-   deployment" form remains only for the residual case where triage has nothing to show (e.g. no
-   deployments exist at all). On the page the sessions render as a responsive grid of cards
-   (`components/upload/upload.css`, 96 px thumbnails, one card per session) rather than a single
-   scrolling column.
+   existed they were silently dropped (Jul 2026). On the page the sessions render as a responsive
+   grid of cards (`components/upload/upload.css`, 96 px thumbnails, one card per session) rather
+   than a single scrolling column.
+
+   Triage is the **only** way photos get assigned. The older blanket "assign everything to one
+   deployment" form is gone: it was gated on the `/validate` verdict for **card-folder prefixes**,
+   which the EXIF-first resolution had already made irrelevant, so a card whose frames all matched
+   by their stamped id still demanded a project and a deployment because the folder
+   (`MEDIA/00000000/`) matched nothing. Answering it created a real, orphaned deployment row that
+   no photo then used. Whether a photo needs assigning is now one question, asked in one place:
+   `unresolvedFileIndices` in `unassignedSessions.ts`.
 3. **Batch planning** (`UploadContext.startUpload`). Files are ordered by deployment and cut into
    batches of ≤ 10 that **never span two deployments**, so a batch's `assigned_deployment_id`
    cannot mislabel a mixed batch. Triaged photos join the optimistic Annotations grid and the
