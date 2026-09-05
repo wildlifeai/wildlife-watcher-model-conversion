@@ -127,19 +127,19 @@ export function AnalyseImages() {
       .is('deleted_at', null)
       .then(({ data }) => {
         if (data) setDeployments(data)
-        })
-    }, [])
-    
-    // Fetch the user's projects (RLS-scoped) for the "create deployment" dropdown.
-    useEffect(() => {
-      supabase
-        .from('projects')
-        .select('id, name')
-        .is('deleted_at', null)
-        .then(({ data }) => {
-          if (data) setProjects(data)
-        })
-    }, [])
+      })
+  }, [])
+
+  // Fetch the user's projects (RLS-scoped) for the "create deployment" dropdown.
+  useEffect(() => {
+    supabase
+      .from('projects')
+      .select('id, name')
+      .is('deleted_at', null)
+      .then(({ data }) => {
+        if (data) setProjects(data)
+      })
+  }, [])
 
   // Poll active Google Drive upload jobs
   useEffect(() => {
