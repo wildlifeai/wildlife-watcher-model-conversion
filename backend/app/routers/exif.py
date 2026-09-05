@@ -21,6 +21,7 @@ import uuid
 from datetime import datetime, timezone
 from typing import List, Optional
 
+import httpx
 import structlog
 from fastapi import APIRouter, File, Form, Header, HTTPException, Request, UploadFile
 from fastapi.responses import JSONResponse
@@ -28,14 +29,14 @@ from fastapi.responses import JSONResponse
 from app.authz import assert_access, classify_deployment_access, deployment_id_prefix_bounds
 from app.config import settings
 from app.dependencies import get_optional_user, is_email_confirmed
-from app.domain.exif import parse_exif_from_bytes
+from app.domain.exif import parse_exif_from_bytes, resolve_deployment_source
 from app.jobs.definitions import upload_drive_images_job
 from app.jobs.runner import enqueue_local_job
 from app.jobs.store import create_job
 from app.middleware.rate_limit import limiter
 from app.schemas.common import ApiMeta, ApiResponse
 from app.services.azure_storage import store_blob
-from app.services.supabase_client import create_service_client
+from app.services.supabase_client import create_service_client, reset_service_client
 
 logger = structlog.get_logger()
 
@@ -232,19 +233,20 @@ async def parse_exif(
 
         file_contents.append(content)
 
-        # Enrich with folder-path deployment ID if available
+        # The card folder holds only an 8-hex prefix of the deployment id; the EXIF
+        # tag holds the whole thing and is what the device was actually configured
+        # with. EXIF wins; the folder fills in only when there is no tag (a BMP
+        # frame, or an image from something other than a WW500). ww-website#140.
         folder_dep_id = None
         if rel_path:
             m = _FOLDER_DEP_RE.search(rel_path)
             if m:
                 folder_dep_id = m.group(1).upper()
 
-        # Priority: folder path → EXIF tag
-        effective_dep_id = folder_dep_id or parsed.get("deployment_id")
-        if effective_dep_id and not parsed.get("deployment_id"):
-            parsed["deployment_id"] = effective_dep_id
-        if folder_dep_id:
-            parsed["deployment_id_source"] = "folder_path"
+        dep_id, source = resolve_deployment_source(parsed.get("deployment_id"), folder_dep_id)
+        if dep_id:
+            parsed["deployment_id"] = dep_id
+            parsed["deployment_id_source"] = source
 
         # Decode hex filename to timestamp if EXIF datetime is missing (the BMP's
         # original .bmp stem still decodes — extension is irrelevant).
@@ -311,7 +313,7 @@ async def parse_exif(
 
     if drive_enabled:
         try:
-            drive_upload_info = await _enqueue_drive_upload(
+            drive_upload_info = await _enqueue_drive_upload_with_retry(
                 request=request,
                 files=files,
                 file_contents=file_contents,
@@ -338,6 +340,34 @@ async def parse_exif(
         },
         meta=ApiMeta(request_id=getattr(request.state, "request_id", None) if request else None),
     )
+
+
+def _is_transient_transport_error(exc: BaseException) -> bool:
+    """A dropped or protocol-broken HTTP connection to Supabase, worth one retry.
+
+    The shared service client keeps a single HTTP/2 connection; when the server
+    closes it, the request handler and a background Drive job sharing it both
+    see ``ConnectionTerminated``. On the 2026-09-05 bench run that cost a whole
+    batch its Drive job (and so its media rows) while the response still read
+    200 with ``drive_upload.status = "error"``.
+    """
+    if isinstance(exc, (httpx.RemoteProtocolError, httpx.ReadError, httpx.WriteError, httpx.ConnectError)):
+        return True
+    return "ConnectionTerminated" in repr(exc)
+
+
+async def _enqueue_drive_upload_with_retry(**kwargs) -> dict:
+    """Enqueue the Drive job, retrying once with a fresh Supabase client after a
+    transient transport error. Re-running is safe: a second Azure buffer copy is
+    an orphan blob at worst, and the job is only created on success."""
+    try:
+        return await _enqueue_drive_upload(**kwargs)
+    except Exception as exc:
+        if not _is_transient_transport_error(exc):
+            raise
+        logger.warning("drive_enqueue_retry", error=str(exc))
+        reset_service_client()
+        return await _enqueue_drive_upload(**kwargs)
 
 
 async def _enqueue_drive_upload(

@@ -17,7 +17,7 @@ import { ThreeStepGuide, DEFAULT_SIGNED_IN_STEPS } from '../components/common'
 | Export | File | Used by |
 |---|---|---|
 | `<Ribbon>` | `Ribbon.tsx` | **Annotations + Insights command bars** (Word-style menu bar + grouped ribbon) |
-| `<Modal>` | `Modal.tsx` | Upload modal, advanced settings, create-project |
+| `<Modal>` | `Modal.tsx` | Advanced settings, create-project (the upload flow is a page now, `/upload-data`) |
 | `<DataTable>` | `DataTable.tsx` | Insights → Deployments / Projects tables |
 | `<ControlBar>`, `<FilterSelect>`, `<SearchInput>`, `<ColumnToggle>` | `ControlBar.tsx` | `FilterSelect` inside ribbon groups; `ControlBar` is the older flat toolbar |
 | `<StatusBadge>`, `deriveAnnotationStatus` | `StatusBadge.tsx` | Annotation thumbnail grid + modal |

@@ -157,8 +157,17 @@ bash scripts/fetch-env.sh     # PowerShell: .\scripts\fetch-env.ps1
 
 - **Maintainers** push updates after changing `.env`:
   `az keyvault secret set --vault-name ww-kv-dev-ae -n ww-website-dotenv --file .env`
-- **Granting a developer access** (maintainers):
-  `az keyvault set-policy -n ww-kv-dev-ae --upn <dev>@wildlife.ai --secret-permissions get list`
+- **Granting a developer access** (maintainers) — grant by **object id**, not `--upn`:
+
+  ```bash
+  az ad user list --filter "mail eq '<dev>@wildlife.ai'" --query "[0].id" -o tsv
+  az keyvault set-policy -n ww-kv-dev-ae --object-id <that-id> --secret-permissions get list
+  ```
+
+  Most of the team are **guests** in the `wildlifeai.onmicrosoft.com` tenant, so their UPN is
+  mangled (`dev_wildlife.ai#EXT#@wildlifeai.onmicrosoft.com`) and `--upn <dev>@wildlife.ai`
+  fails with *"Resource does not exist"*. Looking the account up by `mail` avoids that.
+  `get` is all `fetch-env.sh` needs; `list` additionally lets them browse the vault in the portal.
 
 If you need to rebuild `.env` from first principles, or rotate a single credential, each value
 has a canonical source — request the underlying access from a maintainer (Victor / Tobyn), then

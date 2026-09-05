@@ -115,6 +115,68 @@ def _extract_labels_from_header(vars_h_path: Path) -> List[str]:
     raise HeaderLabelsNotFound("No labels found in model_variables.h")
 
 
+def _classifier_class_count(model_path: Path) -> Optional[int]:
+    """How many classes a *classification* model has, or None when not knowable.
+
+    Reads the TFLite flatbuffer's first output tensor. A classification head is
+    rank 2 — ``[1, C]`` — and C is the class count. A Vela-compiled ``.tfl`` is
+    still a TFLite flatbuffer, so this works on either side of conversion.
+
+    Any other rank returns None, because on a detection head the trailing
+    dimension is not a class count and reading it as one is worse than not
+    checking at all. Both shapes are in the dev bucket: an Edge Impulse YOLOv5
+    export is ``[1, 2268, 6]``, where 6 is ``4 bbox + objectness + 1 class`` and
+    2268 is anchors, and a YOLOv11 export is ``[1, 84, 756]``, where 84 is
+    ``4 bbox + 80 classes`` and 756 is anchors. Reading the last dimension of
+    either would reject a valid model with a nonsense count.
+
+    None therefore means "no cross-check available", never "zero classes" — the
+    same as for a file that will not parse, which would fail Vela or the device
+    loader anyway.
+    """
+    try:
+        from ethosu.vela.tflite.Model import Model
+
+        subgraph = Model.GetRootAs(bytearray(model_path.read_bytes()), 0).Subgraphs(0)
+        if subgraph is None or subgraph.OutputsLength() < 1:
+            return None
+        tensor = subgraph.Tensors(subgraph.Outputs(0))
+        if tensor is None:
+            return None
+        shape = [int(tensor.Shape(i)) for i in range(tensor.ShapeLength())]
+        if len(shape) != 2 or shape[1] < 1:
+            logger.info("lm1_skipped_not_a_classifier", file=model_path.name, output_shape=shape)
+            return None
+        return shape[1]
+    except Exception:  # noqa: BLE001 — any parse failure means "unknown", not "invalid"
+        logger.info("output_tensor_shape_unreadable", file=model_path.name)
+        return None
+
+
+def _check_label_count(labels: List[str], class_count: Optional[int]) -> None:
+    """LM-1: the labels list must be as long as the model's output tensor.
+
+    The check the design always specified — parse the output shape, compare to
+    the labels — as opposed to the metadata's own self-declared count, which
+    only catches a header that contradicts itself. A one-line labels file for a
+    two-class person detector passed every other check and shipped: the device
+    named class 1 with an empty string, so every EXIF UserComment on that
+    deployment carried ``'': 70%`` and nothing could map it to a taxon
+    (wildlifeai/ww-website#134).
+
+    ``class_count`` is None for anything :func:`_classifier_class_count` cannot
+    read as a classification head, and this passes: detection models are not
+    covered by LM-1 and must not be rejected by it.
+    """
+    if class_count is not None and class_count != len(labels):
+        raise ModelDomainError(
+            f"Label/tensor mismatch: the model has {class_count} output classes but "
+            f"{len(labels)} label(s) were supplied ({labels}). Give every class its own "
+            "line in labels.txt, in class order. The device reports a class with no "
+            "label as an empty name, which cannot be mapped to a species."
+        )
+
+
 def _build_firmware_filename(vars_h_path: Path) -> str:
     """Build 8.3-style filename from model_variables.h project/version IDs.
 
@@ -291,6 +353,11 @@ async def convert_uploaded_model(zip_content: bytes, filename: str) -> Tuple[byt
                         "Fix the export rather than reordering labels by hand."
                     )
 
+            # LM-1 against the compiled model itself. This is the only check that
+            # sees a precompiled package carrying no Edge Impulse metadata, which
+            # is how a one-label two-class model got through before.
+            _check_label_count(labels, _classifier_class_count(tfl_file))
+
             tfl_bytes = tfl_file.read_bytes()
             txt_bytes = labels_txt.read_bytes()
 
@@ -321,6 +388,10 @@ async def convert_uploaded_model(zip_content: bytes, filename: str) -> Tuple[byt
 
         logger.info("model_extracted", model=container_name)
 
+        # Read the class count from the source model now: Vela's output can be
+        # moved over this path, so after conversion it may no longer be here.
+        source_class_count = _classifier_class_count(tflite_path)
+
         # 2. Run Vela conversion
         try:
             vela_output = await run_vela_conversion(tflite_path, work_dir)
@@ -338,9 +409,10 @@ async def convert_uploaded_model(zip_content: bytes, filename: str) -> Tuple[byt
 
         # 4. Extract labels
         labels = _extract_labels_from_header(vars_h_path)
+        _check_label_count(labels, source_class_count)
 
         labels_txt_path = work_dir / "labels.txt"
-        labels_txt_path.write_text("\n".join(labels))
+        labels_txt_path.write_text("\n".join(labels), newline="\n")
 
         tfl_bytes = vela_final_path.read_bytes()
         txt_bytes = labels_txt_path.read_bytes()
@@ -571,9 +643,17 @@ async def convert_pretrained_model(sscma_uuid: str) -> Tuple[bytes, bytes, List[
         if vela_output != vela_final_path:
             _safe_move(vela_output, vela_final_path)
 
-        labels = model_info.get("classes", ["unknown"])
+        # SSCMA is a third-party catalogue, so an entry with no "classes" is
+        # their omission rather than ours and is not fatal here. LM-1 below still
+        # refuses it whenever the model is a readable classifier, which is the
+        # #134 shape; a detection head stays unverifiable either way.
+        labels = model_info.get("classes") or ["unknown"]
+        if not model_info.get("classes"):
+            logger.warning("sscma_model_declares_no_classes", uuid=sscma_uuid, name=model_info.get("name"))
+        _check_label_count(labels, _classifier_class_count(vela_final_path))
+
         labels_txt_path = work_dir / "labels.txt"
-        labels_txt_path.write_text("\n".join(labels))
+        labels_txt_path.write_text("\n".join(labels), newline="\n")
 
         tfl_bytes = vela_final_path.read_bytes()
         txt_bytes = labels_txt_path.read_bytes()
@@ -600,11 +680,29 @@ async def convert_github_pretrained_model(architecture: str, resolution: str) ->
         Tuple of (tfl_bytes, txt_bytes, labels_list, model_metadata).
     """
 
-    config = get_model_config(architecture, resolution)
+    try:
+        config = get_model_config(architecture, resolution)
+    except ValueError as e:
+        # Unknown, or blocked: the message names the reason (e.g. the device
+        # cannot run a detection head), so surface it as the job error as is.
+        raise ModelDomainError(str(e)) from e
     url = config["url"]
     file_type = config["type"]
-    labels = config.get("labels", ["unknown"])
     firmware_model_id = config.get("firmware_model_id")
+
+    # No silent ["unknown"] fallback. That default is what shipped every
+    # pretrained model with a one-line labels file: the labels are declared per
+    # architecture and were being read off the per-resolution dict, so the
+    # fallback fired every time while the catalogue endpoint advertised the real
+    # names (#134). A registry entry with no labels is a bug in the registry and
+    # should say so here rather than reach a device.
+    labels = config.get("labels") or []
+    if not labels:
+        raise ModelDomainError(
+            f"No labels declared for '{architecture}' in MODEL_REGISTRY. Add a "
+            "'labels' list naming every output class in class order; the device "
+            "reports a class with no label as an empty name."
+        )
 
     logger.info("github_downloading", architecture=architecture, url=url)
 
@@ -653,8 +751,13 @@ async def convert_github_pretrained_model(architecture: str, resolution: str) ->
                 vela_final_path.unlink()
             _safe_move(vela_output, vela_final_path)
 
+        # LM-1 on the registry's own labels: catches a registry entry that names
+        # the wrong number of classes for the model it points at, which is the
+        # same defect as #134 arriving by a different route.
+        _check_label_count(labels, _classifier_class_count(vela_final_path))
+
         labels_txt_path = work_dir / "labels.txt"
-        labels_txt_path.write_text("\n".join(labels))
+        labels_txt_path.write_text("\n".join(labels), newline="\n")
 
         tfl_bytes = vela_final_path.read_bytes()
         txt_bytes = labels_txt_path.read_bytes()

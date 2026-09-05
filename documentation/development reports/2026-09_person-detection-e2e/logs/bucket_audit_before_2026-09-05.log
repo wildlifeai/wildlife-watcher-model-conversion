@@ -1,0 +1,20 @@
+$ python "documentation/development reports/2026-09_person-detection-e2e/scripts/audit_bucket_labels.py"
+# dev ai-models bucket, 2026-09-05, BEFORE step 1. "classes" is the output tensor's last
+# dimension as the original #136 check read it; the rank-3 rows are detection heads and
+# the number is anchors/channels, not classes (that is the #139 fix).
+
+labels object                                                  labels                         n classes  verdict
+----------------------------------------------------------------------------------------------------------------------
+b0000000-0000-0000-0000-000000000001/1V1.txt                   ['no person', 'person']        2       2  OK
+b0000000-0000-0000-0000-000000000001/3V1.txt                   ['no person', 'person']        2       2  OK
+000000-0000-0000-0000-000000000001/6/1.0.0-3dc2a1/6V1.0.0-.TXT ['not rat', 'rat']             2       2  OK
+b0000000-0000-0000-0000-000000000001/7V1.txt                   ['no person', 'person']        2       2  OK
+00-0000-0000-000000000001/Apple Detection-custom-1.0.0/5V1.TXT ['apple']                      1       6  MISMATCH
+0-0000-0000-000000000001/Gender Detection-custom-1.0.0/4V1.TXT ['male', 'female']             2       7  MISMATCH
+00-000000000001/Person Detection (96x96)-custom-1.0.0/20V1.TXT ['unknown']                    1       2  MISMATCH  <-- registry-labels bug
+000001/YOLOv11 Object Detection (192x192)-custom-1.0.0/1V1.TXT ['unknown']                    1     756  MISMATCH  <-- registry-labels bug
+000000-0000-0000-0000-000000000002/2/1.0.0-8e1077/2V1.0.0-.TXT ['not rat', 'rat']             2       2  OK
+00-000000000002/Person Detection (96x96)-custom-1.0.0/20V1.TXT ['unknown']                    1       2  MISMATCH  <-- registry-labels bug
+
+# 7V1.txt is the file the seeded Rat Detection row points at: person labels under a rat
+# label_map (ww-backend #175).

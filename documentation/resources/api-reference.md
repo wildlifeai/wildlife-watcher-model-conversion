@@ -132,7 +132,7 @@ Build a camera `MANIFEST.zip` firmware package. Async (returns a `job_id`). No a
 | `POST /api/manifest/generate` | Body `{ model_source, model_type?, resolution?, sscma_model_id?, org_model_id?, camera_type? }` → `{ job_id, status }` |
 
 - **`model_source`:** `default` (best in DB) · `github` (+ `model_type`, `resolution`) · `sscma` (+ `sscma_model_id`) · `organisation` (+ `org_model_id`).
-- **GitHub models:** Person Detection `96x96`; YOLOv8 Detection `192x192`; YOLOv11 Detection `192x192`/`224x224`; YOLOv8 Pose `256x256`.
+- **GitHub models:** Person Detection `96x96`. The YOLOv8/YOLOv11 detection and pose entries are registered but blocked (the device can only run classifiers; see [AI Model Pipeline](./ai-model-pipeline.md#pre-trained-model-github-zoo)), and `GET /api/models/pretrained/catalog` omits them.
 - **`camera_type`:** `Raspberry Pi` (default) · `HM0360`.
 
 > **Async pattern** (all job-returning endpoints): `POST …` → `{ job_id }`, then poll
@@ -268,8 +268,8 @@ Deployment helpers used by the upload flow. JWT required. Prefix `/api/deploymen
 
 | Method · Path | Description |
 |---|---|
-| `POST /api/deployments` | Create a deployment (+ placeholder device) in a project you can access — body `{ project_id, name?, location_name?, latitude?, longitude?, deployment_start?, deployment_end? }`. Backs the "assign/create a deployment at upload" flow: pass the new id as `assigned_deployment_id` to `/api/exif/parse` to bind photos that carry no valid deployment ID |
-| `POST /api/deployments/validate` | Resolve folder-prefix deployment ids to `valid` / `no_access` / `not_found` — the upload pre-check that drives the warning banners. Body `{ "deployment_ids": ["7785FABB", …] }` |
+| `POST /api/deployments` | Create a deployment (+ placeholder device) in a project you can access — body `{ project_id, name?, id?, location_name?, latitude?, longitude?, deployment_start?, deployment_end? }`. Backs the "assign/create a deployment at upload" flow: pass the new id as `assigned_deployment_id` to `/api/exif/parse` to bind photos that carry no valid deployment ID. `id` (a UUID) creates the row under the id the camera stamped into the photos' EXIF, so the phone that configured the camera converges on it when it syncs; `400` if not a UUID, `409` if it already exists |
+| `POST /api/deployments/validate` | Resolve deployment ids to `valid` / `no_access` / `not_found` — the upload pre-check that drives the warning banners. Accepts full UUIDs (from EXIF `0xF200`) and 8-hex card-folder prefixes. Body `{ "deployment_ids": ["e10f7c43-…", "7785FABB", …] }` |
 | `POST /api/deployments/backfill-timezones` | Derive `deployments.timezone` from GPS for rows missing it (idempotent) |
 
 ---

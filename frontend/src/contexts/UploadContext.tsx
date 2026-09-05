@@ -1,13 +1,13 @@
 /* eslint-disable react-refresh/only-export-components */
 /**
- * UploadContext — global upload pipeline state.
+ * UploadContext, the global upload pipeline state.
  *
- * Lifts all upload state (multi-batch API loop, Drive-job polling,
- * modal open/close, progress dock visibility) out of the AnalyseImages
- * page component so it persists while the user navigates away.
+ * Holds everything that must outlive the /upload-data page (UploadFlow):
+ * the multi-batch API loop, Drive-job polling and the progress dock, so an
+ * upload keeps going while the user navigates away.
  *
  * Usage:
- *   const { openModal, dockState, pipelineState, phase } = useUploadStore()
+ *   const { startUpload, dockState, pipelineState, phase } = useUploadStore()
  */
 import React, {
   createContext,
@@ -44,6 +44,7 @@ export interface PendingUpload {
 export interface UploadDeployment {
   id: string
   project_id: string
+  name: string | null
   location_name: string | null
   latitude: number | null
   longitude: number | null
@@ -51,11 +52,6 @@ export interface UploadDeployment {
 }
 
 interface UploadContextValue {
-  // ── Modal ──────────────────────────────────────────────────────────────────
-  modalOpen: boolean
-  openModal: () => void
-  closeModal: () => void
-
   // ── Pipeline ───────────────────────────────────────────────────────────────
   pipelineState: PipelineState
   phase: UploadPhase
@@ -63,13 +59,13 @@ interface UploadContextValue {
   isActive: boolean
 
   // ── Actions ────────────────────────────────────────────────────────────────
-  /** Kick off a multi-batch image upload. Closes the modal and shows the dock. */
+  /** Kick off a multi-batch image upload and show the dock. */
   startUpload: (
     files: File[],
     paths: string[],
     uploadToDrive: boolean,
     deployments: UploadDeployment[],
-    /** Deployment the user manually assigned unresolved/no-id photos to (see UploadModal). */
+    /** Deployment the user manually assigned unresolved/no-id photos to (see UploadFlow). */
     assignedDeploymentId?: string,
     /** Precise deployment ids the images belong to (for the annotations filter/redirect). */
     resolvedDeploymentIds?: string[],
@@ -77,6 +73,8 @@ interface UploadContextValue {
     pending?: PendingUpload[],
     /** Capture-session bindings from the triage step, one deployment per group of files. */
     sessionAssignments?: { deploymentId: string; indices: number[] }[],
+    /** Run the AI pipeline + Wildlife Brain after upload (the server's default is true). */
+    runAi?: boolean,
   ) => Promise<void>
   clearUpload: () => void
 
@@ -86,6 +84,8 @@ interface UploadContextValue {
 
   /** Files still uploading, keyed to their deployment — powers the optimistic Annotations grid. */
   pendingUploads: PendingUpload[]
+  /** When the current upload started (ms since epoch), or null; real rows created after it retire the optimistic cards. */
+  pendingSince: number | null
 
   // ── WS5-T6: deployment IDs from the most recent upload ────────────────────
   /** IDs of deployments included in the last upload batch. */
@@ -119,11 +119,11 @@ const UploadContext = createContext<UploadContextValue | null>(null)
 const BATCH_SIZE = 10
 
 export function UploadProvider({ children }: { children: React.ReactNode }) {
-  const [modalOpen, setModalOpen] = useState(false)
   const [pipelineState, setPipelineState] = useState<PipelineState>(EMPTY_PIPELINE)
   const [dockState, setDockState] = useState<DockState>('hidden')
   const [uploadedDeploymentIds, setUploadedDeploymentIds] = useState<string[]>([])
   const [pendingUploads, setPendingUploads] = useState<PendingUpload[]>([])
+  const [pendingSince, setPendingSince] = useState<number | null>(null)
 
   // Guards and tracking refs (don't need re-render)
   const busyRef = useRef(false)
@@ -133,10 +133,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   const isActive =
     phase === 'uploading' || phase === 'processing' || phase === 'stalled'
 
-  // ── Modal helpers ──────────────────────────────────────────────────────────
-  const openModal = useCallback(() => setModalOpen(true), [])
-  const closeModal = useCallback(() => setModalOpen(false), [])
-
   // ── Clear ──────────────────────────────────────────────────────────────────
   const clearUpload = useCallback(() => {
     if (busyRef.current) return          // don't clear mid-upload
@@ -144,13 +140,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
     setDockState('hidden')
     setUploadedDeploymentIds([])
     setPendingUploads([])
+    setPendingSince(null)
     lastSeenSeqRef.current = {}
   }, [])
 
   // Once the pipeline is terminal every batch has registered its media rows, so the optimistic
   // grid cards are redundant (the real rows dedup them out) — drop them.
   useEffect(() => {
-    if (phase === 'completed' || phase === 'failed') setPendingUploads([])
+    if (phase === 'completed' || phase === 'failed') { setPendingUploads([]); setPendingSince(null) }
   }, [phase])
 
   // ── Job polling ────────────────────────────────────────────────────────────
@@ -320,6 +317,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
        *  Files are ordered so each batch carries a single deployment, because
        *  assigned_deployment_id is one value per request. */
       sessionAssignments?: { deploymentId: string; indices: number[] }[],
+      runAi = true,
     ): Promise<void> => {
       if (busyRef.current) return
       busyRef.current = true
@@ -333,11 +331,12 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       }
 
       // Deployment IDs for the post-upload annotations filter/redirect: prefer the precise set
-      // the modal resolved (folder-prefix matches ∪ manual assignment); fall back to all.
+      // the page resolved (folder-prefix matches ∪ manual assignment); fall back to all.
       setUploadedDeploymentIds(
         resolvedDeploymentIds && resolvedDeploymentIds.length ? resolvedDeploymentIds : deployments.map(d => d.id),
       )
       setPendingUploads(pending ?? [])
+      setPendingSince(Date.now())
 
       // Instant thumbnails: mint object URLs from the user's own files now, so the
       // Annotations grid can show them within ~1s (before any server rendition).
@@ -348,7 +347,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
       const totalBatches = batchPlan.length
       lastSeenSeqRef.current = {}
 
-      // Initialise state, close modal, show dock
+      // Initialise state, show dock
       setPipelineState({
         totalFiles: files.length,
         uploadedFiles: 0,
@@ -364,7 +363,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         ],
         lastUpdateTs: Date.now(),
       })
-      setModalOpen(false)
       setDockState('medium')
 
       try {
@@ -392,8 +390,9 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
           for (const f of chunk) formData.append('files', f)
           for (const p of chunkPaths) formData.append('paths', p)
           if (uploadToDrive) formData.append('upload_to_drive', 'true')
+          formData.append('run_ai', String(runAi))
           // Every file in this batch shares one deployment by construction
-          // (see batchPlan); fall back to the single modal-level assignment.
+          // (see batchPlan); fall back to the single page-level assignment.
           const batchAssigned = plan.assigned ?? assignedDeploymentId
           if (batchAssigned) formData.append('assigned_deployment_id', batchAssigned)
 
@@ -407,6 +406,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               const logs = [...prev.logs]
               const jobs = [...prev.jobs]
               let uploadError = prev.uploadError ?? null
+              // Files in this batch the server accepted but will never store (no Drive job).
+              let failedInBatch = 0
 
               if (driveInfo) {
                 // The server can refuse the whole storage step - Drive not
@@ -463,11 +464,14 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
                     })
                   }
                 } else if (driveInfo.status === 'error') {
-                  logs.push({
-                    ts: Date.now(),
-                    level: 'error',
-                    message: `❌ Azure/Drive failed: ${driveInfo.error || 'Unknown error'}`,
-                  })
+                  // The server took the files but could not start their Drive job (on the bench
+                  // run: a dropped database connection while enqueueing). Nothing in this batch
+                  // gets a media row, so count it as failed and say so in the dock; a log line
+                  // alone left "2 photos missing" invisible.
+                  const why = `Batch ${batchNum} was not saved: ${driveInfo.error || 'unknown error'}`
+                  logs.push({ ts: Date.now(), level: 'error', message: `❌ ${why}` })
+                  uploadError = uploadError || why
+                  failedInBatch = batchEnd - i
                 }
               } else if (!uploadToDrive) {
                 logs.push({
@@ -484,7 +488,8 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
               // early and overstating "X of Y photos" in the dock).
               return {
                 ...prev,
-                uploadedFiles: prev.uploadedFiles + (batchEnd - i),
+                uploadedFiles: prev.uploadedFiles + (batchEnd - i) - failedInBatch,
+                failedFiles: (prev.failedFiles ?? 0) + failedInBatch,
                 jobs,
                 logs,
                 uploadError,
@@ -556,9 +561,6 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
   return (
     <UploadContext.Provider
       value={{
-        modalOpen,
-        openModal,
-        closeModal,
         pipelineState,
         phase,
         isActive,
@@ -568,6 +570,7 @@ export function UploadProvider({ children }: { children: React.ReactNode }) {
         setDockState,
         uploadedDeploymentIds,
         pendingUploads,
+        pendingSince,
       }}
     >
       {children}

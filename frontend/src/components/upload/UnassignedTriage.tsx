@@ -13,16 +13,24 @@
  * and each session can be bound to an existing deployment or turned into a
  * new one pre-filled from the photos themselves.
  */
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { apiClient } from '../../lib/apiClient'
-import { buildSessions, fmt, span } from './unassignedSessions'
+import { buildSessions, deploymentLabel, fmt, span } from './unassignedSessions'
 import type { TriageDeployment, TriageSession } from './unassignedSessions'
 
 interface Props {
   files: File[]
   filePaths: string[]
-  /** Indices of files that have no deployment from the card's folder structure. */
+  /** Deployment UUID each file carries in EXIF (0xF200), aligned to `files`; null where absent. */
+  exifIds?: (string | null)[]
+  /** Indices of files that resolve to no deployment from their EXIF id or the card's folder structure. */
   unresolved: number[]
+  /**
+   * Photos that already resolved to a deployment, grouped by it. They are not
+   * triaged, but the screen names them so the user knows the rest of the card
+   * is accounted for and the footer's "ready to upload" count is honest.
+   */
+  matched?: { label: string; count: number }[]
   deployments: TriageDeployment[]
   projects: { id: string; name: string }[]
   onCancel: () => void
@@ -40,16 +48,27 @@ function useSamplePicks(indices: number[]): number[] {
 }
 
 /**
- * One thumbnail that owns its object URL: created once per mount via the
- * useState initialiser and revoked on unmount. Keeping the lifecycle inside
- * the element avoids both a ref ledger (refs must not be read during render)
- * and setState-in-effect, and there is nothing left to leak when the list
- * changes because React unmounts the old <Thumb>.
+ * One thumbnail that owns its object URL. The URL is created inside the
+ * effect and written straight to the element, and revoked in the cleanup, so
+ * the pair always runs together. An earlier version created the URL in a
+ * useState initialiser and only revoked it in the cleanup; React StrictMode
+ * runs the cleanup and re-runs the effect on mount without re-running the
+ * initialiser, so in development every thumbnail pointed at a revoked URL and
+ * rendered as a broken image. Nothing leaks when the list changes because
+ * React unmounts the old <Thumb>.
  */
 function Thumb({ file, alt }: { file: File; alt: string }) {
-  const [url] = useState(() => URL.createObjectURL(file))
-  useEffect(() => () => URL.revokeObjectURL(url), [url])
-  return <img src={url} alt={alt} loading="lazy" />
+  const ref = useRef<HTMLImageElement>(null)
+  useEffect(() => {
+    const url = URL.createObjectURL(file)
+    const img = ref.current
+    if (img) img.src = url
+    return () => {
+      if (img) img.removeAttribute('src')
+      URL.revokeObjectURL(url)
+    }
+  }, [file])
+  return <img ref={ref} alt={alt} loading="lazy" />
 }
 
 function SessionCard({
@@ -68,7 +87,11 @@ function SessionCard({
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [name, setName] = useState(
-    session.cardFolder ? `Card ${session.cardFolder}` : `Photos from ${fmt(session.firstMs)}`,
+    session.exifDeploymentId
+      ? `Camera deployment ${session.exifDeploymentId.slice(0, 8)}`
+      : session.cardFolder
+        ? `Card ${session.cardFolder}`
+        : `Photos from ${fmt(session.firstMs)}`,
   )
   // Projects can still be loading when this card first renders, so the initial
   // value would stick at '' while the <select> visually shows the first option
@@ -89,7 +112,14 @@ function SessionCard({
     setBusy(true)
     setError(null)
     try {
-      const dep = await apiClient.post('/api/deployments', { project_id: projectId, name: name.trim() })
+      // When the camera stamped a deployment id, create the row under that id: the
+      // phone that configured the device holds the same id locally, so its later
+      // sync converges on this row instead of producing a second deployment.
+      const dep = await apiClient.post('/api/deployments', {
+        project_id: projectId,
+        name: name.trim(),
+        ...(session.exifDeploymentId ? { id: session.exifDeploymentId } : {}),
+      })
       onAssign(dep.id)
       setCreating(false)
     } catch (e) {
@@ -114,12 +144,30 @@ function SessionCard({
         <div><dt>Photos</dt><dd>{session.indices.length}</dd></div>
         <div><dt>First → last</dt><dd>{fmt(session.firstMs)} → {fmt(session.lastMs)}</dd></div>
         <div><dt>Duration</dt><dd>{span(session.firstMs, session.lastMs)}</dd></div>
-        <div><dt>On the card</dt><dd className="triage-path">{session.cardFolder ? `MEDIA/${session.cardFolder}` : samplePath || 'loose files'}</dd></div>
+        <div>
+          <dt>On the card</dt>
+          <dd className="triage-path">
+            {session.cardFolder
+              ? `MEDIA/${session.cardFolder}${session.folderCount > 1 ? ` (+${session.folderCount - 1} other folder${session.folderCount > 2 ? 's' : ''})` : ''}`
+              : samplePath || 'loose files'}
+          </dd>
+        </div>
+        {session.exifDeploymentId && (
+          <div>
+            <dt>Camera says</dt>
+            <dd className="triage-path" title={session.exifDeploymentId}>
+              deployment {session.exifDeploymentId.slice(0, 8)}… (not in the database)
+            </dd>
+          </div>
+        )}
       </dl>
 
       {resolved ? (
         <p className="triage-state ok">
-          Assigned to {deployments.find((d) => d.id === session.deploymentId)?.location_name ?? 'a new deployment'}
+          Assigned to {(() => {
+            const d = deployments.find((x) => x.id === session.deploymentId)
+            return d ? deploymentLabel(d) : 'a new deployment'
+          })()}
         </p>
       ) : session.skipped ? (
         <p className="triage-state warn">
@@ -136,7 +184,7 @@ function SessionCard({
             >
               <option value="">Assign to an existing deployment…</option>
               {deployments.map((d) => (
-                <option key={d.id} value={d.id}>{d.location_name || d.id.slice(0, 8)}</option>
+                <option key={d.id} value={d.id}>{deploymentLabel(d)}</option>
               ))}
             </select>
             <button type="button" className="triage-btn" onClick={() => setCreating((v) => !v)}>
@@ -175,18 +223,23 @@ function SessionCard({
 }
 
 export function UnassignedTriage({
-  files, filePaths, unresolved, deployments, projects, onCancel, onDone,
+  files, filePaths, exifIds, unresolved, matched = [], deployments, projects, onCancel, onDone,
 }: Props) {
   const [sessions, setSessions] = useState<TriageSession[]>(
-    () => buildSessions(files, filePaths, unresolved),
+    () => buildSessions(files, filePaths, unresolved, exifIds),
   )
 
   const update = (key: string, patch: Partial<TriageSession>) =>
     setSessions((prev) => prev.map((s) => (s.key === key ? { ...s, ...patch } : s)))
 
+  const matchedCount = matched.reduce((n, m) => n + m.count, 0)
   const assignedCount = sessions.filter((s) => s.deploymentId).reduce((n, s) => n + s.indices.length, 0)
   const skippedCount = sessions.filter((s) => s.skipped).reduce((n, s) => n + s.indices.length, 0)
   const pending = sessions.filter((s) => !s.deploymentId && !s.skipped)
+  // What will actually be sent: the photos that matched on their own plus the
+  // ones resolved here. Counting only the latter read "0 photos ready" while
+  // ten matched photos were about to upload.
+  const readyCount = matchedCount + assignedCount
 
   const finish = () => {
     const assignments = sessions
@@ -201,9 +254,9 @@ export function UnassignedTriage({
         <div>
           <h3>Some photos aren&apos;t linked to a deployment</h3>
           <p>
-            We grouped them into capture sessions by card folder and by gaps between photos.
-            Photos left unassigned are <strong>not uploaded</strong> — they would not appear in
-            Annotations afterwards.
+            We grouped them into capture sessions by the deployment id the camera wrote into
+            each photo, else by card folder, and by gaps between photos. Photos left unassigned
+            are <strong>not uploaded</strong> — they would not appear in Annotations afterwards.
           </p>
         </div>
         <div className="triage-tally">
@@ -211,6 +264,14 @@ export function UnassignedTriage({
           <span>sessions resolved</span>
         </div>
       </header>
+
+      {matched.length > 0 && (
+        <p className="triage-matched">
+          <strong>{matchedCount} photo{matchedCount === 1 ? '' : 's'} already matched</strong> a deployment
+          and will upload as they are: {matched.map((m) => `${m.label} (${m.count})`).join(', ')}.
+          Only the sessions below still need a decision.
+        </p>
+      )}
 
       <div className="triage-list">
         {sessions.map((s) => (
@@ -230,8 +291,8 @@ export function UnassignedTriage({
       <footer className="triage-foot">
         <span className="triage-hint">
           {skippedCount > 0
-            ? `${assignedCount} photo${assignedCount === 1 ? '' : 's'} will upload · ${skippedCount} will be left out`
-            : `${assignedCount} photo${assignedCount === 1 ? '' : 's'} ready to upload`}
+            ? `${readyCount} photo${readyCount === 1 ? '' : 's'} will upload · ${skippedCount} will be left out`
+            : `${readyCount} photo${readyCount === 1 ? '' : 's'} ready to upload`}
         </span>
         <div className="triage-actions">
           <button type="button" className="triage-btn ghost" onClick={onCancel}>Back</button>

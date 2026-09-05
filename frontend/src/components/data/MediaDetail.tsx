@@ -6,6 +6,7 @@ import { humanCreateFields, humanReviewFields, isHumanReviewed, isAiLabel } from
 import { SpeciesPicker } from './SpeciesPicker'
 import { StatusBadge } from '../ui/StatusBadge'
 import { AiOriginBadge } from '../ui/AiOriginBadge'
+import { cameraModel, cameraScores } from '../../lib/cameraScores'
 import { formatCaptureTime } from '../../lib/time'
 
 interface Props {
@@ -277,6 +278,37 @@ function ObservationList({ media, selectedId, onSelectObs }: {
           </button>
         )
       })}
+    </div>
+  )
+}
+
+// ── Camera AI verdict: what the device decided in the field ──────────────────
+// Every frame carries the on-device model's per-class scores in its EXIF
+// (lib/cameraScores). A 📟 Camera AI observation is only reflected for a target
+// score at or above the model's threshold, so this line is the only place a
+// "no person 62%" frame shows the camera's decision, and it is there from the
+// moment the row exists rather than after the cloud pipeline.
+function CameraVerdict({ media }: { media: MediaRecord }) {
+  const scores = cameraScores(media.exif_metadata)
+  if (scores.length === 0) return null
+  const model = cameraModel(media.exif_metadata)
+  return (
+    <div
+      title="Per-class scores the camera wrote into this frame's EXIF UserComment"
+      style={{
+        margin: '0.25rem 1rem 0.5rem', padding: '0.5rem 0.625rem', fontSize: '0.75rem',
+        borderRadius: 'var(--radius)', border: '1px solid rgba(139,92,246,0.45)', backgroundColor: 'rgba(139,92,246,0.08)',
+      }}
+    >
+      <span style={{ fontWeight: 700, color: '#7c3aed' }}>📟 Camera AI</span>
+      <span style={{ opacity: 0.6 }}> on the device{model ? `, ${model}` : ''}</span>
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginTop: '0.25rem' }}>
+        {scores.map(({ label, pct }, i) => (
+          <span key={label} style={{ fontWeight: i === 0 ? 600 : 400, opacity: i === 0 ? 1 : 0.75 }}>
+            {label} {pct}%
+          </span>
+        ))}
+      </div>
     </div>
   )
 }
@@ -769,6 +801,8 @@ export function MediaDetail({ media, timezone, mediaList, onSelect, onClose, onU
         <p style={{ fontSize: '0.7rem', opacity: 0.5, margin: '0 1rem 0.25rem' }}>
           Edit with the actions under the image. Select an observation to relabel, box, or remove it.
         </p>
+
+        <CameraVerdict media={media} />
 
         <ObservationList media={media} selectedId={selectedObsId} onSelectObs={id => setSelectedObsId(prev => prev === id ? null : id)} />
 

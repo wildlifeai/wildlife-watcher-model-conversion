@@ -40,6 +40,10 @@ Current hand-offs; kept up to date until the work ships, then moved to `_archive
 shaped the way it is, or because a cross-repo half of the work is still open — each says so in its own
 status banner. When in doubt, the living docs in `resources/` and `onboarding/` win over any spec here.
 
+> How this folder works — writing a report, filing open items as issues, and the closing checklist —
+> is in [`development reports/README.md`](development%20reports/README.md), which is also the
+> status board for the table below.
+
 | Spec | For | Covers |
 |------|-----|--------|
 | [dual-layer-ai-architecture-proposal](development%20reports/dual-layer-ai-architecture-proposal.md) | all repos | **Adopted; v0 merged.** Camera AI / Cloud AI / Wildlife Brain naming (canon now lives in [AI-ARCHITECTURE](resources/AI-ARCHITECTURE.md)), edge↔cloud integration framework, LoRaWAN alert-logic design (instant/digest/back-off), validation roadmap + user stories |

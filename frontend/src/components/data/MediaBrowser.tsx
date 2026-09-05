@@ -1,6 +1,7 @@
  
 import { useState, useEffect, useMemo, useCallback, useRef } from 'react'
 import { Link } from 'react-router-dom'
+import { survivingPending } from '../../lib/pendingCards'
 import { supabase } from '../../config/supabase'
 import { useAuth } from '../../hooks/useAuth'
 import { useINat } from '../../hooks/useINat'
@@ -92,7 +93,7 @@ function ClusterLabelAll({ clusterId, deploymentId, onDone }: { clusterId: strin
 // Columns fetched for a media record (+ its assets and observations). Shared by
 // the paginated grid loader and the "find similar" fetch so they stay in sync.
 const MEDIA_SELECT =
-  'id, deployment_id, file_path, file_name, file_mediatype, timestamp, file_public, media_comments, exif_metadata, ' +
+  'id, deployment_id, file_path, file_name, file_mediatype, timestamp, created_at, file_public, media_comments, exif_metadata, ' +
   'media_assets(thumbnail_url, preview_url, animal_crop_url), ' +
   'observations(id, deployment_id, media_id, observation_type, scientific_name, vernacular_name, taxon_id, ' +
   'count, life_stage, sex, behavior, ' +
@@ -114,6 +115,8 @@ export interface MediaRecord {
   file_name: string | null
   file_mediatype: string
   timestamp: string | null
+  /** Row creation time; lets the grid retire an optimistic card once its real row has landed. */
+  created_at?: string | null
   file_public: boolean
   media_comments: string | null
   exif_metadata: Record<string, unknown> | null
@@ -286,7 +289,7 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     [deployments],
   )
   const qc = useQueryClient()
-  const { isActive: uploadActive, pendingUploads } = useUploadStore()
+  const { isActive: uploadActive, pendingUploads, pendingSince } = useUploadStore()
   const [reloadKey, setReloadKey] = useState(0)
   // Media whose thumbnail failed to load — shown as "processing" (the rendition
   // is likely still generating). Reset on every (re)load so they re-attempt.
@@ -489,9 +492,13 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
     }
   }, [selectedIds])
 
-  // WS5-T6: honour initialDeploymentId on mount / when it changes
+  // Honour ?deployment=<id>[,<id>...] from the upload redirect and the dock link. One id focuses
+  // that deployment; several (an upload that spanned deployments) select them all, and the
+  // deployment pill reads "N deployments".
   useEffect(() => {
-    if (initialDeploymentId) { setFilterDeployments([initialDeploymentId]); setPage(0) }
+    if (!initialDeploymentId) return
+    const ids = initialDeploymentId.split(',').map(s => s.trim()).filter(Boolean)
+    if (ids.length) { setFilterDeployments(ids); setPage(0) }
   }, [initialDeploymentId])
 
 
@@ -654,26 +661,18 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
 
   // ── Client-side filter chain ──────────────────────────────────────────────
   // Optimistic cards for files still uploading (no DB row yet), shown instantly via the local
-  // preview so the grid isn't empty right after an upload redirect. Deduped against real rows by
-  // file_name and scoped to the deployment(s) in view; they vanish as the real rows load in.
+  // preview so the grid isn't empty right after an upload redirect. Scoped to the deployment(s)
+  // in view and retired one for one as real rows land (see lib/pendingCards for why a name match
+  // is not enough).
   const pendingCards = useMemo<MediaRecord[]>(() => {
     if (pendingUploads.length === 0) return []
     const viewIds = new Set(filterDeployments.length ? filterDeployments : deployments.map(d => d.id))
-    const haveNames = new Set(media.map(m => (m.file_name || '').toLowerCase()))
-    const seen = new Set<string>()
-    const cards: MediaRecord[] = []
-    for (const p of pendingUploads) {
-      const key = p.fileName.toLowerCase()
-      if (!viewIds.has(p.deploymentId) || haveNames.has(key) || seen.has(key)) continue
-      seen.add(key)
-      cards.push({
-        id: `pending:${key}`, deployment_id: p.deploymentId, file_path: '', file_name: p.fileName,
-        file_mediatype: 'image/jpeg', timestamp: null, file_public: false, media_comments: null,
-        exif_metadata: null, media_assets: null, observations: [], _pending: true,
-      })
-    }
-    return cards
-  }, [pendingUploads, media, filterDeployments, deployments])
+    return survivingPending(pendingUploads, media, pendingSince, viewIds).map(p => ({
+      id: `pending:${p.fileName.toLowerCase()}`, deployment_id: p.deploymentId, file_path: '', file_name: p.fileName,
+      file_mediatype: 'image/jpeg', timestamp: null, file_public: false, media_comments: null,
+      exif_metadata: null, media_assets: null, observations: [], _pending: true,
+    }))
+  }, [pendingUploads, pendingSince, media, filterDeployments, deployments])
 
   const filtered = useMemo(() => {
     // Real (viewable) media first; still-uploading placeholders appended last so the user
@@ -877,12 +876,18 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
   }, [filtered, groupBy, deployments, clustersQ.data])
 
   // ── KPI stats ─────────────────────────────────────────────────────────────
-  const stats = useMemo(() => ({
-    total:          filtered.length,
-    withDetections: filtered.filter(m => m.observations.some(isAiLabel)).length,
-    annotated:      filtered.filter(m => m.observations.some(isHumanReviewed)).length,
-    noImage:        filtered.filter(m => !m.file_path).length,
-  }), [filtered])
+  // Over real rows only: an optimistic card has no file_path by construction, and counting it
+  // as "no image" (and as media) made the header read "10 no image" during every upload.
+  const stats = useMemo(() => {
+    const real = filtered.filter(m => !m._pending)
+    return {
+      total:          real.length,
+      uploading:      filtered.length - real.length,
+      withDetections: real.filter(m => m.observations.some(isAiLabel)).length,
+      annotated:      real.filter(m => m.observations.some(isHumanReviewed)).length,
+      noImage:        real.filter(m => !m.file_path).length,
+    }
+  }, [filtered])
 
   // Number of cards the Labels view renders this page (AI crops + human labels).
   const cropCardCount = useMemo(() => {
@@ -1182,6 +1187,7 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
               {' · '}<strong>{stats.annotated}</strong> annotated
               {imageView === 'crop' && <> · <strong>{cropCardCount}</strong> labels</>}
               {stats.noImage > 0 && <span style={{ color: 'var(--warning, #f59e0b)' }}> · {stats.noImage} no image</span>}
+              {stats.uploading > 0 && <span style={{ color: 'var(--primary)' }}> · {stats.uploading} uploading</span>}
             </span>
 
             {/* ── Display controls (what to show) ── */}
@@ -1332,26 +1338,23 @@ export function MediaBrowser({ deployments, initialDeploymentId, initialSpecies 
         }}>✓ {notice}</p>
       )}
 
-      {/* ── No-image guidance banner ──────────────────────────────── */}
-      {!loading && stats.noImage > 0 && stats.noImage === stats.total && (
-        <div style={{
-          padding: '1rem',
-          marginBottom: '1rem',
+      {/* ── Not-hosted notice ──────────────────────────────────────── */}
+      {/* Keyed on the loaded rows, not the loading flag: the 4 s refetch during an upload sets
+          loading on every poll, which blinked the old banner on and off. Optimistic cards are
+          not counted (see stats), so an upload in progress no longer triggers it either. */}
+      {stats.noImage > 0 && (
+        <p style={{
+          margin: '0 0 1rem',
+          padding: '0.6rem 0.875rem',
           border: '1px solid var(--warning, #f59e0b)',
           borderRadius: 'var(--radius)',
           backgroundColor: 'rgba(245,158,11,0.06)',
           fontSize: '0.8125rem',
         }}>
-          <strong>📷 No hosted images found</strong>
-          <p style={{ marginTop: '0.5rem', opacity: 0.85 }}>
-            The media records in this dataset reference local file paths (e.g. from a CamtrapDP import)
-            that aren't accessible online. To view thumbnails, you can:
-          </p>
-          <ul style={{ paddingLeft: '1.25rem', marginTop: '0.375rem' }}>
-            <li>Upload the original images via the <strong>Upload Data</strong> page and they will be associated with this deployment.</li>
-            <li>If your images are already hosted online, update the <code>file_path</code> with valid URLs in the media detail panel.</li>
-          </ul>
-        </div>
+          📷 {stats.noImage === stats.total ? 'These images are' : `${stats.noImage} of these images are`} not
+          hosted online, so only their records can be shown. Upload the originals from the Upload page to
+          attach them, or set a hosted URL in the media detail panel.
+        </p>
       )}
 
       {/* ── Thumbnail grid (full width) — selecting a photo opens the modal ── */}

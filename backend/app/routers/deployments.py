@@ -25,6 +25,12 @@ class ValidateDeploymentsRequest(BaseModel):
 class CreateDeploymentRequest(BaseModel):
     project_id: str
     name: str
+    # The deployment id to create under, when the caller already holds one: the
+    # camera stamps the configured deployment's UUID into every frame (EXIF 0xF200),
+    # and the phone that configured it holds the same id locally. Creating under that
+    # id means a later sync from the phone converges on this row (push_changes is
+    # ON CONFLICT DO NOTHING) instead of producing a second deployment (ww-website#140).
+    id: Optional[str] = None
     location_name: Optional[str] = None
     latitude: Optional[float] = None
     longitude: Optional[float] = None
@@ -47,6 +53,16 @@ async def create_deployment(
     # Access guard — raises 404 unless the caller holds a role on this project's org/project.
     await assert_access(user.id, project_id=body.project_id)
 
+    # A supplied id must be a UUID (the column is uuid; a bad value would be a 500 from
+    # Postgres) and must not already exist (a duplicate is a 409, never a silent reuse of
+    # someone else's row).
+    supplied_id: Optional[str] = None
+    if body.id:
+        try:
+            supplied_id = str(uuid.UUID(body.id))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="id must be a UUID")
+
     from app.domain.photo_preprocessing import resolve_timezone
 
     def _create() -> Dict[str, Any]:
@@ -55,6 +71,11 @@ async def create_deployment(
         if not proj.data:
             raise HTTPException(status_code=404, detail="Project not found")
         org_id = proj.data[0].get("organisation_id")
+
+        if supplied_id:
+            existing = svc.table("deployments").select("id").eq("id", supplied_id).limit(1).execute()
+            if existing.data:
+                raise HTTPException(status_code=409, detail="A deployment with this id already exists")
 
         name = (body.name or "").strip() or "Manual deployment"
         has_coords = body.latitude is not None and body.longitude is not None
@@ -72,7 +93,7 @@ async def create_deployment(
 
         start = body.deployment_start or datetime.now(timezone.utc).isoformat()
         row = {
-            "id": str(uuid.uuid4()),
+            "id": supplied_id or str(uuid.uuid4()),
             "project_id": body.project_id,
             "device_id": device_id,
             "setup_by": user.id,

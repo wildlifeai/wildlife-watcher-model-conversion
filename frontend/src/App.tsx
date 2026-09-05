@@ -41,8 +41,7 @@ import { ProcessingHistoryPage } from './pages/ProcessingHistoryPage'
 import { SettingsPage } from './pages/SettingsPage'
 import { UploadLogsPage } from './pages/UploadLogsPage'
 import { FourZeroFourPage } from './pages/FourZeroFourPage'
-import { UploadProvider, useUploadStore } from './contexts/UploadContext'
-import { UploadModal } from './components/upload/UploadModal'
+import { UploadProvider } from './contexts/UploadContext'
 import { DemoGuardProvider, RequireNotDemo } from './components/common/DemoGuard'
 import { ProgressDock } from './components/upload/ProgressDock'
 import { UndoToastHost } from './components/common/UndoToast'
@@ -245,19 +244,18 @@ function AccountMenu({ email, isOrgManager, isAdmin, onLogout, unreadCount, rece
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// UploadNavButton — wires the header Upload button to the upload modal
+// UploadNavButton: the header Upload button, a link to the upload page
 // ─────────────────────────────────────────────────────────────────────────────
 
 function UploadNavButton() {
-  const { openModal } = useUploadStore()
   return (
-    <button
+    <Link
+      to="/upload-data"
       className="btn"
-      onClick={openModal}
-      style={{ padding: '0.375rem 0.875rem', fontSize: '0.875rem', fontWeight: 600, flexShrink: 0 }}
+      style={{ padding: '0.375rem 0.875rem', fontSize: '0.875rem', fontWeight: 600, flexShrink: 0, textDecoration: 'none' }}
     >
       ⬆ Upload
-    </button>
+    </Link>
   )
 }
 
@@ -464,7 +462,6 @@ export default function App() {
         <BrowserRouter>
           <DemoGuardProvider>
           <UploadProvider>
-            <UploadModal />
             <ProgressDock />
             <UndoToastHost />
             <Layout>
@@ -499,7 +496,7 @@ export default function App() {
               <Route path="/other"    element={<RedirectTo to="/toolkit" />} />
               <Route path="/my-data"  element={<RedirectTo to="/insights" />} />
 
-              {/* Upload — modal is the primary path; /upload-data kept for direct nav */}
+              {/* Upload: the header button, Home and the three-step guide all land here */}
               <Route path="/upload-data"    element={<RequireAuth><RequireNotDemo feature="Uploading data"><UploadDataPage /></RequireNotDemo></RequireAuth>} />
               <Route path="/upload/logs"    element={<RequireAuth><UploadLogsPage /></RequireAuth>} />
               <Route path="/analyse-images" element={<Navigate to="/upload-data" replace />} />
