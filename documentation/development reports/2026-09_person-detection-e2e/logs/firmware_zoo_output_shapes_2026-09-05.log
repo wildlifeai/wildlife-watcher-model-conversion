@@ -1,0 +1,43 @@
+$ python "documentation/development reports/2026-09_person-detection-e2e/scripts/firmware_zoo_output_shapes.py"
+# Seeed_Grove_Vision_AI_Module_V2 model_zoo/, dev @ 3ca2823c. The "channels" note is the
+# script's own reading of a rank-3 tensor and is only meaningful for YOLO-style heads.
+
+=== kws_pdm_record\kwt1_relu_mfcc_fvp_aligned_vela.tflite  (903456 bytes)
+   in [0] [1, 98, 40] INT8
+   out[0] [1, 12] INT8 name=sequential_25/dense_147/BiasAdd
+
+=== rat_detection\model_int8_quantized_vela.tflite  (72752 bytes)
+   in [0] [1, 48, 48, 1] INT8
+   out[0] [1, 2] INT8 name=StatefulPartitionedCall:0
+
+=== tflm_yolo11_od\yolo11n_full_integer_quant_192_241219_batch_matmul_vela.tflite  (2041472 bytes)
+   in [0] [1, 192, 192, 3] INT8
+   out[0] [1, 84, 756] INT8 name=PartitionedCall:0   <- channels=84: 4 bbox + 80 class scores
+
+=== tflm_yolo11_od\yolo11n_full_integer_quant_vela_imgz_224_kris_nopost_241230.tflite  (2031024 bytes)
+   in [0] [1, 224, 224, 3] INT8
+   out[0] [1, 28, 28, 144] INT8 name=PartitionedCall:2
+   out[1] [1, 7, 7, 144] INT8 name=PartitionedCall:1
+   out[2] [1, 14, 14, 144] INT8 name=PartitionedCall:0
+
+=== tflm_yolov8_gender_cls\1_gender_cls_0x280000.tflite  (1254736 bytes)
+   in [0] [1, 160, 160, 3] UINT8
+   out[0] [1, 2] UINT8 name=PartitionedCall:0
+
+=== tflm_yolov8_od\yolov8n_od_192_delete_transpose_0xB7B000.tflite  (2213248 bytes)
+   in [0] [1, 192, 192, 3] INT8
+   out[0] [1, 4, 756] INT8 name=PartitionedCall:1   <- channels=4: bbox only, no class scores
+   out[1] [1, 756, 80] INT8 name=PartitionedCall:0
+
+=== tflm_yolov8_pose\yolov8n_pose_256_vela_3_9_0x3BB000.tflite  (2303104 bytes)
+   in [0] [1, 256, 256, 3] INT8
+   out[0] [1, 256, 64] INT8 name=PartitionedCall:0
+   out[1] [1, 1024, 64] INT8 name=PartitionedCall:6
+   out[2] [1, 64, 1] INT8 name=PartitionedCall:4
+   out[3] [1, 1344, 51] INT8 name=PartitionedCall:5
+   out[4] [1, 1024, 1] INT8 name=PartitionedCall:2
+   out[5] [1, 64, 64] INT8 name=PartitionedCall:1
+   out[6] [1, 256, 1] INT8 name=PartitionedCall:3
+
+# person detect (allon_sensor_tflm/person_detect_model_data_vela.cc): [1, 96, 96, 1] -> [1, 2]
+# (from the bucket copy, 251568 bytes; see bucket_audit_before_2026-09-05.log)

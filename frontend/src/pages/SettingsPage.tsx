@@ -83,6 +83,7 @@ export function SettingsPage() {
     supabase
       .from('projects')
       .select('id, name, description, organisation_id, created_at, deployments(id)')
+      .is('deleted_at', null)
       .is('deployments.deleted_at', null)
       .order('created_at', { ascending: false })
       .then(({ data, error: err }) => {

@@ -1,7 +1,7 @@
 # Decoupled upload pipeline — durable media rows, resumable backup, dedup & integrity
 
-**Status:** proposal (nothing here is implemented)
-**Date:** 2026-07-26
+> **Status:** 📋 Proposal — **nothing here is implemented**. Dated 2026-07-26; ww-backend (schema) +
+> ww-website (ingest, sweeper, UI).
 **Motivating incidents:** production uploads silently discarded for weeks
 (`GOOGLE_DRIVE_ENABLED` unset → `media` table empty, newest job 10 Jun);
 unassigned photos silently dropped (fixed by triage, PR #99); false-success
@@ -252,7 +252,7 @@ is unavailable: skip precheck and send everything — the server upsert
 dedups anyway, so precheck is purely a bandwidth optimisation, never a
 correctness requirement.
 
-### 7.2 UploadModal UX
+### 7.2 Upload page UX (`UploadFlow`)
 
 After selection (and triage), one summary line replaces guesswork:
 

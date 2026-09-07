@@ -41,6 +41,11 @@ services:
       - FF_PUBLIC_API_ENABLED=${FF_PUBLIC_API_ENABLED:-false}
       - FF_PIPELINE_ENABLED=${FF_PIPELINE_ENABLED:-false}
       - FF_ACTIVE_LEARNING_ENABLED=${FF_ACTIVE_LEARNING_ENABLED:-false}
+      # Dual AI: reflect the camera's own NN scores from EXIF as edge observations
+      # beside the cloud pipeline's. Defined in config.py and gating
+      # domain/edge_reflection.py, but never forwarded here, so the edge half of
+      # the report could not be switched on in a container.
+      - FF_EDGE_REFLECT_ENABLED=${FF_EDGE_REFLECT_ENABLED:-false}
       - FF_INTELLIGENCE_ENABLED=${FF_INTELLIGENCE_ENABLED:-false}
       # General
       - GENERAL_ORG_ID=${GENERAL_ORG_ID:-b0000000-0000-0000-0000-000000000001}

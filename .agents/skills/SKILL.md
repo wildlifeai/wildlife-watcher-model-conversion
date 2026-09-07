@@ -27,11 +27,25 @@ The `ww-website` repository is a multi-service platform consisting of:
 > * `documentation/onboarding/03-DATA-AND-SYNC.md`
 > * `documentation/resources/api-reference.md`
 > * `documentation/resources/deployment-guide.md`
-> * `documentation/resources/lorawan-webhook-setup.md`
-> * `documentation/development reports/v2-architecture-plan.md`
+> * `documentation/resources/cloud-infrastructure.md` — what actually exists in Azure/Supabase/Cloudflare
+> * `documentation/README.md` — the index; says which docs are **living** vs **frozen history**
 > * `.agents/DESIGN.md` — design system (colors, typography, spacing, component patterns) for any UI work or screen generation
 >
 > This skill defines architectural guardrails and decision rules. Detailed implementation guidance belongs in documentation.
+
+---
+
+## Development conversations and documentation
+
+**Docs are the record, GitHub issues are the tracker.** The rules live in
+[`documentation/development reports/README.md`](../../documentation/development%20reports/README.md),
+including how to file a finding and what to check before closing a thread. Read it before
+starting or closing one.
+
+Never leave substantive material only in a chat transcript, an email or a PR comment. An
+investigation, a review exchange or a design decision belongs in a dated report. This is the
+failure mode to watch for, because the work is done and the finding is real, and it
+evaporates anyway because it only ever existed in a conversation.
 
 ---
 
@@ -216,6 +230,50 @@ Frontend should focus on presentation and user interaction rather than business 
 
 ---
 
+# 4a. File Format Rules
+
+## Line Endings — LF everywhere
+
+**Every file in this repository uses LF (`\n`).** Never CRLF, in any file type, on any platform.
+
+Rules:
+
+* Write new files with LF
+* Preserve LF when editing — do not let an editor or tool convert a file to CRLF
+* `.gitattributes` enforces this (`* text=auto eol=lf`); do not add per-file overrides
+
+Windows gotchas that silently rewrite a whole file to CRLF — avoid them:
+
+* **PowerShell `Out-File` / `Set-Content` / `>`** — these write CRLF and, in Windows PowerShell 5.1,
+  also mis-decode UTF-8 on the way in. Never round-trip a file through PowerShell to edit it. Use the
+  editing tools, or `python`/`sed` if scripting.
+* **`sed -i` on a CRLF working-tree file** strips the CR and rewrites the file as LF — correct here, but
+  it shows as a whole-file diff if the blob was CRLF. Check `git diff --numstat` after any bulk edit: a
+  content change of a few lines that reports hundreds of changed lines is a line-ending rewrite, not your
+  edit.
+
+Verify before committing:
+
+```bash
+# any CRLF file under a path?
+grep -rlU $'\r' documentation/ || echo "all LF"
+
+# did a bulk edit rewrite whole files?
+git diff --numstat
+```
+
+Note that `core.autocrlf=true` on a dev machine makes the *working tree* CRLF regardless; the
+`.gitattributes` rule is what keeps the committed blobs LF. Prefer `core.autocrlf=false` locally so what
+you see is what is stored.
+
+## Encoding — UTF-8, no BOM
+
+Docs and source contain non-ASCII characters (te reo Māori macrons, arrows, emoji status markers).
+Preserve them. Mojibake such as `â€"` or `Ã©` means a tool decoded UTF-8 as ANSI — revert the file and
+redo the edit with a UTF-8-safe tool rather than hand-repairing it.
+
+---
+
 # 5. Environment Rules
 
 Environment configuration is centralized.
@@ -229,6 +287,21 @@ Rules:
 * All backend environment variables must be defined in `backend/app/config.py`
 
 The application should fail fast when required configuration is missing.
+
+## Docker trap: a bind-mount source that does not exist
+
+`docker-compose.dev.yml` bind-mounts `./service-account.json` and points
+`GOOGLE_SERVICE_ACCOUNT_JSON` at it, overriding the inline JSON in `.env`. If that file is
+missing when the container is first created, Docker silently creates an empty **directory**
+in its place and every Drive job then fails with "points to a file that does not exist",
+while the upload request itself still returns 200. Write the credential from `.env` to that
+path (it is gitignored), then recreate the container:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate api
+```
+
+A restart is not enough: the mount is resolved at container creation.
 
 ---
 
@@ -259,39 +332,39 @@ Do not expose unfinished functionality by default.
 
 ## Current State
 
-The current implementation uses:
-
-* In-memory job storage
-* In-memory caching
-* Background asyncio tasks
-* Supabase persistence
-
-Redis and ARQ are not currently guaranteed to exist.
-
-## Future Target
-
-Target architecture:
+Job dispatch has **two paths**, chosen at runtime by `REDIS_URL` in `backend/app/jobs/dispatch.py`:
 
 ```text
-Client
-  ↓
-API
-  ↓
-Redis Queue
-  ↓
-ARQ Worker
-  ↓
-Result
+REDIS_URL set             REDIS_URL empty
+Client                    Client
+  ↓                         ↓
+API                       API
+  ↓                         ↓
+Redis queue               in-process asyncio task
+  ↓                         ↓
+ARQ GPU worker            (same process)
+  ↓                         ↓
+Supabase api_jobs  ←──────────┘  (status mirrored either way)
 ```
 
-Until migration is complete:
+Where each runs, as of 2026-07:
 
-* Do not assume Redis exists
-* Do not assume ARQ exists
-* Verify actual implementation before introducing dependencies
-* Maintain compatibility with the current job system
+* **Cloud dev** — Redis + the ARQ GPU worker are **live** (`ww-embedding-worker-dev`, serverless T4).
+* **Production** — API-only; no worker, no Redis. AI does not run there yet.
+* **Local** — in-process by default; the ML deps only exist in the `dev` Docker image.
 
-Treat `documentation/development reports/v2-architecture-plan.md` as a roadmap, not a description of current behavior.
+Rules:
+
+* **Both paths must keep working.** Never remove the in-process fallback.
+* Heavy ML (SpeciesNet, BioCLIP, DINOv3) belongs in the worker — the lean `--target api` image has no
+  ML deps, so importing torch at API module scope breaks production.
+* Feature flags gating ML must be set on the **worker**, not just the API.
+* Status is mirrored to Supabase `api_jobs`, so `/api/jobs/{id}` polling works cross-process. Rely on
+  that rather than in-memory state.
+
+Live infrastructure detail: `documentation/resources/cloud-infrastructure.md`. Everything under
+`documentation/development reports/_archive/` (including `v2-architecture-plan.md`) is **frozen
+history** — read it for *why*, never as a description of current behaviour.
 
 ---
 
@@ -364,6 +437,47 @@ Consult the backend seed documentation when test users are required.
 
 ---
 
+## Cloud dev is reseeded without notice
+
+The linked dev Supabase project is reset from `ww-backend`'s seeds whenever that repo's
+workflow runs. Rows you created by hand (a model uploaded through the registry path, a
+deployment, a project pointed at a model) can be gone the next morning. Scripts that set up a
+test must be re-runnable, reports must record ids as evidence rather than as things to rely
+on, and a "missing row" is a reseed until proven otherwise (2026-09-05: the `20V1` Person
+Detection built in step 1 of the person-detection runbook disappeared this way).
+
+---
+
+## The shared Supabase service client is one HTTP/2 connection
+
+`create_service_client()` returns a process-wide cached client (see
+`services/supabase_client.py`). A request handler and a background job (the Drive upload job
+runs in-process on the dev image) share that connection. When the server drops it, both see
+`ConnectionTerminated` at once. On 2026-09-05 that cost an upload batch its Drive job while the
+request still returned 200. Callers on that path retry once after `reset_service_client()`
+(`routers/exif.py`); do the same for any new call that runs beside a background job, and never
+let a transport error surface as a silent success.
+
+---
+
+## Object URLs and React StrictMode
+
+Create and revoke an object URL (`URL.createObjectURL`) inside the **same** effect. StrictMode,
+which the dev server runs, unmounts and remounts effects once on mount without re-running
+state initialisers, so a URL created in `useState(() => ...)` and revoked in the cleanup points
+at a revoked blob for the life of the component. Every triage thumbnail rendered as a broken
+image for that reason until #142.
+
+---
+
+## "Closes #N" on a PR to `dev` does not close the issue
+
+GitHub auto-closes only on merge to the default branch. PRs here target `dev`, so the issue
+stays open until `dev` reaches `main`. Close it by hand when the PR merges, or expect it on the
+open list for a while (#140 after #141).
+
+---
+
 # 9. Validation Requirements
 
 Before committing:
@@ -381,7 +495,10 @@ Run:
 Run:
 
 * ESLint
-* TypeScript validation
+* TypeScript validation: `npx tsc -b --noEmit`, **not** `npx tsc --noEmit`. The root
+  `tsconfig.json` is references-only (`"files": []`), so plain `tsc --noEmit` type-checks
+  nothing and exits 0 with errors present. `npm run build` (`tsc -b && vite build`) catches
+  them; so does the `-b` form on its own.
 * Production build if applicable
 
 ## General

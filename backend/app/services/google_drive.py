@@ -106,6 +106,19 @@ def sanitize_filename(timestamp: Optional[str], original_name: str) -> str:
 # ── Service ──────────────────────────────────────────────────────────
 
 
+class DriveTransientError(Exception):
+    """A Drive upload failure worth retrying: a timeout, a dropped connection, or a 429/5xx."""
+
+
+# A single frame upload is retried this many times on a transient failure, waiting
+# DRIVE_UPLOAD_BACKOFF_S * attempt between tries. The first bench run of the
+# person-detection e2e lost one frame in ten to a single 60 s read timeout that a
+# second attempt would have carried.
+DRIVE_UPLOAD_ATTEMPTS = 3
+DRIVE_UPLOAD_BACKOFF_S = 2.0
+_TRANSIENT_HTTP = {429, 500, 502, 503, 504}
+
+
 class GoogleDriveService:
     """Stateless Google Drive API wrapper.
 
@@ -374,7 +387,8 @@ class GoogleDriveService:
         existed in Drive (dedup) — the existing id is still returned so the caller can
         register/patch a media row for it.
 
-        Raises on API errors (caller handles retries).
+        Transient failures (timeouts, dropped connections, HTTP 429/5xx) are
+        retried up to DRIVE_UPLOAD_ATTEMPTS times; anything else raises at once.
         """
         # Dedup check — returns the existing file id if present.
         async with self._api_lock:
@@ -404,19 +418,39 @@ class GoogleDriveService:
             headers = {"Authorization": f"Bearer {access_token}"}
             multipart_files = {"metadata": ("metadata", json.dumps(metadata), "application/json"), "file": (filename, file_bytes, mime_type)}
 
-            resp = requests.post(
-                "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id",
-                headers=headers,
-                files=multipart_files,
-                timeout=60,
-            )
+            try:
+                resp = requests.post(
+                    "https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&supportsAllDrives=true&fields=id",
+                    headers=headers,
+                    files=multipart_files,
+                    timeout=60,
+                )
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as exc:
+                raise DriveTransientError(f"{type(exc).__name__}: {exc}") from exc
 
+            if resp.status_code in _TRANSIENT_HTTP:
+                raise DriveTransientError(f"Drive Upload Error HTTP {resp.status_code}: {resp.text[:200]}")
             if resp.status_code not in (200, 201):
                 raise Exception(f"Drive Upload Error HTTP {resp.status_code}: {resp.text}")
 
             return resp.json()["id"]
 
-        file_id = await asyncio.to_thread(_do_upload)
+        for attempt in range(1, DRIVE_UPLOAD_ATTEMPTS + 1):
+            try:
+                file_id = await asyncio.to_thread(_do_upload)
+                break
+            except DriveTransientError as exc:
+                if attempt == DRIVE_UPLOAD_ATTEMPTS:
+                    raise
+                delay = DRIVE_UPLOAD_BACKOFF_S * attempt
+                logger.warning(
+                    "drive_file_upload_retry",
+                    filename=filename,
+                    attempt=attempt,
+                    retry_in_s=delay,
+                    error=str(exc),
+                )
+                await asyncio.sleep(delay)
         logger.info("drive_file_uploaded", filename=filename, file_id=file_id)
         return file_id, True
 

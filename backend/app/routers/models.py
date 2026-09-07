@@ -217,15 +217,17 @@ async def sscma_catalog(request: Request):
 
 @router.get("/pretrained/catalog")
 async def pretrained_catalog(request: Request):
-    """Return the built-in pretrained model registry.
+    """Return the built-in pretrained models the device can run.
 
     Allows the frontend to dynamically render the architecture/resolution
-    dropdowns without hardcoding the model list.
+    dropdowns without hardcoding the model list. Registry entries marked
+    ``blocked`` (the detection models, see ``model_registry.py``) are omitted so
+    they cannot be selected.
     """
-    from app.registries.model_registry import MODEL_REGISTRY
+    from app.registries.model_registry import supported_models
 
     catalog = []
-    for arch_name, arch_data in MODEL_REGISTRY.items():
+    for arch_name, arch_data in supported_models().items():
         catalog.append(
             {
                 "architecture": arch_name,

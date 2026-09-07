@@ -53,4 +53,4 @@ spec, and validation roadmap live in the
 | Cloud pipeline + Wildlife Brain | [04-AI-PIPELINE](../onboarding/04-AI-PIPELINE.md) |
 | Schema (`ai_model_families`, `ai_models`, `observations`, `device_alert_rules`) | ww-backend `documentation/resources/DATABASE_REFERENCE.md` |
 | OP parameters (OP 14/15/16 …) | firmware `_Documentation/Operational_Parameters.md` |
-| LoRaWAN network-server webhook config | [lorawan-webhook-setup](./lorawan-webhook-setup.md) |
+| LoRaWAN production ingest (canonical) | ww-backend `documentation/resources/LORAWAN_INGEST.md` — the `lorawan-ingest` edge function. The website's [lorawan-webhook-setup](./lorawan-webhook-setup.md) documents a **legacy prototype** parser only |

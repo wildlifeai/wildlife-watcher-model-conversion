@@ -18,54 +18,68 @@ How to deploy the Wildlife Watcher V2 platform (backend + frontend) to productio
 
 ## Environments
 
+> **All Azure resources live in one resource group — `WW-AE`, region `australiaeast`.** The old
+> `WW-Website` RG was deleted on 2026-06-30. The authoritative inventory of what exists is
+> [cloud-infrastructure.md](cloud-infrastructure.md).
+
 | Component | Dev | Staging (current "prod") |
 |-----------|-----|--------------------------|
 | **Supabase** | `qegeovogqxiouqbrxmnh` (Dev_Wildlife_Watcher) | `nuhwmubvygxyddkycmpa` (Stag_Wildlife_Watcher) |
-| **Azure Container App** | `ww-backend-dev` (WW-Website RG) | `ww-backend` (WW-Website RG) |
-| **Azure Blob Container** | `wildlife-watcher-uploads-dev` | `wildlife-watcher-uploads` |
+| **Azure Container App** | `ww-backend-dev` (WW-AE RG) | `ww-backend` (WW-AE RG) |
+| **Azure Blob Container** | `wildlife-watcher-uploads-dev` | `wildlife-watcher-uploads` (storage account `wwuploadsae`) |
 | **Frontend** | Cloudflare Pages preview deploys (per branch) | Cloudflare Pages (`ww-website.pages.dev` + `wildlifewatcher.ai`) |
 | **Google Drive** | Dev subfolder under root folder | Root folder `1jIWV3OjSEnBK4Z64syHd2ugoRuXdVrK5` |
 
-> **Seed data**: The dev Supabase project includes 17 test users (password: `test123`), 4 organisations, 5 projects, 9 devices, and 11 deployments. See `ww-backend/supabase/seeds/USER-CREDENTIALS-REFERENCE.md` for login details and `ww-backend/supabase/CLOUD_SEEDING.md` for the seeding workflow.
+> **Seed data**: The dev Supabase project is seeded with test users, organisations, projects, devices
+> and deployments. Counts and credentials are **not** duplicated here —
+> `ww-backend/documentation/resources/USER-CREDENTIALS-REFERENCE.md` is canonical for logins and
+> `ww-backend/documentation/resources/CLOUD_SEEDING.md` for the seeding workflow. The shared password comes from
+> `SEED_USER_PASSWORD` (a GitHub secret, never hardcoded) — see
+> [testing-with-seed-users](./testing-with-seed-users.md).
 
 ---
 
 ## Backend Deployment (Azure Container Apps)
 
-The backend runs as a single containerised FastAPI application on **Azure Container Apps** (Consumption plan), deployed via **Azure Container Registry (ACR)**.
+The backend runs as a containerised FastAPI application on **Azure Container Apps** (Consumption plan), deployed via **Azure Container Registry (ACR)**.
 
 ### Architecture
 
 ```
 GitHub Actions (CI/CD)
   │
-  ├── Build Docker image (backend/Dockerfile)
-  ├── Push to Azure Container Registry (ACR)
+  ├── Build Docker image (backend/Dockerfile, --target api)
+  ├── Push to Azure Container Registry (wwregistry.azurecr.io)
   └── Update Azure Container App
         │
         ▼
-Azure Container App ("ww-backend" or "ww-backend-dev")
-  ├── FastAPI API Server (port 8000)
-  ├── In-process async job runner (asyncio tasks)
+Azure Container App ("ww-backend" / "ww-backend-dev")  ──REDIS_URL set──▶  ARQ GPU worker
+  ├── FastAPI API Server (port 8000)                                       ("ww-embedding-worker-dev",
+  ├── Job dispatch: ARQ when REDIS_URL is set, else in-process asyncio       --target worker, serverless T4)
   └── Supabase sync for job persistence (api_jobs table)
 ```
 
-> **Note**: The target architecture adds a Redis-backed GPU worker as a separate, scale-to-zero container (always-on CPU API + on-demand GPU). Currently, jobs run in-process with in-memory state synced to Supabase. The dispatch seam, `worker` image, and ARQ registration are already in code; see [GPU Worker + Scale-to-Zero](#gpu-worker--scale-to-zero-redis--arq--keda) for the deployment spec.
+> **Note**: heavy ML work (SpeciesNet, BioCLIP, DINOv3) runs in a **separate ARQ GPU worker**, not in
+> the API container — the lean `--target api` image carries no ML deps. The worker is **live on dev**
+> (serverless T4, scale-to-zero, since 2026-07-03); **production is API-only** until the prod worker is
+> provisioned. With `REDIS_URL` unset, `dispatch.py` falls back to running jobs in-process.
+> Live state: [cloud-infrastructure.md](cloud-infrastructure.md) · stand up the prod worker:
+> [prod-worker-provisioning-runbook.md](prod-worker-provisioning-runbook.md).
 
 ### Manual Deployment
 
 ```bash
-# 1. Build the Docker image
-docker build -t <ACR_LOGIN_SERVER>/ww-backend:latest -f backend/Dockerfile backend/
+# 1. Build the Docker image (--target api: the lean image, no ML deps)
+docker build --target api -t wwregistry.azurecr.io/ww-backend:latest -f backend/Dockerfile backend/
 
 # 2. Push to ACR
-docker push <ACR_LOGIN_SERVER>/ww-backend:latest
+docker push wwregistry.azurecr.io/ww-backend:latest
 
 # 3. Update the Container App
 az containerapp update \
   --name ww-backend \
-  --resource-group WW-Website \
-  --image <ACR_LOGIN_SERVER>/ww-backend:latest
+  --resource-group WW-AE \
+  --image wwregistry.azurecr.io/ww-backend:latest
 ```
 
 ### Verify Deployment
@@ -74,7 +88,7 @@ az containerapp update \
 # Get the FQDN
 FQDN=$(az containerapp show \
   --name ww-backend \
-  --resource-group WW-Website \
+  --resource-group WW-AE \
   --query "properties.configuration.ingress.fqdn" -o tsv)
 
 # Health check
@@ -99,7 +113,7 @@ The frontend is a static React+Vite app deployed to **Cloudflare Pages** with au
    | **Build command** | `cd frontend && npm install && npm run build` |
    | **Build output directory** | `frontend/dist` |
    | **Root directory** | `/` (repository root) |
-   | **Node.js version** | `18` |
+   | **Node.js version** | `20` (match [00-GETTING-STARTED](../onboarding/00-GETTING-STARTED.md#prerequisites)) |
 
 4. Set environment variables (in Cloudflare Pages settings):
 
@@ -107,7 +121,11 @@ The frontend is a static React+Vite app deployed to **Cloudflare Pages** with au
    |----------|-------|
    | `SUPABASE_URL` | `https://nuhwmubvygxyddkycmpa.supabase.co` |
    | `SUPABASE_ANON_KEY` | _(from Supabase Dashboard)_ |
-   | `VITE_API_BASE_URL` | `https://ww-backend.salmonsand-b067677e.australiasoutheast.azurecontainerapps.io` |
+   | `VITE_API_BASE_URL` | `https://ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io` |
+
+   > The dev-preview equivalent is `https://ww-backend-dev.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io`.
+   > Re-check both against `cloud-infrastructure.md` before pasting — the FQDNs changed with the
+   > 2026-06-30 move to `WW-AE` / Australia East.
 
 5. Assign custom domain: `wildlifewatcher.ai` (DNS is already on Cloudflare)
 
@@ -139,7 +157,7 @@ Set environment variables on the Container App via Azure CLI:
 ```bash
 az containerapp update \
   --name ww-backend \
-  --resource-group WW-Website \
+  --resource-group WW-AE \
   --set-env-vars \
     SUPABASE_URL=<value> \
     SUPABASE_ANON_KEY=<value> \
@@ -198,7 +216,7 @@ A **fresh container only has the env you explicitly set** — feature flags and 
 
 > **Quick audit** of a container's current env:
 > ```bash
-> az containerapp show --name ww-backend-dev -g WW-Website \
+> az containerapp show --name ww-backend-dev -g WW-AE \
 >   --query "properties.template.containers[0].env[].name" -o tsv | sort
 > ```
 > If `GOOGLE_DRIVE_ENABLED`, `FF_PIPELINE_ENABLED`, `FF_SPECIESNET_ENABLED`, or `FF_MEDIA_REGISTRY_ENABLED` are absent, that subsystem is off regardless of what the UI seems to show.
@@ -214,9 +232,14 @@ The backend expects these Supabase resources:
 | Bucket | Purpose | Public |
 |--------|---------|--------|
 | `firmware` | Config firmware, manifest results | Yes (mobile app downloads) |
-| `ai-models` | AI model ZIPs | No (signed URLs) |
+| `ai-models` | Compiled models — `{fw_id}V{ver}.TFL` + `.TXT` stored as **independent blobs, no ZIP** ([ai-model-pipeline](./ai-model-pipeline.md#storage-architecture)) | No (signed URLs) |
+| `media-renditions` | Thumbnails / previews / animal crops (`SUPABASE_MEDIA_BUCKET`) — the Annotations grid reads these instead of hitting Google Drive | **Yes** |
 
 Create them in Supabase Dashboard → Storage → New Bucket.
+
+> ⚠️ A **missing `media-renditions` bucket** was one of the three parity gaps that silently broke
+> production in July 2026 (green ticks over an empty grid) — see the
+> [parity audit](cloud-infrastructure.md#dev--prod-parity-audit). Create it in every environment.
 
 ### Database Tables
 
@@ -261,8 +284,11 @@ low millions) pgvector's HNSW is comfortably sufficient, and embedding/cluster q
 vector database.
 
 > ✅ **Migration complete (2026-07-09) — pgvector is live; Qdrant is removed.** The Brain runs
-> end-to-end on dev (embed → cluster → similarity). Qdrant (`qdrant_client.py`, the compose container,
-> `QDRANT_*` config, `qdrant-client`) has been deleted from the code.
+> end-to-end on dev (embed → cluster → similarity). The Qdrant *service* is gone: `qdrant_client.py`,
+> the compose container, `QDRANT_*` config and the `qdrant-client` dependency have all been deleted.
+> **The name survives in one place** — `qdrant_collection` is still the field naming the logical vector
+> space in `registries/embedding_registry.py`, `domain/wildlife_brain.py` and `embedding_runs`. It is a
+> label, not a dependency; renaming it to `vector_space` needs a coordinated ww-backend column change.
 
 **As built** (schema owned by [`ww-backend`](https://github.com/wildlifeai/wildlife-watcher-backend)):
 1. **`ww-backend`:** the `vector` extension is enabled (in the `extensions` schema) and the vector lives
@@ -349,14 +375,14 @@ All logs are JSON-formatted for easy ingestion into log aggregators:
 # View recent logs
 az containerapp logs show \
   --name ww-backend \
-  --resource-group WW-Website \
+  --resource-group WW-AE \
   --type console \
   --follow
 
 # View system logs (crashes, restarts)
 az containerapp logs show \
   --name ww-backend \
-  --resource-group WW-Website \
+  --resource-group WW-AE \
   --type system
 ```
 
@@ -379,9 +405,13 @@ This automatically captures:
 
 ### Azure Container Apps
 
+> `min-replicas` for the API is **set by [`deploy-backend.yml`](../../.github/workflows/deploy-backend.yml)
+> on every deploy** (dev 0, prod 1). A manual `az containerapp update --min-replicas …` is overwritten by
+> the next deploy of that branch — change the workflow's *Determine target* step instead.
+
 | Setting | Dev | Staging/Prod |
 |---------|-----|--------------|
-| `min-replicas` | 0 (scale to zero) | 1 |
+| `min-replicas` | 0 (scale to zero) | 1 (keeps the public demo button warm) |
 | `max-replicas` | 1 | 3 |
 | CPU | 0.25 vCPU | 0.5 vCPU |
 | Memory | 0.5 Gi | 1 Gi |
@@ -390,103 +420,63 @@ This automatically captures:
 # Scale staging
 az containerapp update \
   --name ww-backend \
-  --resource-group WW-Website \
+  --resource-group WW-AE \
   --min-replicas 1 \
   --max-replicas 3 \
   --cpu 0.5 \
   --memory 1.0Gi
 ```
 
-### GPU Worker + Scale-to-Zero (Redis + ARQ + KEDA)
+### GPU Worker + Scale-to-Zero (the ML worker)
 
-The two-container split — **always-on CPU API + on-demand GPU worker** — is already wired in code; this is the infra to light it up. The seam:
+Heavy ML (SpeciesNet detect, BioCLIP classify, DINOv3 embeddings) runs in a **separate ARQ worker** on
+a serverless T4 GPU that scales to zero when idle. The API keeps the lean `--target api` image. The seam:
 
 - [`dispatch.py`](../../backend/app/jobs/dispatch.py): `REDIS_URL` set → `enqueue_job` pushes to Redis and the worker runs the job; empty → in-process. The lean API image never imports torch/SpeciesNet.
 - Dockerfile **`worker`** target bundles `requirements-ml.txt` (torch, transformers, hdbscan, umap, speciesnet); its CMD is `arq app.jobs.worker.WorkerSettings`.
 - [`worker.py`](../../backend/app/jobs/worker.py) auto-registers every function in `definitions.JOBS` — including `annotate_deployments_job`, the offload target the upload flow enqueues when `REDIS_URL` is set.
 - Job status is mirrored to Supabase `api_jobs`, so the API's `/api/jobs/{id}` polling works regardless of which process ran the job (cross-process by design).
 
+**The provisioning commands are deliberately not repeated here.** Three docs own this, and keeping a
+fourth copy is what let this section drift out of date:
+
+| What you need | Doc |
+|---|---|
+| **What exists today**, resource by resource, with the live gotchas | [cloud-infrastructure.md](cloud-infrastructure.md#azure) |
+| **How to stand up the production worker**, step by step | [prod-worker-provisioning-runbook.md](prod-worker-provisioning-runbook.md) |
+| **Why it is shaped this way** (design history, batching, retries, DLQ) | [gpu-worker-infra-spec.md](../development%20reports/gpu-worker-infra-spec.md) |
+
+Three facts differ from the obvious guess, so check them before you touch anything:
+
+- **Redis is a Container App, not Azure Cache for Redis.** `ww-redis-dev` runs `redis:7-alpine` with
+  internal TCP ingress on 6379. Reach it app-to-app by **short name** — `redis://ww-redis-dev:6379`;
+  the `.internal.*` FQDN times out for TCP.
+- **The worker does not scale on Redis.** The ACA KEDA operator cannot reach that internal Redis, so
+  scaling uses a **KEDA PostgreSQL scaler** querying `api_jobs` on the matching Supabase project, over
+  the **shared Session pooler on :5432** (Transaction pooling rejects the scaler's prepared statements
+  with `42P05`). The `ww:gpu:pending` list marker in `dispatch.py`/`worker.py` is inert here — it was
+  written for a Redis-scaler design that ACA networking ruled out.
+- **Never set the scale rule with `az containerapp update --scale-rule-metadata`.** The CLI silently
+  drops metadata values containing spaces (i.e. the SQL), leaving `query` empty — with `min=0` the
+  worker then never wakes and uploads queue forever. Use the Portal or a full `--yaml`.
+
 | Component | Azure resource | Replicas | Rough cost |
 |-----------|----------------|----------|-----------|
-| API | Container App, CPU, **`base`** image | min 1 | ~$15–40/mo |
-| Queue + status mirror | Azure Cache for Redis (Basic C0) | — | ~$16/mo |
-| GPU worker | Container App on a **GPU workload profile**, **`worker`** image | **min 0** | GPU only while processing (per-second) |
-| Vectors | **pgvector** in Supabase (live) — reuses the existing DB, no separate vector service | — | $0 |
+| API | Container App, CPU, **`api`** image | min 1 | ~$15–40/mo |
+| Queue | Container App running `redis:7-alpine` (internal) | min 1 | negligible |
+| GPU worker | Container App on the **`gpu-t4`** profile, **`worker`** image, 4 vCPU / **16 Gi** | **min 0** | GPU per-second while processing, ≈$0 idle |
+| Vectors | **pgvector** in Supabase — reuses the existing DB, no separate vector service | — | $0 |
 
-**1 — Redis.** ARQ needs a broker; Azure Redis requires TLS on 6380, so use a `rediss://` DSN.
+> **Vector-store env:** pgvector needs none — it reuses the Supabase connection. There are no
+> `QDRANT_*` vars ([Vector Store](#vector-store--pgvector-supabase)).
 
-```bash
-az redis create --name ww-redis-dev --resource-group WW-Website \
-  --location australiaeast --sku Basic --vm-size c0
-# REDIS_URL=rediss://:<primary-access-key>@ww-redis-dev.redis.cache.windows.net:6380
-```
-
-**2 — Point the API at Redis** (this alone flips `dispatch` from in-process to ARQ; uploads then offload their AI phase):
-
-```bash
-az containerapp update --name ww-backend-dev --resource-group WW-Website \
-  --set-env-vars REDIS_URL=rediss://:<key>@ww-redis-dev.redis.cache.windows.net:6380
-```
-
-**3 — Build + push the GPU worker image** (the `worker` Dockerfile target):
-
-```bash
-docker build --target worker -t <ACR>/ww-backend-worker:latest -f backend/Dockerfile backend/
-docker push <ACR>/ww-backend-worker:latest
-```
-
-**4 — Add a GPU workload profile** to the Container Apps environment (one-time; **request GPU quota in the region first** — profile types/regions vary). Consumption GPU profiles support scale-to-zero:
-
-```bash
-az containerapp env workload-profile add \
-  --name <ACA_ENV> --resource-group WW-Website \
-  --workload-profile-name gpu-t4 --workload-profile-type Consumption-GPU-NC8as-T4
-```
-
-**5 — Deploy the worker, scale-to-zero:**
-
-```bash
-az containerapp create \
-  --name ww-embedding-worker-dev --resource-group WW-Website \
-  --environment <ACA_ENV> \
-  --image <ACR>/ww-backend-worker:latest \
-  --workload-profile-name gpu-t4 \
-  --command "arq" "app.jobs.worker.WorkerSettings" \
-  --min-replicas 0 --max-replicas 2 \
-  --env-vars REDIS_URL=rediss://:<key>@ww-redis-dev.redis.cache.windows.net:6380 \
-             HF_TOKEN=<hf-token> EMBEDDING_DEVICE=cuda \
-             SUPABASE_URL=<url> SUPABASE_ANON_KEY=<anon> SUPABASE_SERVICE_ROLE_KEY=<service>
-```
-
-> **Vector-store env:** the **pgvector** store needs none — it reuses the Supabase connection above.
-> There are no `QDRANT_*` vars — Qdrant has been removed ([Vector Store](#vector-store--pgvector-supabase)).
-
-**6 — Scale rule (the one real gotcha).** ARQ enqueues to a Redis **sorted set** (`arq:queue`), but KEDA's stock `redis` scaler reads **list length (`LLEN`)** — it cannot watch a sorted set directly. Pick one:
-
-- **(Recommended, stays on ARQ) Mirror a pending-list marker — *implemented*.** On every offload, [`dispatch.enqueue_job`](../../backend/app/jobs/dispatch.py) `LPUSH`es the ARQ job id onto the `ww:gpu:pending` list, and the worker adapter ([`worker.py`](../../backend/app/jobs/worker.py)) `LREM`s that id when the job finishes. KEDA scales on the list length:
-  ```bash
-  az containerapp update --name ww-embedding-worker-dev --resource-group WW-Website \
-    --scale-rule-name redis-queue --scale-rule-type redis \
-    --scale-rule-metadata listName=ww:gpu:pending listLength=1 \
-                          address=ww-redis-dev.redis.cache.windows.net:6380 enableTLS=true \
-    --scale-rule-auth password=redis-password-secret
-  ```
-  Worker scales 0→1 when work is pending, back to 0 when drained. The marker is best-effort (a missing push only affects autoscaling, never correctness). The retry edge is already handled: `WorkerSettings.max_tries = 1`, so a job can't be re-deferred after its marker was removed (our jobs self-handle errors and return normally, so retries aren't wanted anyway).
-- **(Cleaner cloud-native) Azure Service Bus / Storage Queue + KEDA `azure-queue` scaler.** Swap the offload broker from ARQ/Redis to an Azure queue at the `dispatch.py` seam; KEDA then scales natively on queue depth with no marker. Bigger change, no drift risk.
-- **(Interim, zero code) KEDA `cron` scaler** to pre-warm the worker during expected upload windows, or pin `--min-replicas 1` during an active tagging campaign and back to `0` afterwards.
-
-**7 — Model cache (cold start).** A GPU cold start pulls a multi-GB image and re-downloads DINOv3/SpeciesNet (~1–3 min). Mount an **Azure Files** volume on the worker and point the HF cache at it so models persist across scale-to-zero cycles:
-
-```bash
-# set on the worker: HF_HOME=/models/hf  (+ mount an Azure Files share at /models)
-az containerapp update --name ww-embedding-worker-dev --resource-group WW-Website \
-  --set-env-vars HF_HOME=/models/hf
-```
+Setting `REDIS_URL` on the API is the single switch that flips dispatch from in-process to ARQ offload,
+so **the worker must already be consuming the queue before you set it**, or jobs queue unprocessed.
 
 ### Verifying the split works
 
 1. Trigger an AI run (upload, or `POST /api/brain/reprocess/deployment/{id}`). API logs should show **`job_enqueued_arq`** (not `job_enqueued_local`).
-2. `az containerapp replica list --name ww-embedding-worker-dev -g WW-Website` shows the worker scaling **0 → 1**.
+2. `az containerapp replica list --name ww-embedding-worker-dev -g WW-AE` shows the worker scaling **0 → 1**.
 3. Worker logs show `arq_worker_startup` then `auto_embed_complete` with a cluster count.
 4. Annotations → **Group → Cluster (embeddings)** populates; the worker scales back to **0** when idle.
 
@@ -506,18 +496,22 @@ Missing required environment variables. Check that `SUPABASE_URL`, `SUPABASE_ANO
 # Verify env vars are loaded
 az containerapp show \
   --name ww-backend \
-  --resource-group WW-Website \
+  --resource-group WW-AE \
   --query "properties.template.containers[0].env"
 ```
 
 **Jobs stuck in `queued` status**
 
-Jobs run in-process as asyncio background tasks. If the container restarts mid-job, the job store's `recover_stuck_jobs()` function marks interrupted jobs as `failed` on next boot. Check container restart logs:
+With `REDIS_URL` **unset**, jobs run in-process as asyncio background tasks; with it set, they are
+offloaded to the ARQ worker — so first check *which* process should have run the job. A job stuck in
+`queued` on a `REDIS_URL`-configured API usually means the worker isn't running or KEDA never woke it
+(see [GPU Worker](#gpu-worker--scale-to-zero-the-ml-worker)). If a container restarts mid-job, the job
+store's `recover_stuck_jobs()` marks interrupted jobs as `failed` on next boot. Check restart logs:
 
 ```bash
 az containerapp logs show \
   --name ww-backend \
-  --resource-group WW-Website \
+  --resource-group WW-AE \
   --type system
 ```
 

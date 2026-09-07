@@ -52,6 +52,10 @@ Selecting a photo opens a **full-screen modal** (`MediaDetail.tsx`):
 | **▭ Box / Redraw / ✕** | Draw, replace, or delete the bounding box (writes the bbox quad) |
 | **+ Add Observation** | Create a new fully human-provenanced observation |
 
+> With `FF_PER_CROP_CLASSIFY_ENABLED` on, AI produces **one observation per animal** rather than one
+> per image, so a mixed-species frame shows a card (and crop) per detection and `count` is reserved for
+> human "N individuals" annotations — see [04-AI-PIPELINE](./04-AI-PIPELINE.md#per-detection-classification-ff_per_crop_classify_enabled).
+
 ### SpeciesPicker (taxon validation)
 
 `components/data/SpeciesPicker.tsx` debounces a search over the local `taxa` table **and** the

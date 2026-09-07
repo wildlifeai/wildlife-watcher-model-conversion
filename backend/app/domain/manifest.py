@@ -31,7 +31,7 @@ from typing import Optional
 import structlog
 
 from app.registries.camera_configs import CAMERA_CONFIGS
-from app.registries.model_registry import MODEL_REGISTRY, get_model_config
+from app.registries.model_registry import get_model_config
 from app.services.cache import cached
 from app.services.http_client import DownloadError, download_url_content
 from app.services.storage import download_from_storage
@@ -446,7 +446,13 @@ async def _fetch_github_model(model_type: str, resolution: str, manifest_dir: Pa
         logger.error("github_model_config_error", error=str(e))
         return False
 
-    labels = MODEL_REGISTRY[model_type].get("labels", ["unknown"])
+    # From the config, not a second read of MODEL_REGISTRY: one lookup helper
+    # means the two packaging paths cannot disagree about a model's labels the
+    # way they did in #134.
+    labels = config.get("labels") or []
+    if not labels:
+        logger.error("github_model_has_no_labels", model=model_type, resolution=resolution)
+        return False
 
     try:
         content = await download_url_content(config["url"])
@@ -466,7 +472,7 @@ async def _fetch_github_model(model_type: str, resolution: str, manifest_dir: Pa
 
         # Save labels
         label_arcname = "trained_vela.TXT"
-        (manifest_dir / label_arcname).write_text("\n".join(labels))
+        (manifest_dir / label_arcname).write_text("\n".join(labels), newline="\n")
 
         logger.info("github_model_added", model=model_type, resolution=resolution)
         return True
@@ -698,7 +704,7 @@ async def generate_manifest(
                         return (1, 0)
 
                     lines.sort(key=_sort_key)
-                    config_path.write_text("\n".join(lines) + "\n")
+                    config_path.write_text("\n".join(lines) + "\n", newline="\n")
 
                 logger.info(
                     "project_model_added",

@@ -207,3 +207,271 @@ class TestLabelIntegrity:
         zip_bytes = TestConvertUploadedModelDiscovery._zip({"out/MOD00001.tfl": b"\x00tfl", "out/labels.txt": b"\n\n"})
         with pytest.raises(ModelDomainError, match="empty"):
             await convert_uploaded_model(zip_bytes, "pkg.zip")
+
+
+def _tflite_with_output_shape(dims: list[int]) -> bytes:
+    """A minimal but valid TFLite flatbuffer whose output tensor has ``dims``.
+
+    Built rather than checked in as a binary fixture so the shape under test is
+    visible in the test that uses it.
+    """
+    import flatbuffers
+    from ethosu.vela.tflite import Buffer, Model, SubGraph, Tensor
+
+    b = flatbuffers.Builder(1024)
+    name = b.CreateString("output")
+
+    Tensor.TensorStartShapeVector(b, len(dims))
+    for d in reversed(dims):  # vectors build back to front
+        b.PrependInt32(d)
+    shape = b.EndVector()
+
+    Tensor.TensorStart(b)
+    Tensor.TensorAddName(b, name)
+    Tensor.TensorAddShape(b, shape)
+    Tensor.TensorAddType(b, 9)  # INT8
+    Tensor.TensorAddBuffer(b, 0)
+    tensor = Tensor.TensorEnd(b)
+
+    SubGraph.SubGraphStartTensorsVector(b, 1)
+    b.PrependUOffsetTRelative(tensor)
+    tensors = b.EndVector()
+
+    SubGraph.SubGraphStartOutputsVector(b, 1)
+    b.PrependInt32(0)
+    outputs = b.EndVector()
+
+    SubGraph.SubGraphStart(b)
+    SubGraph.SubGraphAddTensors(b, tensors)
+    SubGraph.SubGraphAddOutputs(b, outputs)
+    subgraph = SubGraph.SubGraphEnd(b)
+
+    Model.ModelStartSubgraphsVector(b, 1)
+    b.PrependUOffsetTRelative(subgraph)
+    subgraphs = b.EndVector()
+
+    Buffer.BufferStart(b)
+    buffer0 = Buffer.BufferEnd(b)
+    Model.ModelStartBuffersVector(b, 1)
+    b.PrependUOffsetTRelative(buffer0)
+    buffers = b.EndVector()
+
+    Model.ModelStart(b)
+    Model.ModelAddVersion(b, 3)
+    Model.ModelAddSubgraphs(b, subgraphs)
+    Model.ModelAddBuffers(b, buffers)
+    b.Finish(Model.ModelEnd(b), file_identifier=b"TFL3")
+    return bytes(b.Output())
+
+
+def _tflite_with_output_classes(n: int) -> bytes:
+    """A classification head: output tensor ``[1, n]``."""
+    return _tflite_with_output_shape([1, n])
+
+
+class TestOutputTensorLabelCount:
+    """LM-1 as specified: parse the output tensor, compare it to the labels.
+
+    The regression is wildlifeai/ww-website#134 — a two-class person detector
+    shipped with a one-line labels file, so the device reported class 1 as an
+    empty string and no EXIF prediction could be mapped to a taxon.
+    """
+
+    def test_reads_class_count_from_a_real_model(self, tmp_path):
+        from app.domain.model import _classifier_class_count
+
+        model = tmp_path / "m.tfl"
+        model.write_bytes(_tflite_with_output_classes(2))
+        assert _classifier_class_count(model) == 2
+
+    def test_unparseable_model_is_unknown_not_zero(self, tmp_path):
+        """An unreadable file means "no cross-check", so upload still proceeds."""
+        from app.domain.model import _classifier_class_count
+
+        model = tmp_path / "m.tfl"
+        model.write_bytes(b"\x00\x01tflcontent")
+        assert _classifier_class_count(model) is None
+
+    @pytest.mark.parametrize(
+        ("shape", "why"),
+        [
+            ([1, 2268, 6], "Edge Impulse YOLOv5: 4 bbox + objectness + 1 class, 2268 anchors"),
+            ([1, 2268, 7], "same export with 2 classes"),
+            ([1, 84, 756], "YOLOv11: 4 bbox + 80 classes over 756 anchors"),
+        ],
+    )
+    def test_detection_head_is_not_read_as_a_class_count(self, tmp_path, shape, why):
+        """A rank-3 output has no class count in its last dimension.
+
+        Reading one anyway reported 6 classes for a single-class apple detector
+        and 756 for YOLOv11, which would refuse valid models on upload. All three
+        shapes are taken from real artifacts in the dev ``ai-models`` bucket.
+        """
+        from app.domain.model import _classifier_class_count
+
+        model = tmp_path / "m.tfl"
+        model.write_bytes(_tflite_with_output_shape(shape))
+        assert _classifier_class_count(model) is None, why
+
+    @pytest.mark.asyncio
+    async def test_precompiled_detection_model_is_not_refused(self):
+        """The false rejection this guards: 1 label beside a rank-3 output."""
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = TestConvertUploadedModelDiscovery._zip(
+            {
+                "out/5V1.TFL": _tflite_with_output_shape([1, 2268, 6]),
+                "out/labels.txt": b"apple\n",
+            }
+        )
+        _tfl, _txt, labels = await convert_uploaded_model(zip_bytes, "Apple Detection-custom-1.0.0.zip")
+        assert labels == ["apple"]
+
+    def test_check_passes_when_count_is_unknown(self):
+        from app.domain.model import _check_label_count
+
+        _check_label_count(["unknown"], None)
+
+    def test_check_raises_on_mismatch(self):
+        from app.domain.model import _check_label_count
+
+        with pytest.raises(ModelDomainError, match="2 output classes but 1 label"):
+            _check_label_count(["unknown"], 2)
+
+    @pytest.mark.asyncio
+    async def test_precompiled_one_label_two_class_model_is_refused(self):
+        """The #134 package: a real 2-class .tfl beside a 7-byte labels.txt."""
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = TestConvertUploadedModelDiscovery._zip(
+            {
+                "out/20V1.TFL": _tflite_with_output_classes(2),
+                "out/labels.txt": b"unknown",
+            }
+        )
+        with pytest.raises(ModelDomainError, match="Label/tensor mismatch"):
+            await convert_uploaded_model(zip_bytes, "Person Detection (96x96)-custom-1.0.0.zip")
+
+    @pytest.mark.asyncio
+    async def test_precompiled_two_labels_two_class_model_passes(self):
+        from app.domain.model import convert_uploaded_model
+
+        zip_bytes = TestConvertUploadedModelDiscovery._zip(
+            {
+                "out/20V1.TFL": _tflite_with_output_classes(2),
+                "out/labels.txt": b"no person\nperson\n",
+            }
+        )
+        _tfl, _txt, labels = await convert_uploaded_model(zip_bytes, "pkg.zip")
+        assert labels == ["no person", "person"]
+
+
+class TestPretrainedRegistryLabels:
+    """The labels a pretrained model ships with must be the registry's own.
+
+    ``labels`` is declared per architecture, not per resolution. Reading it off
+    the per-resolution config returned nothing and the ``["unknown"]`` fallback
+    fired for every model in the catalogue, which is how a 7-byte ``unknown``
+    labels file reached storage for Person Detection and YOLOv11 alike
+    (wildlifeai/ww-website#134).
+    """
+
+    def test_config_carries_the_architecture_labels(self):
+        from app.registries.model_registry import get_model_config, supported_models
+
+        for arch, data in supported_models().items():
+            for resolution in data["resolutions"]:
+                config = get_model_config(arch, resolution)
+                assert config["labels"] == data["labels"], f"{arch} {resolution}"
+
+    def test_no_architecture_falls_back_to_unknown(self):
+        """The regression itself: nothing in the catalogue may package as 'unknown'."""
+        from app.registries.model_registry import MODEL_REGISTRY, get_model_config
+
+        for arch, data in MODEL_REGISTRY.items():
+            for resolution in data["resolutions"]:
+                labels = get_model_config(arch, resolution, include_blocked=True).get("labels") or ["unknown"]
+                assert labels != ["unknown"], f"{arch} {resolution} would ship an 'unknown' labels file"
+
+    def test_catalog_and_packaging_agree(self):
+        """The catalogue endpoint advertised the real names while storage got 'unknown'."""
+        from app.registries.model_registry import get_model_config, supported_models
+
+        for arch, data in supported_models().items():
+            advertised = data.get("labels", [])
+            for resolution in data["resolutions"]:
+                assert get_model_config(arch, resolution)["labels"] == advertised
+
+    def test_every_supported_model_fits_the_device_contract(self):
+        """ww500_md reads the output as [1, C] with C <= MAX_CLASSES (16).
+
+        The shape itself needs the binary, which is a network fetch; the label
+        count is the half of the contract that is checkable offline.
+        """
+        from app.registries.model_registry import supported_models
+
+        for arch, data in supported_models().items():
+            assert 1 <= len(data["labels"]) <= 16, f"{arch} declares {len(data['labels'])} labels"
+
+
+class TestBlockedRegistryEntries:
+    """Detection models are registered but not deployable.
+
+    The ww500_md firmware copies the output tensor into a 16-byte buffer sized
+    for a classifier and has no box decoding, so a YOLO head overflows the stack
+    (Seeed_Grove_Vision_AI_Module_V2#225). The entries stay in the registry so
+    the URLs and the reason are in one place, and ``blocked`` keeps them out of
+    the catalogue and out of packaging.
+    """
+
+    BLOCKED = ("YOLOv8 Object Detection", "YOLOv11 Object Detection", "YOLOv8 Pose Estimation")
+
+    def test_detection_models_are_blocked_and_person_detection_is_not(self):
+        from app.registries.model_registry import MODEL_REGISTRY, supported_models
+
+        for arch in self.BLOCKED:
+            assert MODEL_REGISTRY[arch].get("blocked"), f"{arch} must be blocked"
+        assert set(supported_models()) == {"Person Detection"}
+
+    def test_blocked_entry_is_refused_with_the_reason(self):
+        from app.registries.model_registry import get_model_config
+
+        with pytest.raises(ValueError, match="cannot be deployed.*#225"):
+            get_model_config("YOLOv11 Object Detection", "192x192")
+
+    def test_blocked_entry_is_still_readable_for_tooling(self):
+        from app.registries.model_registry import get_model_config
+
+        config = get_model_config("YOLOv11 Object Detection", "192x192", include_blocked=True)
+        assert config["url"].endswith(".tflite")
+        assert config["labels"] == ["object"]
+
+    @pytest.mark.asyncio
+    async def test_packaging_a_blocked_model_fails_as_a_domain_error(self):
+        """The job path turns the refusal into the job's error message, not a traceback."""
+        from app.domain.model import convert_github_pretrained_model
+
+        with pytest.raises(ModelDomainError, match="cannot be deployed"):
+            await convert_github_pretrained_model("YOLOv8 Pose Estimation", "256x256")
+
+    def test_catalog_endpoint_omits_blocked_entries(self):
+        from fastapi.testclient import TestClient
+
+        from app.main import app
+
+        res = TestClient(app).get("/api/models/pretrained/catalog")
+        assert res.status_code == 200
+        names = {row["architecture"] for row in res.json()["data"]}
+        assert names == {"Person Detection"}
+
+    @pytest.mark.asyncio
+    async def test_registry_entry_without_labels_is_refused(self, monkeypatch):
+        from app.domain import model as model_mod
+
+        monkeypatch.setattr(
+            model_mod,
+            "get_model_config",
+            lambda *_a, **_k: {"url": "https://example.invalid/m.tflite", "type": "tflite", "labels": [], "firmware_model_id": 99},
+        )
+        with pytest.raises(ModelDomainError, match="No labels declared"):
+            await model_mod.convert_github_pretrained_model("Nameless", "96x96")

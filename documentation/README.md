@@ -28,26 +28,36 @@ active engineering hand-offs; **archive** is frozen history. Start with onboardi
 | [embedded-model-lifecycle](resources/embedded-model-lifecycle.md) | End-to-end on-device model flow across website / backend / mobile / firmware |
 | [dual-ai-production-rollout](resources/dual-ai-production-rollout.md) | Runbook to promote dual-AI (Camera AI + Cloud AI / edge reflection) from dev → staging → production, incl. the firmware gating dependency and rollout checklist |
 | [camtrapdp-import](resources/camtrapdp-import.md) | Importing CamtrapDP packages |
-| [lorawan-webhook-setup](resources/lorawan-webhook-setup.md) | TTN / Chirpstack network-server config |
+| [lorawan-webhook-setup](resources/lorawan-webhook-setup.md) | ⚠️ **Legacy prototype** — TTN / Chirpstack config for the website's FastAPI webhook, whose parser predates the WW500's FPort-2 TLV format. The **canonical production ingest** is the `lorawan-ingest` edge function in `ww-backend` (`documentation/resources/LORAWAN_INGEST.md`) |
 | [ui-components](resources/ui-components.md) | Shared frontend design-system primitives |
 | [testing-with-seed-users](resources/testing-with-seed-users.md) | Role-based seed users + access-control validation matrix |
+| [WildlifeWatcher_model_preparation.ipynb](resources/WildlifeWatcher_model_preparation.ipynb) | Notebook: preparing/training a model for the camera before Edge Impulse export. Not maintained with the code — treat as a worked example |
 
 ## Active engineering specs — `development reports/`
 
-Current hand-offs; kept up to date until the work ships, then moved to `_archive/`.
+Current hand-offs; kept up to date until the work ships, then moved to `_archive/`. Several below are
+**shipped but deliberately retained** (marked ✅) because they still document *why* something is
+shaped the way it is, or because a cross-repo half of the work is still open — each says so in its own
+status banner. When in doubt, the living docs in `resources/` and `onboarding/` win over any spec here.
+
+> How this folder works — writing a report, filing open items as issues, and the closing checklist —
+> is in [`development reports/README.md`](development%20reports/README.md), which is also the
+> status board for the table below.
 
 | Spec | For | Covers |
 |------|-----|--------|
-| [dual-layer-ai-architecture-proposal](development%20reports/dual-layer-ai-architecture-proposal.md) | all repos | Camera AI / Cloud AI / Wildlife Brain naming, edge↔cloud integration framework, LoRaWAN alert-logic spec (instant/digest/back-off), validation roadmap + user stories |
+| [dual-layer-ai-architecture-proposal](development%20reports/dual-layer-ai-architecture-proposal.md) | all repos | **Adopted; v0 merged.** Camera AI / Cloud AI / Wildlife Brain naming (canon now lives in [AI-ARCHITECTURE](resources/AI-ARCHITECTURE.md)), edge↔cloud integration framework, LoRaWAN alert-logic design (instant/digest/back-off), validation roadmap + user stories |
+| [decoupled-upload-pipeline-spec](development%20reports/decoupled-upload-pipeline-spec.md) | ww-backend + website | 📋 Proposal, **not implemented**. Create `media` rows at ingest instead of inside the Drive job, + resumable backup sync, precheck/dedup and integrity audit — so a storage failure can't make photos vanish |
 | [lorawan-alert-execution-spec](development%20reports/lorawan-alert-execution-spec.md) | website + backend + both firmwares | Build breakdown for `device_alert_rules` execution: manifest compile → Nordic strategy execution → Himax I2C score forward → backend uplink decode. Implements the proposal's §3 alert logic |
-| [bmp-ingestion-analysis](development%20reports/bmp-ingestion-analysis.md) | website + firmware | Raw-BMP ingest + in-pipeline JPEG re-compress; device capture behaviour; #1 same-frame dual-write |
+| [bmp-ingestion-analysis](development%20reports/bmp-ingestion-analysis.md) | website + firmware | ✅ Website side shipped. Raw-BMP ingest + in-pipeline JPEG re-compress; device capture behaviour; open firmware ask: #1 same-frame dual-write |
 | [dual-camera-rpi-analysis](development%20reports/dual-camera-rpi-analysis.md) | firmware/hardware | HM0360 (night/IR) ↔ Raspberry Pi (day/colour) camera swap + dual-write interaction |
 | [exif-telemetry-firmware-spec](development%20reports/exif-telemetry-firmware-spec.md) | firmware | Add temperature/battery to EXIF via UserComment (smallest change) |
-| [access-test-seed-spec](development%20reports/access-test-seed-spec.md) | ww-backend | Seed rows for the access-scenario upload fixtures (valid / no-access / not-found) |
+| [ww-backend-schema-handoff](development%20reports/ww-backend-schema-handoff.md) | ww-backend | 📋 Open items for the schema/seed owners: the un-migrated iNat tables, the `qdrant_collection` rename, live GRANT/RLS parity, `dual_ai_v0` promotion, and the schema two website specs are waiting on |
+| [access-test-seed-spec](development%20reports/access-test-seed-spec.md) | ww-backend | ✅ Shipped as `seeds/dev/access_test_deployments.sql`. Seed rows for the access-scenario upload fixtures (valid / no-access / not-found) |
 | [storage-quota-spec](development%20reports/storage-quota-spec.md) | ww-backend + website | Per-org storage quota: `organisation_usage` schema + trigger + enforcement hook |
-| [inaturalist-integration](development%20reports/inaturalist-integration.md) | website | iNaturalist publish + community-ID sync integration |
-| [per-crop-classification-spec](development%20reports/per-crop-classification-spec.md) | website (pipeline) | Per-detection species classification (BioCLIP per crop) for mixed-species frames; blocked on GPU worker |
-| [gpu-worker-infra-spec](development%20reports/gpu-worker-infra-spec.md) | website (infra + CI/CD) | ARQ GPU worker: Redis + ACA GPU + vector store (pgvector) + KEDA; versioning, observability, batching, retries; unblocks cloud AI detection + the per-crop classifier |
+| [inaturalist-integration](development%20reports/inaturalist-integration.md) | website | ✅ Phases 1–4 implemented. iNaturalist publish + community-ID sync integration |
+| [per-crop-classification-spec](development%20reports/per-crop-classification-spec.md) | website (pipeline) | Per-detection species classification (BioCLIP per crop) for mixed-species frames. **No longer blocked** — the GPU worker is live on dev; ships behind `FF_PER_CROP_CLASSIFY_ENABLED` |
+| [gpu-worker-infra-spec](development%20reports/gpu-worker-infra-spec.md) | website (infra + CI/CD) | ✅ **Shipped (dev)** — kept as design history; ⚠️ §3 and §7 were overridden during the build. ARQ GPU worker: Redis + ACA GPU + pgvector + KEDA; versioning, observability, batching, retries. **Operate from** [cloud-infrastructure](resources/cloud-infrastructure.md) + [prod-worker-provisioning-runbook](resources/prod-worker-provisioning-runbook.md) |
 
 ## Archive — `development reports/_archive/` (frozen history)
 

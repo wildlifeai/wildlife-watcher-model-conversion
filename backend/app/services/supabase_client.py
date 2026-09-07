@@ -47,3 +47,14 @@ def create_service_client() -> Client:
             url += "/"
         _service_client = create_client(url, settings.SUPABASE_SERVICE_ROLE_KEY)
     return _service_client
+
+
+def reset_service_client() -> None:
+    """Drop the cached service client so the next call builds a fresh one.
+
+    The shared client keeps one HTTP/2 connection. When Supabase (or a proxy in
+    between) closes it, every caller sees ``ConnectionTerminated`` until a new
+    connection is made; callers that can safely retry reset the client first.
+    """
+    global _service_client
+    _service_client = None

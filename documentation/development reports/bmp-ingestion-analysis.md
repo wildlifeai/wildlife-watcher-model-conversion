@@ -1,6 +1,8 @@
 # Analysis — Ingesting BMP (raw) Frames Alongside Device JPEG
 
-> **Status:** 🔧 Active spec — current engineering hand-off; kept current until shipped.
+> **Status:** ✅ **Website side shipped** (`FF_BMP_INGEST_ENABLED` + `BMP_JPEG_QUALITY`, see
+> [Implemented](#implemented-shipped)). Still open as a **firmware** hand-off: same-frame BMP+JPEG
+> dual-write (#1) and a BMP-only capture mode. Move to `_archive/` when those land or are dropped.
 
 **Context:** the WW500's on-device JPEG compression is degrading image quality noticeably, so we want
 to ingest the raw BMP frames and let the **website** do the JPEG compression in the upload pipeline.
@@ -72,7 +74,8 @@ it cannot carry is the EXIF payload (NN scores, telemetry, Make/Model).
 
 ## Implemented (shipped)
 
-- **Frontend** `AnalyseImages.tsx`: admit `.bmp`.
+- **Frontend** `isUploadableImage` in `components/upload/UploadFlow.tsx` admits `.bmp` (ported from
+  `AnalyseImages.tsx` when that page was retired, Sep 2026).
 - **Backend** `routers/exif.py`: `_is_bmp()` magic-byte sniff → when `FF_BMP_INGEST_ENABLED`,
   `to_jpeg()` (`services/image_processing.py`) re-compresses at `BMP_JPEG_QUALITY`, swaps the name to
   `.jpg`, binds via folder prefix + hex-filename timestamp; when disabled, BMPs are ignored (not

@@ -1,6 +1,11 @@
 # Spec — Per-detection (per-crop) species classification
 
-> **Status:** 🔧 Active spec — engineering hand-off; ww-website (backend pipeline). **Prerequisite:** the GPU/ARQ worker must exist (see [gpu-worker-infra-spec.md](gpu-worker-infra-spec.md) — tracked separately).
+> **Status:** 🔧 Active spec — engineering hand-off; ww-website (backend pipeline).
+> **Prerequisite met:** the GPU/ARQ worker is **live on dev** since 2026-07-03
+> ([cloud-infrastructure.md](../resources/cloud-infrastructure.md)), so this work is **no longer
+> blocked**. It ships behind `FF_PER_CROP_CLASSIFY_ENABLED` (default off), which must be set on the
+> **worker**. Production still needs its own worker first
+> ([prod-worker-provisioning-runbook.md](../resources/prod-worker-provisioning-runbook.md)).
 
 **Goal:** label **each detected animal** in a frame independently, so mixed-species frames
 (e.g. a cat *and* a rat) and same-species groups get accurate per-animal species — replacing
@@ -70,26 +75,25 @@ Already sufficient (per-row bbox, `crop_url`, species, `classification_probabili
 ## Cost & infra
 - N classifier passes per frame instead of 1 (typically 1–3 animals → modest). **Batch crops per
   frame** for GPU efficiency; cap detections-classified-per-frame to bound busy frames.
-- BioCLIP + DINOv3 are GPU jobs → **require the ARQ GPU worker**, which does **not** exist yet
-  (only `ww-backend` + `ww-backend-dev`, both lean `--target api`). **This work is blocked on the
-  GPU-worker infra spec.**
+- BioCLIP + DINOv3 are GPU jobs → **require the ARQ GPU worker**. That worker is **live on dev**
+  (`ww-embedding-worker-dev`, serverless T4) and already runs per-crop BioCLIP; **production is still
+  API-only** and needs the prod worker provisioned before the flag can be flipped there.
 - **Versioning & batching are owned by the infra spec** — each per-crop observation already carries its
   classifier version in `source_model_version` / `classified_by`, but the per-job model manifest, the
-  `embedding_model` Qdrant payload filter (so a BioCLIP/DINOv3 bump can't contaminate clusters), the
-  cross-frame crop **batching window**, and the retry/DLQ policy all live in
+  `embedding_model` **read filter** (a `WHERE` predicate in pgvector, so a BioCLIP/DINOv3 bump can't
+  contaminate clusters), the cross-frame crop **batching window**, and the retry/DLQ policy all live in
   [gpu-worker-infra-spec.md §9–§12](gpu-worker-infra-spec.md#9-model--embedding-versioning-cluster-consistency).
   Flip `FF_PER_CROP_CLASSIFY_ENABLED` only on a worker that already has those in place.
 
 ## Documentation updates required (when this lands)
-- **[onboarding/04-AI-PIPELINE.md](../onboarding/04-AI-PIPELINE.md)** — rewrite the classification step:
-  SpeciesNet becomes **detect-only**; add the `classify_crops` (BioCLIP per crop) step; correct the
-  "one species per image" description; show the new 4-stage order.
-- **[onboarding/05-ANNOTATION-WORKFLOW.md](../onboarding/05-ANNOTATION-WORKFLOW.md)** — note AI now
-  yields one observation per animal (Labels view shows a crop per detection; `count` is human-only).
-- **[resources/ai-model-pipeline.md](../resources/ai-model-pipeline.md)** — add BioCLIP-per-crop to the model flow.
-- **[resources/deployment-guide.md](../resources/deployment-guide.md)** — add `FF_PER_CROP_CLASSIFY_ENABLED`
-  to the AI-pipeline checklist row (already lists `FF_BIOCLIP_ENABLED` + the worker requirement).
-- This spec → move to `_archive/` once shipped.
+- ✅ **[onboarding/04-AI-PIPELINE.md](../onboarding/04-AI-PIPELINE.md)** — the flag-on behaviour and the
+  4-stage order are documented under *Per-detection classification*.
+- ✅ **[onboarding/05-ANNOTATION-WORKFLOW.md](../onboarding/05-ANNOTATION-WORKFLOW.md)** — notes that AI
+  yields one observation per animal and `count` becomes human-only.
+- ✅ **[resources/deployment-guide.md](../resources/deployment-guide.md)** — `FF_PER_CROP_CLASSIFY_ENABLED`
+  is in the AI-pipeline checklist row.
+- ⬜ **[resources/ai-model-pipeline.md](../resources/ai-model-pipeline.md)** — add BioCLIP-per-crop to the model flow.
+- This spec → move to `_archive/` once shipped to production.
 
 ## Legacy code to remove / replace
 - **`build_speciesnet_observations` collapse block** ([pipeline.py:267-297](../../backend/app/domain/pipeline.py)) —

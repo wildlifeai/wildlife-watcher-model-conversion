@@ -1,0 +1,30 @@
+$ python "documentation/development reports/2026-09_person-detection-e2e/scripts/step1_upload_person_detection.py"
+# dev Supabase, 2026-09-05, ww-website dev @ 6818bb3 (PR #139 merged) + registry gating (uncommitted)
+
+org=b0000000-0000-0000-0000-000000000001  user_id=None
+
+[1] convert_github_pretrained_model (download + package)
+    labels=['no person', 'person']  txt=b'no person\nperson'  tfl=251568 bytes  fw=20
+
+[2] upload_and_register (storage + ai_models row)
+    model_id=a3c7c373-30a2-4692-9ba2-2e69064144eb  status=validated
+    model_path=b0000000-0000-0000-0000-000000000001/Person Detection (96x96)-custom-1.0.0/20V1.TFL
+    labels_path=b0000000-0000-0000-0000-000000000001/Person Detection (96x96)-custom-1.0.0/20V1.TXT
+    detection_capabilities=['no person', 'person']
+
+[3] label_map
+
+[4] read back
+    family='Person Detection (96x96)' fw=20  -> device file 20V1.TFL
+    detection_capabilities=['no person', 'person']
+    label_map={'person': {'role': 'target', 'taxon_id': None, 'threshold': 50, 'scientific_name': 'Homo sapiens', 'vernacular_name': 'Human'}, 'no person': {'role': 'background'}}
+    storage .TXT = b'no person\nperson' (16 bytes, LF=True)
+    storage .TFL = 251568 bytes, sha256 matches row: True
+
+RESULT: PASS  labels file == detection_capabilities == label_map keys == ['no person', 'person']
+MODEL_ID=a3c7c373-30a2-4692-9ba2-2e69064144eb
+
+# Before this run the same storage path held the 7-byte 'unknown' labels file from #134
+# (see logs/bucket_audit_before_2026-09-05.log). upload_and_register uses upsert, so the
+# orphan was overwritten in place. uploaded_by is NULL because auth.admin.list_users()
+# failed against dev ("Database error finding users"); the column is nullable.

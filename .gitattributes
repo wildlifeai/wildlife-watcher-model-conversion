@@ -1,2 +1,20 @@
+# LF everywhere — see .agents/skills/SKILL.md "File Format Rules".
+# `text=auto` lets git detect text vs binary; `eol=lf` forces LF in the working tree too,
+# so a dev with core.autocrlf=true still gets LF files.
+* text=auto eol=lf
+
+# Binaries: never touch. (text=auto usually detects these, but be explicit.)
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.zip   binary
+*.tflite binary
+*.TFL   binary
+*.img   binary
+*.bmp   binary
+*.BMP   binary
 
 .husky/* text eol=lf

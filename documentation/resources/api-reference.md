@@ -2,7 +2,14 @@
 
 Complete endpoint reference for the Wildlife Watcher V2 API.
 
-**Base URL:** `https://api.wildlifewatcher.ai` (production) | `http://localhost:8000` (local)
+**Base URL:**
+`https://ww-backend.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io` (production) |
+`https://ww-backend-dev.bravesand-8bd2f1d4.australiaeast.azurecontainerapps.io` (dev) |
+`http://localhost:8000` (local)
+
+> There is **no `api.wildlifewatcher.ai`** — the Cloudflare zone serves the frontend only. The API is
+> reached at its Azure Container Apps FQDN; confirm the current values in
+> [cloud-infrastructure](./cloud-infrastructure.md#azure).
 
 **Authentication:** JWT Bearer token from Supabase Auth (required for protected endpoints).
 
@@ -40,6 +47,8 @@ On error:
 ## Table of Contents
 
 - [System](#system)
+- [Auth](#auth)
+- [Projects](#projects)
 - [Jobs (Async)](#jobs-async)
 - [Manifest Generation](#manifest-generation)
 - [Model Conversion](#model-conversion)
@@ -73,6 +82,32 @@ On error:
 
 ---
 
+## Auth
+
+Prefix `/api/auth`. Everything else authenticates with a Supabase JWT obtained in the browser; this
+router exists only to mint the shared read-only demo session server-side. Detail:
+[demo-account](./demo-account.md).
+
+| Method · Path | Auth | Description |
+|---|---|---|
+| `POST /api/auth/demo-session` | None (rate-limited 10/min per IP) | Mint a session for the shared demo account → `{ access_token, refresh_token }`. Returns `DEMO_DISABLED` when `DEMO_EMAIL`/`DEMO_PASSWORD` are unset on the server |
+
+---
+
+## Projects
+
+Prefix `/api/projects`. JWT required. **Reads go direct to Supabase** under RLS
+(`supabase.from('projects')`) — there is no `GET /api/projects`; this router covers only the writes
+that need service-role cascades or admin checks.
+
+| Method · Path | Auth | Description |
+|---|---|---|
+| `POST /api/projects` | JWT | Create a project in the caller's organisation — body `{ name, description? }` |
+| `DELETE /api/projects/{project_id}` | JWT · `project_admin` | Soft-delete, cascading to deployments → media → observations. Returns the shared `deleted_at` so the client can offer Undo. Members/viewers get `404` |
+| `POST /api/projects/{project_id}/restore` | JWT · `project_admin` | Undo a soft-delete using that `deleted_at` |
+
+---
+
 ## Jobs (Async)
 
 Long-running operations (manifest, model conversion, pipeline, embedding) return a `job_id`
@@ -97,7 +132,7 @@ Build a camera `MANIFEST.zip` firmware package. Async (returns a `job_id`). No a
 | `POST /api/manifest/generate` | Body `{ model_source, model_type?, resolution?, sscma_model_id?, org_model_id?, camera_type? }` → `{ job_id, status }` |
 
 - **`model_source`:** `default` (best in DB) · `github` (+ `model_type`, `resolution`) · `sscma` (+ `sscma_model_id`) · `organisation` (+ `org_model_id`).
-- **GitHub models:** Person Detection `96x96`; YOLOv8 Detection `192x192`; YOLOv11 Detection `192x192`/`224x224`; YOLOv8 Pose `256x256`.
+- **GitHub models:** Person Detection `96x96`. The YOLOv8/YOLOv11 detection and pose entries are registered but blocked (the device can only run classifiers; see [AI Model Pipeline](./ai-model-pipeline.md#pre-trained-model-github-zoo)), and `GET /api/models/pretrained/catalog` omits them.
 - **`camera_type`:** `Raspberry Pi` (default) · `HM0360`.
 
 > **Async pattern** (all job-returning endpoints): `POST …` → `{ job_id }`, then poll
@@ -162,11 +197,19 @@ see [05-ANNOTATION-WORKFLOW](../onboarding/05-ANNOTATION-WORKFLOW.md).
 |---|---|---|
 | `GET /api/inat/auth` | JWT | Start OAuth → `{ authorization_url, state }` |
 | `GET /api/inat/callback` | None (state) | OAuth redirect handler → stores tokens, 302 to `/toolkit?inat=connected` |
+| `POST /api/inat/token` | JWT | Exchange an authorization code for tokens (the non-redirect path) |
 | `GET /api/inat/status` | JWT | Connection status (`connected`, `inat_username`, …) |
 | `POST /api/inat/disconnect` | JWT | Revoke stored tokens |
 | `POST /api/inat/observations` | JWT | Create an observation — body `{ species_guess, latitude, longitude, observed_on, geoprivacy?, … }` |
 | `GET /api/inat/observations/{observation_id}/status` | None | Identification status for one observation |
 | `POST /api/inat/observations/poll` | JWT | Batch status for ≤200 observation ids (`{ observation_ids: [...] }`) |
+| `POST /api/inat/publish` | JWT | **Publish WW media to iNat** — consolidates bursts by temporal gap, drops human/vehicle/blank by-catch, proxy-uploads photos. Body `{ media_ids, gap_seconds?, geoprivacy? }` (default `obscured`) → `observations_created`, `photos_uploaded`, `skipped_*`, `errors` |
+| `POST /api/inat/sync` | JWT | **Pull community IDs back** — batch-polls `quality_grade` + `community_taxon`, updates `sync_status`, writes `source_type='consensus'` observations into WW. Idempotent → `checked`, `updated`, `research`, `disagreement`, `observations_written` |
+| `GET /api/inat/taxa/search` | JWT | iNat taxa autocomplete — backs the `SpeciesPicker` alongside the local `taxa` table |
+| `POST /api/inat/taxa` | JWT | Register an iNat taxon + its lineage locally, returning a real `taxon_id` |
+
+> Publish/sync design detail: [inaturalist-integration](../development%20reports/inaturalist-integration.md).
+> The picker flow is in [05-ANNOTATION-WORKFLOW](../onboarding/05-ANNOTATION-WORKFLOW.md#speciespicker-taxon-validation).
 
 ---
 
@@ -225,8 +268,8 @@ Deployment helpers used by the upload flow. JWT required. Prefix `/api/deploymen
 
 | Method · Path | Description |
 |---|---|
-| `POST /api/deployments` | Create a deployment (+ placeholder device) in a project you can access — body `{ project_id, name?, location_name?, latitude?, longitude?, deployment_start?, deployment_end? }`. Backs the "assign/create a deployment at upload" flow: pass the new id as `assigned_deployment_id` to `/api/exif/parse` to bind photos that carry no valid deployment ID |
-| `POST /api/deployments/validate` | Resolve folder-prefix deployment ids to `valid` / `no_access` / `not_found` — the upload pre-check that drives the warning banners. Body `{ "deployment_ids": ["7785FABB", …] }` |
+| `POST /api/deployments` | Create a deployment (+ placeholder device) in a project you can access — body `{ project_id, name?, id?, location_name?, latitude?, longitude?, deployment_start?, deployment_end? }`. Backs the "assign/create a deployment at upload" flow: pass the new id as `assigned_deployment_id` to `/api/exif/parse` to bind photos that carry no valid deployment ID. `id` (a UUID) creates the row under the id the camera stamped into the photos' EXIF, so the phone that configured the camera converges on it when it syncs; `400` if not a UUID, `409` if it already exists |
+| `POST /api/deployments/validate` | Resolve deployment ids to `valid` / `no_access` / `not_found` — the upload pre-check that drives the warning banners. Accepts full UUIDs (from EXIF `0xF200`) and 8-hex card-folder prefixes. Body `{ "deployment_ids": ["e10f7c43-…", "7785FABB", …] }` |
 | `POST /api/deployments/backfill-timezones` | Derive `deployments.timezone` from GPS for rows missing it (idempotent) |
 
 ---
@@ -237,7 +280,7 @@ Prefix `/api/camtrapdp`. Gated by `FF_CAMTRAPDP_IMPORT_ENABLED`.
 
 | Method · Path | Description |
 |---|---|
-| `POST /api/camtrapdp/import` | Import a CamtrapDP `.zip` (multipart `file`, optional `run_ai`) → creates deployments + media + observations. `run_ai=true` (default `false`) additionally runs SpeciesNet + Wildlife Brain on the image-backed imported deployments → returns `ai_job_id` |
+| `POST /api/camtrapdp/import` | Import a CamtrapDP `.zip` — multipart `file`, `annotation_mode` (default `final`), `run_ai` (default `false`) → creates deployments + media + observations. `annotation_mode=final` treats the package as a finished dataset (provenance mapped from `classificationMethod`; media with no observation get a reviewed `blank`); `unprocessed` leaves unlabelled media bare as work to do. `run_ai=true` additionally runs SpeciesNet + Wildlife Brain on the image-backed imported deployments → returns `ai_job_id` |
 
 > Public-API export of CamtrapDP is `POST /api/v1/export/camtrapdp` (see [Public Data API](#public-data-api-v1)).
 

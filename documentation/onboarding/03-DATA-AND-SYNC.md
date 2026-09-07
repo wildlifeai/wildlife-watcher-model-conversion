@@ -42,7 +42,7 @@ permissions, verify against the **live** DB, not just the migrations.
 
 | Table | Used by | Access |
 |-------|---------|--------|
-| `projects`, `deployments` | Results, EXIF matching, Drive folders | RLS (+ service-role) |
+| `projects`, `deployments` | Insights, EXIF matching, Drive folders | RLS (+ service-role) |
 | `media` | Annotations grid + modal | RLS (read; uploads via backend) |
 | `media_assets` | embedded in `media` queries (renditions: provider, dimensions, bytes) | RLS read — a missing GRANT aborts the **whole** embedding query (prod, Jul 2026) |
 | `observations` | Annotations modal (confirm/correct/blank/box/add) | RLS — `authenticated` needs INSERT/UPDATE GRANT |
@@ -95,9 +95,14 @@ create_job() → queued → processing → completed
 
 ## Image upload pipeline
 
-Dragging camera images into the website (Upload Data page → `AnalyseImages`, or the global Upload
-modal) runs this end-to-end. **Images always sync to Google Drive** — the old "Sync to Google Drive"
-toggle was removed; Drive is the default long-term store.
+Dragging camera images into the website runs this end-to-end. There is one upload surface: the
+`/upload-data` page (`UploadDataPage` → `components/upload/UploadFlow.tsx`). The header **Upload**
+button, Home and the three-step guide all link there. (Until Sep 2026 two uploaders coexisted, a
+modal opened from the header and the older `AnalyseImages` page behind `/upload-data`; they had
+drifted, and the modal was too small for the triage step, so both were folded into the page.)
+**Images always sync to Google Drive**, the old "Sync to Google Drive" toggle was removed; Drive is
+the default long-term store. AI analysis runs after upload by default and can be switched off per
+upload (`run_ai`); for CamtrapDP imports it is opt-in.
 
 > [!IMPORTANT]
 > Media rows are created **inside the Drive job, only for files bound to a deployment**. Two
@@ -106,22 +111,50 @@ toggle was removed; Drive is the default long-term store.
 > [decoupled-upload-pipeline-spec](../development%20reports/decoupled-upload-pipeline-spec.md)
 > (media rows at ingest + resumable backup sync).
 
-### In the browser (`UploadModal` → `UploadContext`)
+### In the browser (`UploadFlow` → `UploadContext`)
 
-1. **Deployment resolution from the card layout.** Each file path is matched for a card folder
-   (`MEDIA/<8-hex>/`); the 8-hex prefix is matched against the user's deployment ids.
+The staged selection (files, card paths, EXIF ids) is page state: it lives in `UploadFlow` until
+`startUpload` takes it, so leaving or reloading the page drops it. A `beforeunload` guard warns
+before a reload does, and **Change selection** is the explicit way out. Reading the EXIF heads of a
+large card takes a moment; the page shows a "Reading photos… N of M" count under the summary tiles
+and the Upload button waits for it (the deployment count resolves by card folder until then).
+
+1. **Deployment resolution, EXIF first.** Every WW500 frame carries the full deployment UUID in
+   EXIF tag `0xF200`; the browser reads it from each file's head (`lib/exifDeploymentId.ts`) and
+   matches it exactly against the user's deployments. Only when a frame carries no tag does the
+   card folder (`MEDIA/<8-hex>/`, a prefix of the same id) decide. The folder can be wrong: it is
+   created at boot, before the deployment id is configured, so a frame under `MEDIA/00000000/`
+   can carry the real id in its EXIF (ww-website#140).
 2. **Triage of unassigned photos** (`UnassignedTriage`). Files that resolve to no deployment are
-   grouped into **capture sessions** — same card folder, gaps under 6 h (`unassignedSessions.ts`) —
-   and shown with sample thumbnails and time-span stats. Per session the user assigns an existing
-   deployment, creates one from the photos (`POST /api/deployments`), or skips it. **Skipped photos
-   are not uploaded** and the screen says so; before triage existed they were silently dropped
-   (Jul 2026). The older single "assign everything to one deployment" form remains only for the
-   residual case where triage has nothing to show (e.g. no deployments exist at all).
+   grouped into **capture sessions** — same EXIF id, else same card folder, gaps under 6 h
+   (`unassignedSessions.ts`) — and shown with sample thumbnails, time-span stats and, when the
+   camera stamped one, the deployment id it named. Per session the user assigns an existing
+   deployment, creates one from the photos (`POST /api/deployments`, **under the stamped id**
+   when there is one, so the phone that configured the camera converges on the same row when it
+   syncs), or skips it. **Skipped photos are not uploaded** and the screen says so; before triage
+   existed they were silently dropped (Jul 2026). On the page the sessions render as a responsive
+   grid of cards (`components/upload/upload.css`, 96 px thumbnails, one card per session) rather
+   than a single scrolling column.
+
+   Triage is the **only** way photos get assigned. The older blanket "assign everything to one
+   deployment" form is gone: it was gated on the `/validate` verdict for **card-folder prefixes**,
+   which the EXIF-first resolution had already made irrelevant, so a card whose frames all matched
+   by their stamped id still demanded a project and a deployment because the folder
+   (`MEDIA/00000000/`) matched nothing. Answering it created a real, orphaned deployment row that
+   no photo then used. Whether a photo needs assigning is now one question, asked in one place:
+   `unresolvedFileIndices` in `unassignedSessions.ts`.
 3. **Batch planning** (`UploadContext.startUpload`). Files are ordered by deployment and cut into
    batches of ≤ 10 that **never span two deployments**, so a batch's `assigned_deployment_id`
    cannot mislabel a mixed batch. Triaged photos join the optimistic Annotations grid and the
-   post-upload redirect filter like folder-resolved ones.
+   post-upload redirect filter like folder-resolved ones. The redirect carries every deployment
+   the upload touched (`?deployment=a,b,c`), so the deployment pill reads "N deployments" rather
+   than focusing the first.
 4. Each batch → `POST /api/exif/parse`; job polling and the dock live in `UploadContext`.
+5. **Optimistic cards** (`lib/pendingCards.ts`). The Annotations grid shows a local preview per
+   uploaded file until its media row exists. The server renames frames on the way in
+   (`A9BC8A30.JPG` becomes `20260905194608_01.jpg`), so a name match never retires a card;
+   instead each real row created since the upload started retires one card of the same
+   deployment. Cards are not counted as media or as "no image" in the header stats.
 
 ### Failure surfacing (no false success)
 
@@ -131,13 +164,29 @@ toggle was removed; Drive is the default long-term store.
 - the server refuses storage → the response's `drive_upload.enabled === false`
   (e.g. `GOOGLE_DRIVE_ENABLED` unset → `reason: "server_disabled"`) is logged as an error and
   fails the run. Production ran exactly this way for weeks while the dock showed a green tick
-  (Jul 2026) — the incident this branch guards against.
+  (Jul 2026), the incident this branch guards against;
+- the server took the batch but could not start its Drive job → `drive_upload.status === "error"`
+  counts the whole batch as failed and surfaces the reason in the dock. On the 2026-09-05 bench
+  run a batch lost its job to a dropped Supabase connection and only a log line said so.
+
+Two server-side retries cover the transient failures seen on that run: a single Drive frame
+upload is retried up to three times on a timeout, dropped connection or HTTP 429/5xx
+(`services/google_drive.py`, `DriveTransientError`), and the Drive job enqueue is retried once
+with a fresh Supabase client after an HTTP/2 `ConnectionTerminated` (`routers/exif.py`).
+
+> [!NOTE]
+> Docker trap: the dev compose bind-mounts `./service-account.json` and points
+> `GOOGLE_SERVICE_ACCOUNT_JSON` at it. If that file does not exist when the container is first
+> created, Docker creates an empty **directory** in its place and every Drive job fails with
+> "points to a file that does not exist". Write the credential from `.env` to that path, then
+> `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate api`.
 
 ### On the server
 
 ```
-POST /api/exif/parse  → parse EXIF, match deployment (EXIF Deployment_ID → UserComment → GPS),
-                        buffer bytes to Azure blob store, enqueue upload_drive_images_job
+POST /api/exif/parse  → parse EXIF, bind deployment (EXIF Deployment_ID, else card-folder prefix;
+                        `deployment_id_source` says which), buffer bytes to Azure blob store,
+                        enqueue upload_drive_images_job
 upload_drive_images_job:
   DOWNLOAD → PREPROCESS (rename/sort into project/deployment folders)
   → DRIVE_UPLOAD     google_drive.upload_analysis_images — hash-dedup skips files already in Drive
